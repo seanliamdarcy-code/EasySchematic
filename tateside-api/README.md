@@ -41,6 +41,28 @@ npm run tateside:api
 node dist-tateside-api/tateside-api/src/server.js
 ```
 
+## Local full-stack development
+
+Start the local TateSide API and Vite frontend together:
+
+```bash
+npm run dev:full
+```
+
+This first compiles the API, then keeps the API TypeScript compiler and Node server in watch mode. Once `http://127.0.0.1:8788/health` is ready, it starts Vite. During this command only, Vite proxies browser requests from `/api/tateside/*` to the local API. Plain `npm run dev` is unchanged and does not enable that proxy.
+
+The local API uses `.tateside-data/tateside.db` by default on Windows. It is ignored by Git and is separate from production data.
+
+In another terminal, smoke-test a running local API without modifying data:
+
+```bash
+npm run tateside:api:smoke
+```
+
+The smoke check verifies `/health`, the device-template listing endpoint, and the local browser CORS response. It targets `http://127.0.0.1:8788` by default. For a non-default local endpoint, set `TATESIDE_API_SMOKE_URL`; set `TATESIDE_API_SMOKE_ACCESS_EMAIL` only when testing with access-identity enforcement enabled.
+
+Use Ctrl+C in the `dev:full` terminal to stop its API compiler, API server, and Vite process together.
+
 ## Environment
 
 ```text

@@ -27,6 +27,7 @@
   ],
   "scripts": {
     "dev": "vite",
+    "dev:full": "node tateside-api/dev-full.mjs",
     "generate-fallback": "npx tsx api/seed/generate-fallback.ts",
     "jetbuilt:export": "node scripts/jetbuilt-export.mjs",
     "jetbuilt:cleanup": "node scripts/jetbuilt-cleanup.mjs",
@@ -40,6 +41,9 @@
     "tateside:api": "npm run tateside:api:build && node dist-tateside-api/tateside-api/src/server.js",
     "tateside:api:build": "tsc -p tateside-api/tsconfig.json",
     "tateside:api:serve": "node dist-tateside-api/tateside-api/src/server.js",
+    "tateside:api:watch": "tsc -p tateside-api/tsconfig.json --watch --preserveWatchOutput",
+    "tateside:api:watch:serve": "node --watch --watch-preserve-output dist-tateside-api/tateside-api/src/server.js",
+    "tateside:api:smoke": "node tateside-api/smoke.mjs",
     "preview": "vite preview",
     "postinstall": "patch-package",
     "test": "vitest run",

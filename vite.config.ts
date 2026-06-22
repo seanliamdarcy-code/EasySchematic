@@ -57,6 +57,8 @@ function resolveGitHash(): string {
 }
 
 const gitHash = resolveGitHash()
+const fullStackDev = process.env.EASYSCHEMATIC_FULL_STACK_DEV === '1'
+const localTatesideApiTarget = process.env.TATESIDE_DEV_API_TARGET ?? 'http://127.0.0.1:8788'
 
 function buildInfoPlugin(): Plugin {
   return {
@@ -89,4 +91,16 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkg.version),
     __BUILD_HASH__: JSON.stringify(gitHash),
   },
+  // Keep ordinary `npm run dev` unchanged. `dev:full` sets the flag below so
+  // browser requests to the relative TateSide API path reach the local service.
+  server: fullStackDev
+    ? {
+        proxy: {
+          '/api/tateside': {
+            target: localTatesideApiTarget,
+            changeOrigin: true,
+          },
+        },
+      }
+    : undefined,
 })
