@@ -1,4 +1,4 @@
-import type { DeviceTemplate } from "./types";
+import type { DeviceTemplate, SchematicFile } from "./types";
 import type {
   ExtractedQuoteDevice,
   JetbuiltClientSearchResult,
@@ -67,6 +67,35 @@ export interface TatesideBulkDeleteResultItem {
 
 export interface TatesideBulkDeleteResult {
   results: TatesideBulkDeleteResultItem[];
+}
+
+export interface TatesideSchematicSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  currentVersionSequence: number;
+  currentHash: string;
+  currentSizeBytes: number;
+  createdByEmail: string | null;
+  updatedByEmail: string | null;
+}
+
+export interface TatesideSchematicVersionSummary {
+  sequence: number;
+  title: string;
+  contentHash: string;
+  sizeBytes: number;
+  source: string | null;
+  createdAt: string;
+  createdByEmail: string | null;
+  isCurrent: boolean;
+}
+
+export interface TatesideSchematicDocument {
+  schematic: TatesideSchematicSummary;
+  version: TatesideSchematicVersionSummary;
+  data: SchematicFile;
 }
 
 export class TatesideApiError extends Error {
@@ -216,6 +245,33 @@ export async function saveSchematicToSharePoint(
 
 export async function loadSchematicFromSharePoint(fileId: string): Promise<unknown> {
   return requestJson<unknown>(`/sharepoint/schematics/${encodeURIComponent(fileId)}`);
+}
+
+export async function createTatesideSchematic(
+  data: SchematicFile,
+  options: { source?: string } = {},
+): Promise<TatesideSchematicDocument> {
+  return requestJson<TatesideSchematicDocument>("/schematics", {
+    method: "POST",
+    body: {
+      data,
+      ...(options.source ? { source: options.source } : {}),
+    },
+  });
+}
+
+export async function saveTatesideSchematic(
+  id: string,
+  data: SchematicFile,
+  options: { source?: string } = {},
+): Promise<TatesideSchematicDocument & { createdNewVersion: boolean }> {
+  return requestJson<TatesideSchematicDocument & { createdNewVersion: boolean }>(`/schematics/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: {
+      data,
+      ...(options.source ? { source: options.source } : {}),
+    },
+  });
 }
 
 export async function importDevicesFromQuote(file: File): Promise<QuoteImportExtractionResponse> {

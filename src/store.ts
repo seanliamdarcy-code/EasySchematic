@@ -101,6 +101,7 @@ const TEMPLATES_KEY = "easyschematic-custom-templates";
 const TEMPLATE_META_KEY = "easyschematic-custom-template-meta";
 const CATEGORY_ORDER_KEY = "easyschematic-category-order";
 const CUSTOM_CATEGORIES_KEY = "easyschematic-custom-categories";
+export const DOCUMENT_CHANGE_EVENT = "easyschematic:document-change";
 
 export const CATEGORY_ORDER_DEFAULT: string[] = [
   "Sources",
@@ -169,6 +170,28 @@ function resolveLabelCase(v: unknown): LabelCaseMode {
 
 /** Guard: don't persist empty state before initial load completes */
 let hydrated = false;
+let lastEmittedDocumentPayload: string | null = null;
+
+interface SaveToLocalStorageOptions {
+  emitDocumentChange?: boolean;
+}
+
+function getBrowserStorage(): Storage | null {
+  return typeof localStorage === "undefined" ? null : localStorage;
+}
+
+function dispatchDocumentChangeEvent(): boolean {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function" || typeof Event !== "function") {
+    return false;
+  }
+  window.dispatchEvent(new Event(DOCUMENT_CHANGE_EVENT));
+  return true;
+}
+
+function markHydrated() {
+  hydrated = true;
+  useSchematicStore.setState({ isHydrated: true });
+}
 
 function isDrawBoxNode(node: SchematicNode): boolean {
   if (node.type !== "annotation") return false;
@@ -262,10 +285,13 @@ interface Clipboard {
   edges: ConnectionEdge[];
 }
 
+type TateSideSyncState = "idle" | "saving" | "saved" | "offline" | "error";
+
 interface SchematicState {
   nodes: SchematicNode[];
   edges: ConnectionEdge[];
   schematicName: string;
+  isHydrated: boolean;
   /** Bumped when a new schematic is wholesale-loaded (import, share link, demo, autosave hydrate). Canvas refits its viewport when this changes. */
   loadSeq: number;
   editingNodeId: string | null;
@@ -629,6 +655,12 @@ interface SchematicState {
   cloudSavedAt: string | null;
   setCloudSchematicId: (id: string | null) => void;
   setCloudSavedAt: (ts: string | null) => void;
+  tatesideSchematicId: string | null;
+  tatesideSavedAt: string | null;
+  tatesideSyncState: TateSideSyncState;
+  tatesideSyncError: string | null;
+  setTatesideLink: (id: string | null, savedAt: string | null) => void;
+  setTatesideSyncState: (syncState: TateSideSyncState, syncError?: string | null) => void;
 
   // Rack builder pages
   pages: SchematicPage[];
@@ -696,13 +728,76 @@ interface SchematicState {
   removeToast: (id: string) => void;
 
   // Persistence
-  saveToLocalStorage: () => void;
+  saveToLocalStorage: (options?: SaveToLocalStorageOptions) => void;
   loadFromLocalStorage: () => boolean;
   exportToJSON: () => SchematicFile;
   importFromJSON: (data: SchematicFile) => void;
   importCsvData: (newNodes: SchematicNode[], newEdges: ConnectionEdge[]) => void;
   newSchematic: (templateData?: SchematicFile) => void;
   setSchematicName: (name: string) => void;
+}
+
+function getPersistedSchematicFile(state: SchematicState): SchematicFile {
+  return {
+    version: CURRENT_SCHEMA_VERSION,
+    name: state.schematicName,
+    nodes: state.nodes,
+    edges: state.edges.map(({ zIndex: _, selected: _s, ...rest }) => rest) as ConnectionEdge[],
+    ownedGear: state.ownedGear.length > 0 ? state.ownedGear : undefined,
+    signalColors: state.signalColors,
+    signalLineStyles: state.signalLineStyles,
+    printPaperId: state.printPaperId,
+    printOrientation: state.printOrientation,
+    printScale: state.printScale,
+    printCustomWidthIn: state.printPaperId === "custom" ? state.printCustomWidthIn : undefined,
+    printCustomHeightIn: state.printPaperId === "custom" ? state.printCustomHeightIn : undefined,
+    printOriginOffsetX: state.printOriginOffsetX || undefined,
+    printOriginOffsetY: state.printOriginOffsetY || undefined,
+    titleBlock: state.titleBlock,
+    titleBlockLayout: state.titleBlockLayout,
+    hiddenSignalTypes: state.hiddenSignalTypes ? state.hiddenSignalTypes.split(",") as SignalType[] : undefined,
+    hiddenPinSignalTypes: state.hiddenPinSignalTypes ? state.hiddenPinSignalTypes.split(",") as SignalType[] : undefined,
+    hideUnconnectedPorts: state.hideUnconnectedPorts || undefined,
+    showPortCounts: state.showPortCounts || undefined,
+    templateHiddenSignals: Object.keys(state.templateHiddenSignals).length > 0 ? state.templateHiddenSignals : undefined,
+    templatePresets: Object.keys(state.templatePresets).length > 0 ? state.templatePresets : undefined,
+    favoriteTemplates: state.favoriteTemplates.length > 0 ? state.favoriteTemplates : undefined,
+    reportLayouts: Object.keys(state.reportLayouts).length > 0 ? state.reportLayouts : undefined,
+    globalReportHeaderLayout: state.globalReportHeaderLayout ?? undefined,
+    globalReportFooterLayout: state.globalReportFooterLayout ?? undefined,
+    scrollConfig: serializeScrollConfig(state.scrollConfig),
+    cableNamingScheme: state.cableNamingScheme !== "type-prefix" ? state.cableNamingScheme : undefined,
+    labelCase: state.labelCase !== "as-typed" ? state.labelCase : undefined,
+    currency: state.currency !== "USD" ? state.currency : undefined,
+    panMode: state.panMode !== "select-first" ? state.panMode : undefined,
+    showLineJumps: !state.showLineJumps ? false : undefined,
+    showFacePlateDetail: state.showFacePlateDetail ? true : undefined,
+    showCableIdLabels: state.showCableIdLabels ? true : undefined,
+    showCustomLabels: !state.showCustomLabels ? false : undefined,
+    cableIdGap: state.cableIdGap !== 4 ? state.cableIdGap : undefined,
+    cableIdMidOffset: state.cableIdMidOffset !== 0 ? state.cableIdMidOffset : undefined,
+    cableIdLabelMode: state.cableIdLabelMode !== "endpoint" ? state.cableIdLabelMode : undefined,
+    stubLabelShowPort: state.stubLabelShowPort !== DEFAULT_STUB_LABEL_SHOW_PORT ? state.stubLabelShowPort : undefined,
+    stubLabelShowRoom: state.stubLabelShowRoom !== DEFAULT_STUB_LABEL_SHOW_ROOM ? state.stubLabelShowRoom : undefined,
+    stubLabelPageMode: state.stubLabelPageMode !== DEFAULT_STUB_LABEL_PAGE_MODE ? state.stubLabelPageMode : undefined,
+    useShortNames: state.useShortNames || undefined,
+    wrapDeviceLabels: state.wrapDeviceLabels || undefined,
+    hideAdapters: state.hideAdapters || undefined,
+    autoRoute: state.autoRoute === false ? false : undefined,
+    edgeHitboxSize: state.edgeHitboxSize !== 10 ? state.edgeHitboxSize : undefined,
+    categoryOrder: state.categoryOrder ?? undefined,
+    showOwnedGearPane: state.showOwnedGearPane || undefined,
+    libraryActiveTab: state.libraryActiveTab !== "devices" ? state.libraryActiveTab : undefined,
+    colorKeyEnabled: state.colorKeyEnabled || undefined,
+    colorKeyCorner: state.colorKeyCorner !== "bottom-left" ? state.colorKeyCorner : undefined,
+    colorKeyColumns: state.colorKeyColumns !== 1 ? state.colorKeyColumns : undefined,
+    colorKeyPage: state.colorKeyPage !== "all" ? state.colorKeyPage : undefined,
+    colorKeyOverrides: state.colorKeyOverrides && Object.keys(state.colorKeyOverrides).length > 0 ? state.colorKeyOverrides : undefined,
+    pages: state.pages.length > 0 ? state.pages : undefined,
+    cableCosts: state.cableCosts && Object.keys(state.cableCosts).length > 0 ? state.cableCosts : undefined,
+    roomDistances: state.roomDistances && Object.keys(state.roomDistances).length > 0 ? state.roomDistances : undefined,
+    distanceSettings: state.distanceSettings,
+  };
 }
 
 let nodeIdCounter = 0;
@@ -1287,6 +1382,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   nodes: [],
   edges: [],
   schematicName: "Untitled Schematic",
+  isHydrated: false,
   loadSeq: 0,
   editingNodeId: null,
   creatingNodeId: null,
@@ -1379,6 +1475,10 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   cableIdMap: {},
   cloudSchematicId: null,
   cloudSavedAt: null,
+  tatesideSchematicId: null,
+  tatesideSavedAt: null,
+  tatesideSyncState: "idle",
+  tatesideSyncError: null,
   fileHandle: null,
   isOnline: typeof navigator !== "undefined" ? navigator.onLine : true,
   pendingIncompatibleConnection: null,
@@ -4047,6 +4147,14 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
 
   setCloudSchematicId: (id) => { set({ cloudSchematicId: id }); get().saveToLocalStorage(); },
   setCloudSavedAt: (ts) => { set({ cloudSavedAt: ts }); get().saveToLocalStorage(); },
+  setTatesideLink: (id, savedAt) => {
+    set({ tatesideSchematicId: id, tatesideSavedAt: savedAt });
+    get().saveToLocalStorage({ emitDocumentChange: false });
+  },
+  setTatesideSyncState: (syncState, syncError = null) => {
+    set({ tatesideSyncState: syncState, tatesideSyncError: syncError });
+    get().saveToLocalStorage({ emitDocumentChange: false });
+  },
   setFileHandle: (handle) => set({ fileHandle: handle }),
 
   setIsOnline: (online) => set({ isOnline: online }),
@@ -4688,91 +4796,53 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     get().saveToLocalStorage();
   },
 
-  saveToLocalStorage: () => {
-    if (!hydrated) return;
+  saveToLocalStorage: (options) => {
+    if (!get().isHydrated || !hydrated) return;
+    const storage = getBrowserStorage();
+    if (!storage) return;
     const state = get();
-    const data: SchematicFile = {
-      version: CURRENT_SCHEMA_VERSION,
-      name: state.schematicName,
-      nodes: state.nodes,
-      edges: state.edges.map(({ zIndex: _, selected: _s, ...rest }) => rest) as ConnectionEdge[],
-      ownedGear: state.ownedGear.length > 0 ? state.ownedGear : undefined,
-      signalColors: state.signalColors,
-      signalLineStyles: state.signalLineStyles,
-      printPaperId: state.printPaperId,
-      printOrientation: state.printOrientation,
-      printScale: state.printScale,
-      printCustomWidthIn: state.printPaperId === "custom" ? state.printCustomWidthIn : undefined,
-      printCustomHeightIn: state.printPaperId === "custom" ? state.printCustomHeightIn : undefined,
-      printOriginOffsetX: state.printOriginOffsetX || undefined,
-      printOriginOffsetY: state.printOriginOffsetY || undefined,
-      titleBlock: state.titleBlock,
-      titleBlockLayout: state.titleBlockLayout,
-      hiddenSignalTypes: state.hiddenSignalTypes ? state.hiddenSignalTypes.split(",") as SignalType[] : undefined,
-      hiddenPinSignalTypes: state.hiddenPinSignalTypes ? state.hiddenPinSignalTypes.split(",") as SignalType[] : undefined,
-      hideUnconnectedPorts: state.hideUnconnectedPorts || undefined,
-      showPortCounts: state.showPortCounts || undefined,
-      templateHiddenSignals: Object.keys(state.templateHiddenSignals).length > 0 ? state.templateHiddenSignals : undefined,
-      templatePresets: Object.keys(state.templatePresets).length > 0 ? state.templatePresets : undefined,
-      favoriteTemplates: state.favoriteTemplates.length > 0 ? state.favoriteTemplates : undefined,
-      reportLayouts: Object.keys(state.reportLayouts).length > 0 ? state.reportLayouts : undefined,
-      globalReportHeaderLayout: state.globalReportHeaderLayout ?? undefined,
-      globalReportFooterLayout: state.globalReportFooterLayout ?? undefined,
-      scrollConfig: serializeScrollConfig(state.scrollConfig),
-      cableNamingScheme: state.cableNamingScheme !== "type-prefix" ? state.cableNamingScheme : undefined,
-      labelCase: state.labelCase !== "as-typed" ? state.labelCase : undefined,
-      currency: state.currency !== "USD" ? state.currency : undefined,
-      panMode: state.panMode !== "select-first" ? state.panMode : undefined,
-      showLineJumps: !state.showLineJumps ? false : undefined,
-      showFacePlateDetail: state.showFacePlateDetail ? true : undefined,
-      showCableIdLabels: state.showCableIdLabels ? true : undefined,
-      showCustomLabels: !state.showCustomLabels ? false : undefined,
-      cableIdGap: state.cableIdGap !== 4 ? state.cableIdGap : undefined,
-      cableIdMidOffset: state.cableIdMidOffset !== 0 ? state.cableIdMidOffset : undefined,
-      cableIdLabelMode: state.cableIdLabelMode !== "endpoint" ? state.cableIdLabelMode : undefined,
-      stubLabelShowPort: state.stubLabelShowPort !== DEFAULT_STUB_LABEL_SHOW_PORT ? state.stubLabelShowPort : undefined,
-      stubLabelShowRoom: state.stubLabelShowRoom !== DEFAULT_STUB_LABEL_SHOW_ROOM ? state.stubLabelShowRoom : undefined,
-      stubLabelPageMode: state.stubLabelPageMode !== DEFAULT_STUB_LABEL_PAGE_MODE ? state.stubLabelPageMode : undefined,
-      useShortNames: state.useShortNames || undefined,
-      wrapDeviceLabels: state.wrapDeviceLabels || undefined,
-      hideAdapters: state.hideAdapters || undefined,
-      autoRoute: state.autoRoute === false ? false : undefined,
-      edgeHitboxSize: state.edgeHitboxSize !== 10 ? state.edgeHitboxSize : undefined,
-      categoryOrder: state.categoryOrder ?? undefined,
-      showOwnedGearPane: state.showOwnedGearPane || undefined,
-      libraryActiveTab: state.libraryActiveTab !== "devices" ? state.libraryActiveTab : undefined,
-      colorKeyEnabled: state.colorKeyEnabled || undefined,
-      colorKeyCorner: state.colorKeyCorner !== "bottom-left" ? state.colorKeyCorner : undefined,
-      colorKeyColumns: state.colorKeyColumns !== 1 ? state.colorKeyColumns : undefined,
-      colorKeyPage: state.colorKeyPage !== "all" ? state.colorKeyPage : undefined,
-      colorKeyOverrides: state.colorKeyOverrides && Object.keys(state.colorKeyOverrides).length > 0 ? state.colorKeyOverrides : undefined,
-      pages: state.pages.length > 0 ? state.pages : undefined,
-      cableCosts: state.cableCosts && Object.keys(state.cableCosts).length > 0 ? state.cableCosts : undefined,
-      roomDistances: state.roomDistances && Object.keys(state.roomDistances).length > 0 ? state.roomDistances : undefined,
-      distanceSettings: state.distanceSettings,
-    };
+    const data = getPersistedSchematicFile(state);
+    const serializedData = JSON.stringify(data);
     // Persist cloud identity alongside autosave (not part of SchematicFile export)
     const blob: Record<string, unknown> = { ...data };
     if (state.cloudSchematicId) {
       blob.cloudSchematicId = state.cloudSchematicId;
       blob.cloudSavedAt = state.cloudSavedAt ?? undefined;
     }
+    if (state.tatesideSchematicId) {
+      blob.tatesideSchematicId = state.tatesideSchematicId;
+      blob.tatesideSavedAt = state.tatesideSavedAt ?? undefined;
+    }
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
+      storage.setItem(STORAGE_KEY, JSON.stringify(blob));
+      const documentChanged = serializedData !== lastEmittedDocumentPayload;
+      if (documentChanged && options?.emitDocumentChange !== false && dispatchDocumentChangeEvent()) {
+        lastEmittedDocumentPayload = serializedData;
+      } else if (documentChanged) {
+        lastEmittedDocumentPayload = serializedData;
+      }
     } catch {
       // Storage full or unavailable — silently fail
     }
   },
 
   loadFromLocalStorage: () => {
+    const storage = getBrowserStorage();
+    if (!storage) {
+      markHydrated();
+      return false;
+    }
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = storage.getItem(STORAGE_KEY);
       if (!raw) {
         // Load default demo schematic for first-time visitors
         // Dynamically import to avoid bundling in the critical path
         import("./defaultSchematic.json").then((mod) => {
           // Only load if still empty (no race with user actions)
-          if (get().nodes.length > 0) return;
+          if (get().nodes.length > 0) {
+            markHydrated();
+            return;
+          }
           const data = migrateSchematic(mod.default) as SchematicFile;
           const reconciled = reconcileExternalEndpointConnections(data.nodes, data.edges);
           data.nodes = reconciled.nodes;
@@ -4845,10 +4915,11 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
             cableCosts: data.cableCosts ?? undefined,
             roomDistances: data.roomDistances ?? undefined,
             distanceSettings: data.distanceSettings ?? undefined,
+            isHydrated: true,
             loadSeq: get().loadSeq + 1,
           });
           if (data.pages?.length) syncRackCounters(data.pages);
-          hydrated = true;
+          markHydrated();
           get().saveToLocalStorage();
         });
         return false;
@@ -4929,13 +5000,19 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
         // Restore cloud identity from autosave (not part of SchematicFile)
         cloudSchematicId: parsed.cloudSchematicId ?? null,
         cloudSavedAt: parsed.cloudSavedAt ?? null,
+        tatesideSchematicId: parsed.tatesideSchematicId ?? null,
+        tatesideSavedAt: parsed.tatesideSavedAt ?? null,
+        tatesideSyncState: "idle",
+        tatesideSyncError: null,
+        isHydrated: true,
         loadSeq: get().loadSeq + 1,
       });
       if (data.pages?.length) syncRackCounters(data.pages);
-      hydrated = true;
+      lastEmittedDocumentPayload = JSON.stringify(getPersistedSchematicFile(get()));
+      markHydrated();
       return true;
     } catch {
-      hydrated = true;
+      markHydrated();
       return false;
     }
   },
@@ -5100,6 +5177,10 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
       // File imports and shared schematics always start as local-only
       cloudSchematicId: null,
       cloudSavedAt: null,
+      tatesideSchematicId: null,
+      tatesideSavedAt: null,
+      tatesideSyncState: "idle",
+      tatesideSyncError: null,
       fileHandle: null,
       loadSeq: get().loadSeq + 1,
     });
@@ -5136,6 +5217,10 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
         isDemo: false,
         cloudSchematicId: null,
         cloudSavedAt: null,
+        tatesideSchematicId: null,
+        tatesideSavedAt: null,
+        tatesideSyncState: "idle",
+        tatesideSyncError: null,
         fileHandle: null,
         undoSize: 0,
         redoSize: 0,
@@ -5149,6 +5234,10 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
         ownedGear: [],
         cloudSchematicId: null,
         cloudSavedAt: null,
+        tatesideSchematicId: null,
+        tatesideSavedAt: null,
+        tatesideSyncState: "idle",
+        tatesideSyncError: null,
         fileHandle: null,
         titleBlock: { showName: "", venue: "", designer: "", engineer: "", date: "", drawingTitle: "", company: "", revision: "", logo: "", customFields: [] },
         titleBlockLayout: createDefaultLayout(),

@@ -29,6 +29,7 @@ import SignalColorPanel from "./components/SignalColorPanel";
 import ShowInfoPanel from "./components/ShowInfoPanel";
 import ViewOptionsPanel from "./components/ViewOptionsPanel";
 import MenuBar from "./components/MenuBar";
+import TateSideAutoSync from "./components/TateSideAutoSync";
 import EdgeContextMenu from "./components/EdgeContextMenu";
 import IncompatibleConnectionDialog from "./components/IncompatibleConnectionDialog";
 import ParallelOutputConnectionDialog from "./components/ParallelOutputConnectionDialog";
@@ -2276,6 +2277,7 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-full">
+      <TateSideAutoSync />
       <div data-print-hide>
         <MenuBar />
       </div>

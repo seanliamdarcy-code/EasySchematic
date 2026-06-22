@@ -133,6 +133,91 @@ function SchematicNameEditor({
   );
 }
 
+function formatLocalTimestamp(value: string | null): string | null {
+  if (!value) return null;
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) return null;
+  return timestamp.toLocaleString();
+}
+
+function getSafeSyncErrorText(value: string | null): string {
+  const sanitized = value?.replace(/\s+/g, " ").trim();
+  if (!sanitized) return "Sync failed. Try again later.";
+  return sanitized.slice(0, 160);
+}
+
+function getTateSideSyncDisplayState({
+  isOnline,
+  schematicId,
+  syncState,
+}: {
+  isOnline: boolean;
+  schematicId: string | null;
+  syncState: "idle" | "saving" | "saved" | "offline" | "error";
+}): "saving" | "saved" | "offline" | "error" {
+  if (syncState === "error") return "error";
+  if (!isOnline || syncState === "offline") return "offline";
+  if (syncState === "saving") return "saving";
+  if (syncState === "saved") return "saved";
+  return schematicId ? "saved" : "saving";
+}
+
+function getTateSideSyncMeta({
+  isOnline,
+  savedAt,
+  schematicId,
+  syncError,
+  syncState,
+}: {
+  isOnline: boolean;
+  savedAt: string | null;
+  schematicId: string | null;
+  syncError: string | null;
+  syncState: "idle" | "saving" | "saved" | "offline" | "error";
+}) {
+  const state = getTateSideSyncDisplayState({ isOnline, schematicId, syncState });
+  const savedAtLabel = formatLocalTimestamp(savedAt);
+  const repositoryStatus = schematicId
+    ? "Linked to TateSide repository."
+    : "Repository link will be created after the first successful sync.";
+
+  if (state === "saving") {
+    return {
+      label: "Saving",
+      className: "bg-sky-50 text-sky-700",
+      title: savedAtLabel
+        ? `Syncing changes to TateSide repository. Last TateSide save: ${savedAtLabel}. ${repositoryStatus}`
+        : `Syncing changes to TateSide repository. ${repositoryStatus}`,
+    };
+  }
+
+  if (state === "saved") {
+    return {
+      label: "Saved",
+      className: "bg-emerald-50 text-emerald-700",
+      title: savedAtLabel
+        ? `Saved to TateSide repository at ${savedAtLabel}. ${repositoryStatus}`
+        : `Saved to TateSide repository. ${repositoryStatus}`,
+    };
+  }
+
+  if (state === "offline") {
+    return {
+      label: "Offline draft",
+      className: "bg-slate-100 text-slate-600",
+      title: savedAtLabel
+        ? `Working offline. Changes are local for now. Last TateSide save: ${savedAtLabel}. ${repositoryStatus}`
+        : `Working offline. Changes are local for now. ${repositoryStatus}`,
+    };
+  }
+
+  return {
+    label: "Sync issue",
+    className: "bg-rose-50 text-rose-700",
+    title: `${getSafeSyncErrorText(syncError)} ${repositoryStatus}`.trim(),
+  };
+}
+
 // ─── Main MenuBar ────────────────────────────────────────────────
 
 export default function MenuBar() {
@@ -171,7 +256,12 @@ export default function MenuBar() {
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [showSharePointProjects, setShowSharePointProjects] = useState(false);
   const fileHandle = useSchematicStore((s) => s.fileHandle);
+  const isHydrated = useSchematicStore((s) => s.isHydrated);
   const isOnline = useSchematicStore((s) => s.isOnline);
+  const tatesideSyncState = useSchematicStore((s) => s.tatesideSyncState);
+  const tatesideSyncError = useSchematicStore((s) => s.tatesideSyncError);
+  const tatesideSchematicId = useSchematicStore((s) => s.tatesideSchematicId);
+  const tatesideSavedAt = useSchematicStore((s) => s.tatesideSavedAt);
 
   const getLogoutUrl = useCallback(() => {
     return MICROSOFT_LOGOUT_URL;
@@ -610,6 +700,15 @@ export default function MenuBar() {
   };
 
   const menuNames = MENU_NAMES;
+  const tatesideSyncMeta = isHydrated
+    ? getTateSideSyncMeta({
+      isOnline,
+      savedAt: tatesideSavedAt,
+      schematicId: tatesideSchematicId,
+      syncError: tatesideSyncError,
+      syncState: tatesideSyncState,
+    })
+    : null;
 
   const closeMobileMenu = () => {
     setMobileMenuOpen(false);
@@ -717,6 +816,14 @@ export default function MenuBar() {
                   <svg className="w-3.5 h-3.5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v18l7-5 7 5V3H5z" />
                   </svg>
+                </span>
+              )}
+              {tatesideSyncMeta && (
+                <span
+                  className={`text-[9px] px-1.5 py-0.5 rounded-full ${tatesideSyncMeta.className}`}
+                  title={tatesideSyncMeta.title}
+                >
+                  {tatesideSyncMeta.label}
                 </span>
               )}
               {!isOnline && (

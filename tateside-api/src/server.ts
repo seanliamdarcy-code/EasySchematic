@@ -16,6 +16,21 @@ import {
 } from "./jetbuilt.js";
 import { researchQuoteDevices } from "./deviceResearch.js";
 import { importQuoteDevicesFromPdf } from "./quoteImport.js";
+import {
+  SchematicStoreError,
+  createSchematic,
+  getCurrentSchematic,
+  getSchematicVersion,
+  listRecentSchematics,
+  listSchematicVersions,
+  restoreSchematicVersion,
+  saveSchematic,
+} from "./schematicStore.js";
+import {
+  createSharePointGraphClient,
+  SharePointGraphError,
+} from "./sharePointGraph.js";
+import type { SharePointGraphClient } from "./sharePointGraph.js";
 
 const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024;
 
@@ -23,6 +38,16 @@ interface RequestContext {
   req: http.IncomingMessage;
   res: http.ServerResponse;
   url: URL;
+}
+
+class RequestError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "RequestError";
+    this.status = status;
+  }
 }
 
 interface ResearchJobRecord {
@@ -65,7 +90,7 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<Buffer> 
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > maxBytes) {
-        reject(new Error("Request body is too large"));
+        reject(new RequestError(413, "Request body is too large"));
         req.destroy();
         return;
       }
@@ -80,14 +105,49 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<Buffer> 
   });
 }
 
-async function readJson(req: http.IncomingMessage): Promise<unknown> {
+async function readJson(req: http.IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): Promise<unknown> {
   try {
-    const raw = (await readBody(req, MAX_JSON_BODY_BYTES)).toString("utf8");
+    const raw = (await readBody(req, maxBytes)).toString("utf8");
     return raw ? JSON.parse(raw) : null;
   } catch (err) {
-    if (err instanceof Error && err.message === "Request body is too large") throw err;
-    throw new Error("Invalid JSON body");
+    if (err instanceof RequestError) throw err;
+    throw new RequestError(400, "Invalid JSON body");
   }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function readPositiveSafeInteger(value: string | null, label: string): number {
+  if (!value || !/^[1-9]\d*$/.test(value)) {
+    throw new RequestError(400, `${label} must be a positive safe integer`);
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new RequestError(400, `${label} must be a positive safe integer`);
+  }
+
+  return parsed;
+}
+
+async function readJsonObject(req: http.IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): Promise<Record<string, unknown>> {
+  const body = await readJson(req, maxBytes);
+  if (!isObject(body)) {
+    throw new RequestError(400, "Request body must be a JSON object");
+  }
+  return body;
+}
+
+function readSequenceFromBody(value: unknown): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return readPositiveSafeInteger(value, "sequence");
+  }
+  throw new RequestError(400, "sequence must be a positive safe integer");
 }
 
 function accessEmail(req: http.IncomingMessage): string | null {
@@ -131,6 +191,11 @@ if (process.env.JETBUILT_API_KEY) {
     indexPath: config.jetbuiltIndexPath,
     refreshMs: config.jetbuiltIndexRefreshMs,
   });
+}
+
+let sharePointClient: SharePointGraphClient | null = null;
+if (config.sharePoint) {
+  sharePointClient = createSharePointGraphClient(config.sharePoint, config.schematicMaxJsonBytes);
 }
 
 function publicResearchJob(record: ResearchJobRecord): QuoteImportResearchJobResponse {
@@ -228,6 +293,91 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     if (email === undefined) return;
     sendJson(ctx.res, 200, listCurrentTemplates(db), corsHeaders);
     return;
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/schematics") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    sendJson(ctx.res, 200, listRecentSchematics(db), corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "POST" && path === "/api/tateside/schematics") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    const body = await readJsonObject(ctx.req, config.schematicMaxJsonBytes);
+    const created = createSchematic(db, config.schematicRepositoryPath, config.schematicMaxJsonBytes, {
+      schematic: body.data,
+      source: typeof body.source === "string" ? body.source : undefined,
+      actorEmail: email,
+    });
+    sendJson(ctx.res, 201, created, corsHeaders);
+    return;
+  }
+
+  const schematicVersionMatch = path.match(/^\/api\/tateside\/schematics\/([^/]+)\/versions\/([^/]+)$/);
+  if (ctx.req.method === "GET" && schematicVersionMatch) {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    const schematicId = decodeURIComponent(schematicVersionMatch[1]);
+    const sequence = readPositiveSafeInteger(decodeURIComponent(schematicVersionMatch[2]), "sequence");
+    sendJson(ctx.res, 200, getSchematicVersion(db, config.schematicRepositoryPath, schematicId, sequence), corsHeaders);
+    return;
+  }
+
+  const schematicRestoreMatch = path.match(/^\/api\/tateside\/schematics\/([^/]+)\/restore$/);
+  if (ctx.req.method === "POST" && schematicRestoreMatch) {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    const schematicId = decodeURIComponent(schematicRestoreMatch[1]);
+    const body = await readJsonObject(ctx.req, config.schematicMaxJsonBytes);
+    const sequence = readSequenceFromBody(body.sequence);
+    const restored = restoreSchematicVersion(
+      db,
+      config.schematicRepositoryPath,
+      config.schematicMaxJsonBytes,
+      schematicId,
+      sequence,
+      {
+        source: typeof body.source === "string" ? body.source : undefined,
+        actorEmail: email,
+      },
+    );
+    sendJson(ctx.res, 200, restored, corsHeaders);
+    return;
+  }
+
+  const schematicVersionsMatch = path.match(/^\/api\/tateside\/schematics\/([^/]+)\/versions$/);
+  if (ctx.req.method === "GET" && schematicVersionsMatch) {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    const schematicId = decodeURIComponent(schematicVersionsMatch[1]);
+    sendJson(ctx.res, 200, listSchematicVersions(db, schematicId), corsHeaders);
+    return;
+  }
+
+  const schematicMatch = path.match(/^\/api\/tateside\/schematics\/([^/]+)$/);
+  if (schematicMatch) {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    const schematicId = decodeURIComponent(schematicMatch[1]);
+
+    if (ctx.req.method === "GET") {
+      sendJson(ctx.res, 200, getCurrentSchematic(db, config.schematicRepositoryPath, schematicId), corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "PUT") {
+      const body = await readJsonObject(ctx.req, config.schematicMaxJsonBytes);
+      const saved = saveSchematic(db, config.schematicRepositoryPath, config.schematicMaxJsonBytes, schematicId, {
+        schematic: body.data,
+        source: typeof body.source === "string" ? body.source : undefined,
+        actorEmail: email,
+      });
+      sendJson(ctx.res, 200, saved, corsHeaders);
+      return;
+    }
   }
 
   if (ctx.req.method === "POST" && path === "/api/tateside/devices/templates") {
@@ -536,8 +686,110 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     }
   }
 
-  if (path.startsWith("/api/tateside/sharepoint/")) {
-    sendJson(ctx.res, 501, { error: "SharePoint API is not implemented yet" }, corsHeaders);
+  if (ctx.req.method === "GET" && path === "/api/tateside/sharepoint/children") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+
+    if (!config.sharePoint || !sharePointClient) {
+      sendJson(ctx.res, 503, { error: "SharePoint is not configured on the TateSide API server" }, corsHeaders);
+      return;
+    }
+
+    const rawFolderId = ctx.url.searchParams.get("folderId");
+    const folderIdArg = rawFolderId && rawFolderId.trim() ? rawFolderId : null;
+    const list = await sharePointClient.listFolderChildren(folderIdArg);
+
+    const rootId = config.sharePoint.rootFolderId;
+    const isRoot = list.folder.id === rootId;
+    const outFolderId = isRoot ? null : list.folder.id;
+    const outFolderName = list.folder.name;
+
+    const outBreadcrumbs = list.breadcrumbs.map((bc) => ({
+      id: bc.id === rootId ? null : bc.id,
+      name: bc.name,
+    }));
+
+    let outParentId: string | null = null;
+    if (outBreadcrumbs.length >= 2) {
+      outParentId = outBreadcrumbs[outBreadcrumbs.length - 2].id;
+    }
+
+    const outItems = list.items.map((item) => {
+      const out: { id: string; name: string; type: "file" | "folder"; webUrl?: string; size?: number; lastModifiedDateTime?: string } = {
+        id: item.id,
+        name: item.name,
+        type: item.type,
+      };
+      if (item.webUrl != null) out.webUrl = item.webUrl;
+      if (typeof item.size === "number") out.size = item.size;
+      if (item.lastModifiedDateTime != null) out.lastModifiedDateTime = item.lastModifiedDateTime;
+      return out;
+    });
+
+    sendJson(ctx.res, 200, {
+      folderId: outFolderId,
+      folderName: outFolderName,
+      parentId: outParentId,
+      breadcrumbs: outBreadcrumbs,
+      items: outItems,
+    }, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "PUT" && path === "/api/tateside/sharepoint/schematics") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+
+    if (!config.sharePoint || !sharePointClient) {
+      sendJson(ctx.res, 503, { error: "SharePoint is not configured on the TateSide API server" }, corsHeaders);
+      return;
+    }
+
+    const bodyLimit = config.schematicMaxJsonBytes + 65536;
+    const body = await readJsonObject(ctx.req, bodyLimit);
+    const folderId = body.folderId;
+    if (folderId != null && typeof folderId !== "string") {
+      throw new RequestError(400, "folderId must be null, undefined or a string");
+    }
+    if (typeof body.fileName !== "string") {
+      throw new RequestError(400, "fileName must be a string");
+    }
+    if (body.data === undefined) {
+      throw new RequestError(400, "data is required");
+    }
+
+    const saved = await sharePointClient.uploadSchematic(folderId, body.fileName, body.data);
+    const meta: { id: string; name: string; webUrl?: string; lastModifiedDateTime?: string } = {
+      id: saved.id,
+      name: saved.name,
+    };
+    if (saved.webUrl != null) meta.webUrl = saved.webUrl;
+    if (saved.lastModifiedDateTime != null) meta.lastModifiedDateTime = saved.lastModifiedDateTime;
+    sendJson(ctx.res, 200, meta, corsHeaders);
+    return;
+  }
+
+  const sharePointSchematicMatch = path.match(/^\/api\/tateside\/sharepoint\/schematics\/([^/]+)$/);
+  if (ctx.req.method === "GET" && sharePointSchematicMatch) {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+
+    if (!config.sharePoint || !sharePointClient) {
+      sendJson(ctx.res, 503, { error: "SharePoint is not configured on the TateSide API server" }, corsHeaders);
+      return;
+    }
+
+    let fileId: string;
+    try {
+      fileId = decodeURIComponent(sharePointSchematicMatch[1]);
+    } catch {
+      throw new RequestError(400, "file id is invalid");
+    }
+    const data = await sharePointClient.downloadSchematic(fileId);
+    sendJson(ctx.res, 200, data, corsHeaders);
     return;
   }
 
@@ -553,10 +805,22 @@ const server = http.createServer((req, res) => {
   };
 
   handleRequest(ctx).catch((err) => {
+    const corsHeaders = makeCorsHeaders(req.headers.origin, config.allowedOrigin);
+    if (err instanceof SchematicStoreError) {
+      sendJson(res, err.status, { error: err.message }, corsHeaders);
+      return;
+    }
+    if (err instanceof RequestError) {
+      sendJson(res, err.status, { error: err.message }, corsHeaders);
+      return;
+    }
+    if (err instanceof SharePointGraphError) {
+      sendJson(res, err.status, { error: err.message }, corsHeaders);
+      return;
+    }
     const message = err instanceof Error ? err.message : "Internal server error";
-    sendJson(res, message.includes("invalid") || message.includes("required") || message.includes("large") ? 400 : 500, {
-      error: message,
-    });
+    const status = message.includes("invalid") || message.includes("required") || message.includes("large") ? 400 : 500;
+    sendJson(res, status, { error: status === 400 ? message : "Internal server error" }, corsHeaders);
   });
 });
 
