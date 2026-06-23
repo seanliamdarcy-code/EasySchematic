@@ -601,10 +601,7 @@ export function createSharePointGraphClient(
 
   function assertDriveAndSite(raw: RequiredGraphItemPayload): void {
     const parentReference = raw.parentReference;
-    if (
-      (parentReference?.driveId && parentReference.driveId !== sharePoint.driveId)
-      || (parentReference?.siteId && parentReference.siteId !== sharePoint.siteId)
-    ) {
+    if (parentReference?.driveId && parentReference.driveId !== sharePoint.driveId) {
       throw new SharePointGraphError(403, "SharePoint item is outside the configured root");
     }
   }

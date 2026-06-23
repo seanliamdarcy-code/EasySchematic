@@ -241,6 +241,43 @@ test("sharePointGraph reuses tokens and lists configured root content with bread
   assert.equal(mock.getTokenRequests(), 1);
 });
 
+test("sharePointGraph accepts Graph-normalized site IDs within the configured drive", async () => {
+  const rootItem = graphItem("root", "Schematics", "folder", null, {
+    parentReference: {
+      driveId: sharePointConfig.driveId,
+      siteId: "site-id-normalized-by-graph",
+    },
+  });
+
+  const fetchMock = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const parsed = new URL(url);
+    const method = init.method ?? "GET";
+
+    if (parsed.origin === "http://identity.local") {
+      return jsonResponse({ access_token: "token-1", expires_in: 3600 });
+    }
+    if (parsed.origin === "http://graph.local") {
+      if (method === "GET" && parsed.pathname === "/v1.0/drives/drive-1/items/root") {
+        return jsonResponse(rootItem);
+      }
+      if (method === "GET" && parsed.pathname === "/v1.0/drives/drive-1/items/root/children") {
+        return jsonResponse({ value: [] });
+      }
+    }
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  };
+
+  const client = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
+    fetch: fetchMock,
+    now: () => 1_000,
+  });
+
+  const rootList = await client.listFolderChildren();
+  assert.equal(rootList.folder.id, "root");
+  assert.deepEqual(rootList.items, []);
+});
+
 test("sharePointGraph rejects root escapes, forged page tokens, and malformed next links", async () => {
   const mock = makeMockFetch();
   const client = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
