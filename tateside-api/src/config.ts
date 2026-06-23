@@ -6,6 +6,7 @@ export interface ApiConfig {
   dbPath: string;
   schematicRepositoryPath: string;
   schematicMaxJsonBytes: number;
+  sharePointMaxUploadBytes: number;
   host: string;
   port: number;
   allowedOrigin: string;
@@ -139,6 +140,12 @@ export function getConfig(): ApiConfig {
       process.env.TATESIDE_SCHEMATIC_MAX_JSON_BYTES,
       10 * 1024 * 1024,
       "TATESIDE_SCHEMATIC_MAX_JSON_BYTES",
+      1024,
+    ),
+    sharePointMaxUploadBytes: integerFromEnv(
+      process.env.TATESIDE_SHAREPOINT_MAX_UPLOAD_BYTES,
+      25 * 1024 * 1024,
+      "TATESIDE_SHAREPOINT_MAX_UPLOAD_BYTES",
       1024,
     ),
     host: process.env.TATESIDE_API_HOST || "127.0.0.1",

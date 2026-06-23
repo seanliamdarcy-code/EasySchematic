@@ -79,6 +79,7 @@ function makeMockFetch() {
     ["file-1", graphItem("file-1", "Nested.json", "file", "folder-a")],
     ["file-direct", graphItem("file-direct", "Direct.json", "file", "root", { size: 48 })],
     ["upl-1", graphItem("upl-1", "Upload Name.json", "file", "folder-a")],
+    ["upl-pdf-1", graphItem("upl-pdf-1", "Upload Name.pdf", "file", "folder-a")],
     ["escape", graphItem("escape", "Escaped.json", "file", "outside-root")],
     ["outside-root", graphItem("outside-root", "Outside", "folder")],
     ["missing", null],
@@ -94,12 +95,16 @@ function makeMockFetch() {
       : init.body instanceof URLSearchParams
         ? init.body.toString()
         : null;
+    const bodyBytes = init.body instanceof Uint8Array
+      ? Buffer.from(init.body)
+      : null;
 
     requests.push({
       url,
       method,
       headers,
       bodyText,
+      bodyBytes,
       redirect: init.redirect ?? "follow",
     });
 
@@ -116,6 +121,9 @@ function makeMockFetch() {
 
       if (method === "PUT" && parsed.pathname === "/v1.0/drives/drive-1/items/folder-a:/Upload%20Name.json:/content") {
         return jsonResponse(items.get("upl-1"));
+      }
+      if (method === "PUT" && parsed.pathname === "/v1.0/drives/drive-1/items/folder-a:/Upload%20Name.pdf:/content") {
+        return jsonResponse(items.get("upl-pdf-1"));
       }
 
       if (method === "GET" && parsed.pathname === "/v1.0/drives/drive-1/items/root/children") {
@@ -210,7 +218,7 @@ async function expectGraphError(action, status, message) {
 
 test("sharePointGraph reuses tokens and lists configured root content with breadcrumbs", async () => {
   const mock = makeMockFetch();
-  const client = createSharePointGraphClient(sharePointConfig, 4096, {
+  const client = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
     fetch: mock.fetchMock,
     now: () => 1_000,
   });
@@ -235,7 +243,7 @@ test("sharePointGraph reuses tokens and lists configured root content with bread
 
 test("sharePointGraph rejects root escapes, forged page tokens, and malformed next links", async () => {
   const mock = makeMockFetch();
-  const client = createSharePointGraphClient(sharePointConfig, 4096, {
+  const client = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
     fetch: mock.fetchMock,
     now: () => 1_000,
   });
@@ -256,7 +264,7 @@ test("sharePointGraph rejects root escapes, forged page tokens, and malformed ne
     "page token is invalid",
   );
 
-  const malformedClient = createSharePointGraphClient(sharePointConfig, 4096, {
+  const malformedClient = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
     fetch: async (input, init = {}) => {
       const url = typeof input === "string" ? input : input.toString();
       const parsed = new URL(url);
@@ -286,7 +294,7 @@ test("sharePointGraph rejects root escapes, forged page tokens, and malformed ne
 
 test("sharePointGraph validates upload filenames and uploads JSON with the expected Graph request", async () => {
   const mock = makeMockFetch();
-  const client = createSharePointGraphClient(sharePointConfig, 4096, {
+  const client = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
     fetch: mock.fetchMock,
     now: () => 1_000,
   });
@@ -313,9 +321,46 @@ test("sharePointGraph validates upload filenames and uploads JSON with the expec
   assert.deepEqual(JSON.parse(putRequest.bodyText), makeSchematic("Uploaded"));
 });
 
+test("sharePointGraph validates PDF filenames and bytes and uploads PDF with the expected Graph request", async () => {
+  const mock = makeMockFetch();
+  const client = createSharePointGraphClient(sharePointConfig, 4096, 1024, {
+    fetch: mock.fetchMock,
+    now: () => 1_000,
+  });
+
+  for (const invalidName of ["bad/name.pdf", "bad<name>.pdf", ".", "..", "bad.pdf ", "bad?.pdf", "bad.json"]) {
+    await expectGraphError(
+      () => client.uploadPdf("folder-a", invalidName, new Uint8Array([1, 2, 3])),
+      400,
+      invalidName === "." || invalidName === ".." || invalidName === "bad.pdf "
+        ? "file name must not end with a dot or space"
+        : invalidName === "bad.json"
+          ? "file name must end with .pdf"
+          : "file name contains invalid characters",
+    );
+  }
+
+  await expectGraphError(
+    () => client.uploadPdf("folder-a", "Upload Name.pdf", new Uint8Array(1025)),
+    400,
+    "PDF exceeds 1024 bytes",
+  );
+
+  const uploaded = await client.uploadPdf("folder-a", "Upload Name.pdf", new Uint8Array([0x25, 0x50, 0x44, 0x46]));
+  assert.equal(uploaded.id, "upl-pdf-1");
+  assert.equal(uploaded.type, "file");
+
+  const putRequest = mock.requests.find((request) =>
+    request.method === "PUT"
+    && request.url === "http://graph.local/v1.0/drives/drive-1/items/folder-a:/Upload%20Name.pdf:/content?@microsoft.graph.conflictBehavior=replace");
+  assert.ok(putRequest);
+  assert.equal(putRequest.headers.get("content-type"), "application/pdf");
+  assert.deepEqual([...putRequest.bodyBytes], [0x25, 0x50, 0x44, 0x46]);
+});
+
 test("sharePointGraph downloads direct content and redirected content without leaking auth", async () => {
   const mock = makeMockFetch();
-  const client = createSharePointGraphClient(sharePointConfig, 4096, {
+  const client = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
     fetch: mock.fetchMock,
     now: () => 1_000,
   });
@@ -333,7 +378,7 @@ test("sharePointGraph downloads direct content and redirected content without le
 
 test("sharePointGraph maps Graph errors to safe client-facing messages", async () => {
   const mock = makeMockFetch();
-  const client = createSharePointGraphClient(sharePointConfig, 4096, {
+  const client = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
     fetch: mock.fetchMock,
     now: () => 1_000,
   });
@@ -398,7 +443,7 @@ test("sharePointGraph uploadSchematic rejects when Graph PUT response identifies
     throw new Error(`Unexpected request: ${method} ${url}`);
   };
 
-  const client = createSharePointGraphClient(sharePointConfig, 4096, {
+  const client = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
     fetch: fetchMock,
     now: () => 1_000,
   });
@@ -411,6 +456,59 @@ test("sharePointGraph uploadSchematic rejects when Graph PUT response identifies
 
   const putRequest = requests.find((r) => r.method === "PUT");
   assert.ok(putRequest);
+});
+
+test("sharePointGraph uploadPdf rejects when Graph PUT response identifies PDF outside configured root", async () => {
+  const escapeItem = graphItem("pdf-escape", "Escaped.pdf", "file", "outside-root");
+  const outsideRootFolder = graphItem("outside-root", "Outside", "folder");
+  const folderAItem = graphItem("folder-a", "Projects", "folder", "root");
+  const rootItem = graphItem("root", "Schematics", "folder");
+  const requests = [];
+
+  const fetchMock = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const method = init.method ?? "GET";
+    requests.push({ url, method });
+
+    const parsed = new URL(url);
+    if (parsed.origin === "http://identity.local") {
+      return jsonResponse({ access_token: "token-1", expires_in: 3600 });
+    }
+
+    if (parsed.origin === "http://graph.local") {
+      if (method === "GET" && parsed.pathname === "/v1.0/drives/drive-1/items/folder-a") {
+        return jsonResponse(folderAItem);
+      }
+      if (method === "GET" && parsed.pathname === "/v1.0/drives/drive-1/items/root") {
+        return jsonResponse(rootItem);
+      }
+      if (method === "GET" && parsed.pathname === "/v1.0/drives/drive-1/items/pdf-escape") {
+        return jsonResponse(escapeItem);
+      }
+      if (method === "GET" && parsed.pathname === "/v1.0/drives/drive-1/items/outside-root") {
+        return jsonResponse(outsideRootFolder);
+      }
+      if (method === "PUT" && parsed.pathname.includes("/content")) {
+        return jsonResponse({ id: "pdf-escape", name: "Escaped.pdf", file: {} });
+      }
+      throw new Error(`Unexpected graph request: ${method} ${url}`);
+    }
+
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  };
+
+  const client = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
+    fetch: fetchMock,
+    now: () => 1_000,
+  });
+
+  await expectGraphError(
+    () => client.uploadPdf("folder-a", "BadUpload.pdf", new Uint8Array([0x25, 0x50, 0x44, 0x46])),
+    403,
+    "SharePoint item is outside the configured root",
+  );
+
+  assert.ok(requests.some((request) => request.method === "PUT"));
 });
 
 test("sharePointGraph download rejects when Content-Length or body exceeds limit despite small metadata size", async () => {
@@ -463,7 +561,7 @@ test("sharePointGraph download rejects when Content-Length or body exceeds limit
     throw new Error(`Unexpected request: ${method} ${url}`);
   };
 
-  const client = createSharePointGraphClient(sharePointConfig, 4096, {
+  const client = createSharePointGraphClient(sharePointConfig, 4096, 4096, {
     fetch: fetchMock,
     now: () => 1_000,
   });
@@ -480,4 +578,3 @@ test("sharePointGraph download rejects when Content-Length or body exceeds limit
     "schematic JSON exceeds 4096 bytes",
   );
 });
-

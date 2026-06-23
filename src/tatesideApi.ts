@@ -125,7 +125,8 @@ async function requestJson<T>(
         ? "TateSide API endpoint is not available yet"
         : `TateSide API request failed (${res.status})`;
     const data = (await res.json().catch(() => null)) as { error?: string } | null;
-    throw new TatesideApiError(data?.error || fallback, res.status);
+    const text = data?.error ?? (await res.text().catch(() => ""));
+    throw new TatesideApiError(text || fallback, res.status);
   }
 
   if (res.status === 204) {
@@ -245,6 +246,38 @@ export async function saveSchematicToSharePoint(
 
 export async function loadSchematicFromSharePoint(fileId: string): Promise<unknown> {
   return requestJson<unknown>(`/sharepoint/schematics/${encodeURIComponent(fileId)}`);
+}
+
+export async function publishPdfToSharePoint(
+  folderId: string | null,
+  fileName: string,
+  data: Blob | ArrayBuffer,
+): Promise<SharePointSavedFile> {
+  const query = new URLSearchParams({ fileName });
+  if (folderId) {
+    query.set("folderId", folderId);
+  }
+
+  const body = data instanceof Blob ? data : new Blob([data], { type: "application/pdf" });
+  const res = await fetch(`${TATESIDE_API_URL}/sharepoint/pdfs?${query.toString()}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/pdf",
+    },
+    credentials: "include",
+    body,
+  });
+
+  if (!res.ok) {
+    const fallback =
+      res.status === 404
+        ? "TateSide API endpoint is not available yet"
+        : `TateSide API request failed (${res.status})`;
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new TatesideApiError(data?.error || fallback, res.status);
+  }
+
+  return res.json() as Promise<SharePointSavedFile>;
 }
 
 export async function createTatesideSchematic(

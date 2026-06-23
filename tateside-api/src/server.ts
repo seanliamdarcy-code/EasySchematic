@@ -86,22 +86,54 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<Buffer> 
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let settled = false;
+
+    function safeReject(err: unknown) {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    }
+
+    function safeResolve(val: Buffer) {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    }
 
     req.on("data", (chunk: Buffer) => {
+      if (settled) return;
       size += chunk.length;
       if (size > maxBytes) {
-        reject(new RequestError(413, "Request body is too large"));
-        req.destroy();
+        // Bound memory: stop collecting and clear any prior chunks.
+        chunks.length = 0;
+        safeReject(new RequestError(413, "Request body is too large"));
+        // Drain remaining request data safely (no destroy) so response can be sent.
+        req.resume();
         return;
       }
       chunks.push(chunk);
     });
 
     req.on("end", () => {
-      resolve(Buffer.concat(chunks));
+      if (settled) return;
+      safeResolve(Buffer.concat(chunks));
     });
 
-    req.on("error", reject);
+    req.on("error", (err) => {
+      if (settled) return;
+      safeReject(err);
+    });
+
+    // Early Content-Length check (for known-length bodies). Chunked bodies are still protected by accumulation below.
+    const clHeader = req.headers["content-length"];
+    if (clHeader != null) {
+      const declared = parseInt(Array.isArray(clHeader) ? clHeader[0] : clHeader, 10);
+      if (Number.isFinite(declared) && declared > maxBytes) {
+        safeReject(new RequestError(413, "Request body is too large"));
+        req.resume();
+        return;
+      }
+    }
   });
 }
 
@@ -195,7 +227,11 @@ if (process.env.JETBUILT_API_KEY) {
 
 let sharePointClient: SharePointGraphClient | null = null;
 if (config.sharePoint) {
-  sharePointClient = createSharePointGraphClient(config.sharePoint, config.schematicMaxJsonBytes);
+  sharePointClient = createSharePointGraphClient(
+    config.sharePoint,
+    config.schematicMaxJsonBytes,
+    config.sharePointMaxUploadBytes,
+  );
 }
 
 function publicResearchJob(record: ResearchJobRecord): QuoteImportResearchJobResponse {
@@ -225,6 +261,13 @@ function createResearchJobRecord(fileName: string, devices: ExtractedQuoteDevice
     startedAt: now,
     updatedAt: now,
   };
+}
+
+function isApplicationPdf(contentTypeHeader: string | string[] | undefined): boolean {
+  const rawValue = Array.isArray(contentTypeHeader) ? contentTypeHeader[0] : contentTypeHeader;
+  if (!rawValue) return false;
+  const mediaType = rawValue.split(";", 1)[0]?.trim().toLowerCase();
+  return mediaType === "application/pdf";
 }
 
 async function runResearchJob(record: ResearchJobRecord, devices: ExtractedQuoteDevice[], forceEscalation: boolean): Promise<void> {
@@ -761,6 +804,43 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     }
 
     const saved = await sharePointClient.uploadSchematic(folderId, body.fileName, body.data);
+    const meta: { id: string; name: string; webUrl?: string; lastModifiedDateTime?: string } = {
+      id: saved.id,
+      name: saved.name,
+    };
+    if (saved.webUrl != null) meta.webUrl = saved.webUrl;
+    if (saved.lastModifiedDateTime != null) meta.lastModifiedDateTime = saved.lastModifiedDateTime;
+    sendJson(ctx.res, 200, meta, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "PUT" && path === "/api/tateside/sharepoint/pdfs") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+
+    if (!config.sharePoint || !sharePointClient) {
+      sendJson(ctx.res, 503, { error: "SharePoint is not configured on the TateSide API server" }, corsHeaders);
+      return;
+    }
+
+    const contentTypeHeader = ctx.req.headers["content-type"];
+    if (!contentTypeHeader) {
+      throw new RequestError(400, "Content-Type must be application/pdf");
+    }
+    if (!isApplicationPdf(contentTypeHeader)) {
+      throw new RequestError(415, "Content-Type must be application/pdf");
+    }
+
+    const rawFolderId = ctx.url.searchParams.get("folderId");
+    const folderId = rawFolderId == null || rawFolderId === "" ? null : rawFolderId;
+    const fileName = ctx.url.searchParams.get("fileName");
+    if (!fileName) {
+      throw new RequestError(400, "fileName is required");
+    }
+
+    const pdfBytes = new Uint8Array(await readBody(ctx.req, config.sharePointMaxUploadBytes));
+    const saved = await sharePointClient.uploadPdf(folderId, fileName, pdfBytes);
     const meta: { id: string; name: string; webUrl?: string; lastModifiedDateTime?: string } = {
       id: saved.id,
       name: saved.name,

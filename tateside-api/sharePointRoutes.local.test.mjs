@@ -102,7 +102,7 @@ function jsonResponse(body, status = 200) {
   });
 }
 
-async function startApiServerWithSharePoint(mockBase) {
+async function startApiServerWithSharePoint(mockBase, maxUploadBytes) {
   const root = mkdtempSync(path.join(os.tmpdir(), "tateside-api-sp-routes-"));
   const port = await getAvailablePort();
   const child = spawn(
@@ -125,6 +125,7 @@ async function startApiServerWithSharePoint(mockBase) {
         TATESIDE_SHAREPOINT_ROOT_FOLDER_ID: "root",
         MS_ENTRA_BASE_URL: mockBase,
         MS_GRAPH_BASE_URL: mockBase,
+        ...(maxUploadBytes != null ? { TATESIDE_SHAREPOINT_MAX_UPLOAD_BYTES: String(maxUploadBytes) } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -233,9 +234,36 @@ function startMockServer() {
   ]);
 
   const server = http.createServer((req, res) => {
+    handleMockRequest(req, res).catch(() => {
+      res.writeHead(500);
+      res.end();
+    });
+  });
+
+  async function handleMockRequest(req, res) {
     const fullUrl = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
     const method = req.method || "GET";
-    requests.push({ method, url: fullUrl.toString(), pathname: fullUrl.pathname });
+
+    let body = Buffer.alloc(0);
+    if (method === "POST" || method === "PUT" || method === "PATCH") {
+      body = await new Promise((resolve, reject) => {
+        const chunks = [];
+        req.on("data", (chunk) => { chunks.push(chunk); });
+        req.on("end", () => { resolve(Buffer.concat(chunks)); });
+        req.on("error", reject);
+        if (req.readableEnded) {
+          resolve(Buffer.concat(chunks));
+        }
+      });
+    }
+
+    requests.push({
+      method,
+      url: fullUrl.toString(),
+      pathname: fullUrl.pathname,
+      headers: { ...req.headers },
+      body,
+    });
 
     // Token endpoint (identity)
     if (method === "POST" && fullUrl.pathname.includes("/oauth2/v2.0/token")) {
@@ -289,10 +317,20 @@ function startMockServer() {
 
       // upload PUT
       if (method === "PUT" && fullUrl.pathname.includes(":/") && fullUrl.pathname.includes("/content")) {
-        // return a payload for new uploaded file
-        const uploaded = makeGraphFile("saved-xyz", "TestSave.json", "folder-a");
-        // also store so later GET item works
-        items.set("saved-xyz", uploaded);
+        // Support raw binary body collection without treating as JSON.
+        // Return deterministic item based on uploaded fileName so PDF and JSON tests pass.
+        // Store so the uploadPdf's requireContainedItem (re-fetch) succeeds for containment.
+        let fileNameForUpload = "TestSave.json";
+        const nameMatch = fullUrl.pathname.match(/:\/([^:]+):\/content/);
+        if (nameMatch && nameMatch[1]) {
+          try {
+            fileNameForUpload = decodeURIComponent(nameMatch[1]);
+          } catch {}
+        }
+        const size = body ? body.length : 0;
+        const uploadId = fileNameForUpload.toLowerCase().endsWith(".pdf") ? "saved-pdf-xyz" : "saved-xyz";
+        const uploaded = makeGraphFile(uploadId, fileNameForUpload, "folder-a", size > 0 ? size : 128);
+        items.set(uploadId, uploaded);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(uploaded));
         return;
@@ -341,7 +379,7 @@ function startMockServer() {
 
     res.writeHead(404);
     res.end();
-  });
+  }
 
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
@@ -557,7 +595,137 @@ test("sharepoint routes: unconfigured server returns 503 for sharepoint paths", 
     assert.equal(res.status, 503);
     body = await readJson(res);
     assert.equal(body.error, "SharePoint is not configured on the TateSide API server");
+
+    // pdf upload (unconfigured)
+    url = new URL("/api/tateside/sharepoint/pdfs?folderId=folder-a&fileName=test.pdf", server.baseUrl);
+    res = await fetch(url, {
+      method: "PUT",
+      headers: { "Content-Type": "application/pdf", "Cf-Access-Authenticated-User-Email": accessEmail },
+      body: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(res.status, 503);
+    body = await readJson(res);
+    assert.equal(body.error, "SharePoint is not configured on the TateSide API server");
   } finally {
     await server.stop();
+  }
+});
+
+test("sharepoint routes: PUT pdfs with application/pdf forwards binary body and returns safe contained metadata", async () => {
+  const mock = await startMockServer();
+  const server = await startApiServerWithSharePoint(mock.base);
+  try {
+    // use actual binary Uint8Array body (minimal PDF header bytes)
+    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x35, 0x0a, 0x25]);
+    const url = new URL("/api/tateside/sharepoint/pdfs?folderId=folder-a&fileName=Project%20Drawing.pdf", server.baseUrl);
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/pdf",
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      body: pdfBytes,
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(res.status, 200);
+    const saved = await readJson(res);
+    // safe metadata only
+    assert.equal(saved.id, "saved-pdf-xyz");
+    assert.equal(saved.name, "Project Drawing.pdf");
+    assert.ok(saved.webUrl);
+
+    // assert mock received the exact PUT to expected content path with content-type and exact bytes
+    const putReq = mock.requests.find((r) => r.method === "PUT" && r.url.includes("Project%20Drawing.pdf") && r.url.includes("/content"));
+    assert.ok(putReq, "expected PUT to Graph content for PDF");
+    const ct = putReq.headers["content-type"] || putReq.headers["Content-Type"];
+    assert.ok(ct && ct.includes("application/pdf"), "expected application/pdf content-type to Graph");
+    const recvBody = putReq.body || Buffer.alloc(0);
+    assert.deepEqual([...recvBody], [...pdfBytes], "exact bytes must reach Graph");
+
+    // the upload path internally returned+re-fetched a contained PDF file (for containment check)
+    // (verified by 200 success which exercises requireContainedItem after PUT)
+  } finally {
+    await server.stop();
+    await mock.stop();
+  }
+});
+
+test("sharepoint routes: PUT pdfs with wrong content-type returns 415 safe error and no Graph upload", async () => {
+  const mock = await startMockServer();
+  const server = await startApiServerWithSharePoint(mock.base);
+  try {
+    const url = new URL("/api/tateside/sharepoint/pdfs?folderId=folder-a&fileName=test.pdf", server.baseUrl);
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "text/plain",
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      body: "hello not pdf",
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(res.status, 415);
+    const body = await readJson(res);
+    assert.equal(body.error, "Content-Type must be application/pdf");
+
+    // no upload attempted to Graph
+    const putReq = mock.requests.find((r) => r.method === "PUT" && r.url.includes("/content"));
+    assert.ok(!putReq, "no Graph upload on wrong content-type");
+  } finally {
+    await server.stop();
+    await mock.stop();
+  }
+});
+
+test("sharepoint routes: PUT pdfs exceeding small configured max returns 413 and no Graph upload", async () => {
+  const mock = await startMockServer();
+  const smallMax = 1024;
+  const server = await startApiServerWithSharePoint(mock.base, smallMax);
+  try {
+    const url = new URL("/api/tateside/sharepoint/pdfs?folderId=folder-a&fileName=big.pdf", server.baseUrl);
+    const bigBody = new Uint8Array(1025);
+    bigBody.fill(0x41);
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/pdf",
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      body: bigBody,
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(res.status, 413);
+    const body = await readJson(res);
+    assert.equal(body.error, "Request body is too large");
+
+    // no Graph upload
+    const putReq = mock.requests.find((r) => r.method === "PUT" && r.url.includes("/content"));
+    assert.ok(!putReq, "no Graph upload when body exceeds configured max");
+  } finally {
+    await server.stop();
+    await mock.stop();
+  }
+});
+
+test("sharepoint routes: missing CF identity on PDF endpoint returns 401", async () => {
+  const mock = await startMockServer();
+  const server = await startApiServerWithSharePoint(mock.base);
+  try {
+    const url = new URL("/api/tateside/sharepoint/pdfs?folderId=folder-a&fileName=test.pdf", server.baseUrl);
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/pdf",
+      },
+      body: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(res.status, 401);
+    const body = await readJson(res);
+    assert.equal(body.error, "Cloudflare Access identity header is required");
+  } finally {
+    await server.stop();
+    await mock.stop();
   }
 });

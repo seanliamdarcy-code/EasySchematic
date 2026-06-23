@@ -627,13 +627,39 @@ export async function exportPdf(
   titleBlock: TitleBlock,
   layout: TitleBlockLayout,
 ): Promise<void> {
+  const result = await exportPdfBlob(rfInstance, paperSize, orientation, scale, titleBlock, layout);
+  if (!result) return;
+  const url = URL.createObjectURL(result.blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = result.fileName;
+    anchor.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+export interface ExportedPdfBlob {
+  blob: Blob;
+  fileName: string;
+}
+
+export async function exportPdfBlob(
+  rfInstance: ReactFlowInstance,
+  paperSize: PaperSize,
+  orientation: Orientation,
+  scale: number,
+  titleBlock: TitleBlock,
+  layout: TitleBlockLayout,
+): Promise<ExportedPdfBlob | null> {
   const nodes = rfInstance.getNodes();
-  if (nodes.length === 0) return;
+  if (nodes.length === 0) return null;
 
   const { printOriginOffsetX, printOriginOffsetY } = useSchematicStore.getState();
   const pages = computePageGrid(paperSize, orientation, scale, nodes, layout.heightIn, printOriginOffsetX, printOriginOffsetY);
 
-  if (pages.length === 0) return;
+  if (pages.length === 0) return null;
 
   showLoadingOverlay();
 
@@ -660,12 +686,16 @@ export async function exportPdf(
   } catch (err) {
     console.error("Failed to load Inter font for PDF:", err);
     removeLoadingOverlay();
-    return;
+    return null;
   }
 
   // Save current state
   const savedViewport = rfInstance.getViewport();
   const container = document.querySelector(".react-flow") as HTMLElement;
+  if (!container) {
+    removeLoadingOverlay();
+    return null;
+  }
   const savedWidth = container.style.width;
   const savedHeight = container.style.height;
 
@@ -718,7 +748,9 @@ export async function exportPdf(
 
       // Capture the viewport element
       const viewportEl = document.querySelector(".react-flow__viewport") as HTMLElement;
-      if (!viewportEl) continue;
+      if (!viewportEl) {
+        throw new Error("PDF export viewport was not available");
+      }
 
       // Firefox returns `undefined` from getPropertyValue() for unrecognized CSS
       // properties, but html-to-image calls .trim() on the result without a null
@@ -777,9 +809,12 @@ export async function exportPdf(
       }
     }
 
-    // Save the PDF
     updateProgress("Saving PDF...");
-    doc.save(`${fileName}.pdf`);
+    const blob = doc.output("blob");
+    return {
+      blob,
+      fileName: `${fileName}.pdf`,
+    };
   } finally {
     // Restore everything
     document.documentElement.removeAttribute("data-export-capturing");

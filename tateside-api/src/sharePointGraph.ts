@@ -44,6 +44,11 @@ export interface SharePointGraphClient {
     fileName: string,
     schematic: unknown,
   ): Promise<SharePointGraphItem>;
+  uploadPdf(
+    folderId: string | null | undefined,
+    fileName: string,
+    pdfBytes: Uint8Array,
+  ): Promise<SharePointGraphItem>;
   downloadSchematic(fileId: string): Promise<SchematicFile>;
   resolveMetadata(itemId: string): Promise<SharePointGraphItem>;
 }
@@ -138,7 +143,7 @@ function assertFileId(fileId: string): string {
   return assertSafeItemId(fileId, "file id");
 }
 
-function assertJsonFileName(fileName: string): string {
+function assertUploadFileName(fileName: string, extension: ".json" | ".pdf"): string {
   const value = fileName;
   if (!value.trim()) {
     throw new SharePointGraphError(400, "file name is required");
@@ -159,10 +164,19 @@ function assertJsonFileName(fileName: string): string {
   ) {
     throw new SharePointGraphError(400, "file name contains invalid characters");
   }
-  if (!/^[^.].*\.json$/i.test(value)) {
-    throw new SharePointGraphError(400, "file name must end with .json");
+  const extensionPattern = extension === ".json" ? /\.json$/i : /\.pdf$/i;
+  if (!/^[^.]/.test(value) || !extensionPattern.test(value)) {
+    throw new SharePointGraphError(400, `file name must end with ${extension}`);
   }
   return value;
+}
+
+function assertJsonFileName(fileName: string): string {
+  return assertUploadFileName(fileName, ".json");
+}
+
+function assertPdfFileName(fileName: string): string {
+  return assertUploadFileName(fileName, ".pdf");
 }
 
 function canonicalizeJson(value: unknown, depth = 0): unknown {
@@ -319,6 +333,7 @@ function selectFields(): string {
 export function createSharePointGraphClient(
   sharePoint: SharePointConfig,
   schematicMaxJsonBytes: number,
+  sharePointMaxUploadBytes: number,
   options: SharePointGraphClientOptions = {},
 ): SharePointGraphClient {
   const fetchImpl = options.fetch ?? globalThis.fetch;
@@ -466,6 +481,20 @@ export function createSharePointGraphClient(
       await readGraphError(response);
     }
     return await response.json() as T;
+  }
+
+  async function uploadGraphContent(
+    path: string,
+    contentType: string,
+    body: Uint8Array | string,
+  ): Promise<GraphItemPayload> {
+    return await graphJson<GraphItemPayload>(path, {
+      method: "PUT",
+      headers: {
+        "Content-Type": contentType,
+      },
+      body,
+    });
   }
 
   async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
@@ -671,22 +700,48 @@ export function createSharePointGraphClient(
       const safeFileName = assertJsonFileName(fileName);
       const prepared = validateSchematicShape(schematic, schematicMaxJsonBytes);
 
-      const uploaded = await graphJson<GraphItemPayload>(
+      const uploaded = await uploadGraphContent(
         `/drives/${encodeURIComponent(sharePoint.driveId)}/items/${encodeURIComponent(targetFolder.current.item.id)}:`
         + `/${encodeURIComponent(safeFileName)}:/content?@microsoft.graph.conflictBehavior=replace`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json; charset=utf-8",
-          },
-          body: prepared.json,
-        },
+        "application/json; charset=utf-8",
+        prepared.json,
       );
       const item = mapGraphItem(uploaded);
       if (item.type !== "file") {
         throw new SharePointGraphError(502, "SharePoint upload did not return a file");
       }
       return (await requireContainedFile(item.id)).item;
+    },
+
+    async uploadPdf(folderId, fileName, pdfBytes) {
+      const targetFolderId = folderId == null ? sharePoint.rootFolderId : assertFolderId(folderId);
+      const targetFolder = await requireContainedFolder(targetFolderId);
+      const safeFileName = assertPdfFileName(fileName);
+      if (!(pdfBytes instanceof Uint8Array)) {
+        throw new SharePointGraphError(400, "PDF upload bytes are invalid");
+      }
+      if (pdfBytes.byteLength > sharePointMaxUploadBytes) {
+        throw new SharePointGraphError(400, `PDF exceeds ${sharePointMaxUploadBytes} bytes`);
+      }
+
+      const uploaded = await uploadGraphContent(
+        `/drives/${encodeURIComponent(sharePoint.driveId)}/items/${encodeURIComponent(targetFolder.current.item.id)}:`
+        + `/${encodeURIComponent(safeFileName)}:/content?@microsoft.graph.conflictBehavior=replace`,
+        "application/pdf",
+        pdfBytes,
+      );
+      const item = mapGraphItem(uploaded);
+      if (item.type !== "file") {
+        throw new SharePointGraphError(502, "SharePoint upload did not return a file");
+      }
+      const contained = await requireContainedItem(item.id);
+      if (contained.item.type !== "file") {
+        throw new SharePointGraphError(502, "SharePoint upload did not return a file");
+      }
+      if (!contained.item.name.toLowerCase().endsWith(".pdf")) {
+        throw new SharePointGraphError(502, "SharePoint upload did not return a PDF file");
+      }
+      return contained.item;
     },
 
     async downloadSchematic(fileId) {

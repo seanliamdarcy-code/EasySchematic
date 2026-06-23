@@ -4,7 +4,7 @@ import { useSchematicStore } from "../store";
 import { clearCache } from "../cloudCache";
 import { exportImage } from "../exportUtils";
 import { exportDxf } from "../dxfExport";
-import { exportPdf } from "../pdfExport";
+import { exportPdf, exportPdfBlob, type ExportedPdfBlob } from "../pdfExport";
 import { exportTemplatesToFile, readTemplateFile } from "../templateExport";
 import { getPaperSize } from "../printConfig";
 import type { SchematicFile, SchematicNode, AnnotationData } from "../types";
@@ -516,6 +516,19 @@ export default function MenuBar() {
     const state = useSchematicStore.getState();
     const paper = getPaperSize(state.printPaperId, state.printCustomWidthIn, state.printCustomHeightIn);
     exportPdf(
+      reactFlowInstance,
+      paper,
+      state.printOrientation,
+      state.printScale,
+      state.titleBlock,
+      state.titleBlockLayout,
+    );
+  };
+
+  const buildCurrentPdfForSharePoint = async (): Promise<ExportedPdfBlob | null> => {
+    const state = useSchematicStore.getState();
+    const paper = getPaperSize(state.printPaperId, state.printCustomWidthIn, state.printCustomHeightIn);
+    return exportPdfBlob(
       reactFlowInstance,
       paper,
       state.printOrientation,
@@ -1059,7 +1072,10 @@ export default function MenuBar() {
         <CsvImportWizard onClose={() => setShowCsvImport(false)} />
       )}
       {showSharePointProjects && (
-        <SharePointProjectDialog onClose={() => setShowSharePointProjects(false)} />
+        <SharePointProjectDialog
+          onClose={() => setShowSharePointProjects(false)}
+          onPublishPdf={buildCurrentPdfForSharePoint}
+        />
       )}
     </div>
   );
