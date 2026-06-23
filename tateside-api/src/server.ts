@@ -270,6 +270,8 @@ function isApplicationPdf(contentTypeHeader: string | string[] | undefined): boo
   return mediaType === "application/pdf";
 }
 
+const MAX_PAID_DEVICE_RESEARCH_BATCH_SIZE = 5;
+
 async function runResearchJob(record: ResearchJobRecord, devices: ExtractedQuoteDevice[], forceEscalation: boolean): Promise<void> {
   try {
     record.status = "running";
@@ -688,6 +690,13 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
 
     if (devices.length === 0) {
       sendJson(ctx.res, 400, { error: "At least one missing device is required for research" }, corsHeaders);
+      return;
+    }
+
+    if (devices.length > MAX_PAID_DEVICE_RESEARCH_BATCH_SIZE) {
+      sendJson(ctx.res, 400, {
+        error: "Paid AI research is limited to 5 devices per batch. Select a smaller batch and run the next group separately.",
+      }, corsHeaders);
       return;
     }
 

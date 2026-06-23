@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getOpenAiWorkflowConfig } from "../../tateside-api/src/openaiResponses.ts";
-import { getEscalationReason, getHighRiskDeviceTypes } from "../../tateside-api/src/deviceResearch.ts";
+import { getEscalationReason, getHighRiskDeviceTypes, getResearchPassRoute } from "../../tateside-api/src/deviceResearch.ts";
 import { openDatabase, runMigrations } from "../../tateside-api/src/db.ts";
 import { saveTemplates, listCurrentTemplates } from "../../tateside-api/src/deviceStore.ts";
 import type { DeviceTemplate } from "../types";
@@ -29,11 +29,11 @@ describe("quote import research config", () => {
     expect(config.deviceResearchModel).toBe("gpt-5.4-mini");
     expect(config.deviceEscalationModel).toBe("gpt-5.4");
     expect(config.quoteExtractionReasoningEffort).toBe("low");
-    expect(config.deviceResearchReasoningEffort).toBe("medium");
-    expect(config.deviceEscalationReasoningEffort).toBe("medium");
+    expect(config.deviceResearchReasoningEffort).toBe("low");
+    expect(config.deviceEscalationReasoningEffort).toBe("low");
   });
 
-  it("avoids medium-confidence escalation for simple devices but keeps it for unresolved high-risk devices", () => {
+  it("returns advisory reasons for uncertain research results", () => {
     const highRiskTemplate: Omit<DeviceTemplate, "id" | "version"> = {
       label: "Q-SYS Core 110f",
       manufacturer: "QSC",
@@ -80,6 +80,21 @@ describe("quote import research config", () => {
       .toBe("Confidence is low");
     expect(getEscalationReason(highRiskTemplate, "high", false, [], { ok: true, errors: [], warnings: [] }))
       .toBe("No official manufacturer source was found");
+  });
+
+  it("selects one-pass routes for routine and manual modes", () => {
+    const config = getOpenAiWorkflowConfig();
+
+    expect(getResearchPassRoute(false, config)).toEqual({
+      model: "gpt-5.4-mini",
+      reasoningEffort: "low",
+      purpose: "routine_generation",
+    });
+    expect(getResearchPassRoute(true, config)).toEqual({
+      model: "gpt-5.4",
+      reasoningEffort: "low",
+      purpose: "escalated_verification",
+    });
   });
 
   it("preserves AI provenance when an approved draft is saved through the normal library path", () => {

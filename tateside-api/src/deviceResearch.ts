@@ -339,7 +339,7 @@ function buildMetadata(
     warnings,
     escalationRequired: escalationReason !== null,
     escalationReason,
-    escalationOccurred: modelCallRecords.length > 1,
+    escalationOccurred: modelCallRecords.some((record) => record.purpose === "escalated_verification"),
     modelCallRecords,
   };
 }
@@ -504,6 +504,29 @@ function portSummaryFromTemplate(template: Omit<DeviceTemplate, "id" | "version"
   });
 }
 
+export function getResearchPassRoute(
+  forceEscalation: boolean | undefined,
+  config: ReturnType<typeof getOpenAiWorkflowConfig>,
+): {
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  purpose: "routine_generation" | "escalated_verification";
+} {
+  if (forceEscalation) {
+    return {
+      model: config.deviceEscalationModel,
+      reasoningEffort: config.deviceEscalationReasoningEffort,
+      purpose: "escalated_verification",
+    };
+  }
+
+  return {
+    model: config.deviceResearchModel,
+    reasoningEffort: config.deviceResearchReasoningEffort,
+    purpose: "routine_generation",
+  };
+}
+
 export async function researchQuoteDevices(options: ResearchRouteOptions): Promise<QuoteImportResearchResponse> {
   const config = getOpenAiWorkflowConfig();
   const resolver = WEB_SEARCH_RESOLVER;
@@ -518,37 +541,27 @@ export async function researchQuoteDevices(options: ResearchRouteOptions): Promi
     }
 
     try {
-      const firstPass = await runResearchPass(
+      const route = getResearchPassRoute(options.forceEscalation, config);
+      const finalPass = await runResearchPass(
         device,
         options.fileName,
-        options.forceEscalation ? config.deviceEscalationModel : config.deviceResearchModel,
-        options.forceEscalation ? config.deviceEscalationReasoningEffort : config.deviceResearchReasoningEffort,
-        options.forceEscalation ? "escalated_verification" : "routine_generation",
+        route.model,
+        route.reasoningEffort,
+        route.purpose,
         resolver,
       );
-      modelCallRecords.push(firstPass.modelCall);
+      modelCallRecords.push(finalPass.modelCall);
 
-      let finalPass = firstPass;
+      const advisoryEscalationReason = getEscalationReason(
+        finalPass.template,
+        finalPass.confidence,
+        finalPass.officialSourceFound,
+        finalPass.warnings,
+        finalPass.validation,
+      );
       const escalationReason = options.forceEscalation
         ? "Manual stronger-model retry requested"
-        : getEscalationReason(firstPass.template, firstPass.confidence, firstPass.officialSourceFound, firstPass.warnings, firstPass.validation);
-
-      if (!options.forceEscalation && escalationReason) {
-        const escalatedPass = await runResearchPass(
-          device,
-          options.fileName,
-          config.deviceEscalationModel,
-          config.deviceEscalationReasoningEffort,
-          "escalated_verification",
-          resolver,
-        );
-        modelCallRecords.push(escalatedPass.modelCall);
-        finalPass = escalatedPass;
-      }
-
-      const finalEscalationReason = modelCallRecords.length > 1
-        ? (options.forceEscalation ? "Manual stronger-model retry requested" : escalationReason)
-        : null;
+        : advisoryEscalationReason;
       const metadata = buildMetadata(
         device,
         options.fileName,
@@ -558,7 +571,7 @@ export async function researchQuoteDevices(options: ResearchRouteOptions): Promi
         finalPass.officialSourceFound,
         finalPass.sourceReferences,
         finalPass.warnings,
-        finalEscalationReason,
+        escalationReason,
       );
       const template = finalPass.template
         ? {
@@ -567,7 +580,7 @@ export async function researchQuoteDevices(options: ResearchRouteOptions): Promi
         }
         : null;
       const reviewStatus =
-        finalPass.validation.ok && finalPass.confidence !== "low"
+        finalPass.validation.ok && finalPass.confidence !== "low" && advisoryEscalationReason === null
           ? "draft_ready"
           : "manual_review_required";
 
