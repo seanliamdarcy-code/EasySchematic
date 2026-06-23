@@ -363,7 +363,10 @@ export async function importDevicesFromJetbuiltProject(projectId: string): Promi
 export async function researchQuoteDevices(
   fileName: string,
   devices: ExtractedQuoteDevice[],
-  options: { forceEscalation?: boolean } = {},
+  options: {
+    forceEscalation?: boolean;
+    onProgress?: (job: QuoteImportResearchJobResponse) => void;
+  } = {},
 ): Promise<QuoteImportResearchResponse> {
   const startResponse = await requestJson<QuoteImportResearchJobResponse>("/quote-import/research", {
     method: "POST",
@@ -373,6 +376,8 @@ export async function researchQuoteDevices(
       ...(options.forceEscalation ? { forceEscalation: true } : {}),
     },
   });
+
+  options.onProgress?.(startResponse);
 
   if (startResponse.status === "complete" && startResponse.result) {
     return startResponse.result;
@@ -389,6 +394,7 @@ export async function researchQuoteDevices(
 
     await sleep(2000);
     jobResponse = await requestJson<QuoteImportResearchJobResponse>(`/quote-import/research/${encodeURIComponent(jobResponse.jobId)}`);
+    options.onProgress?.(jobResponse);
   }
 
   if (jobResponse.status === "complete" && jobResponse.result) {

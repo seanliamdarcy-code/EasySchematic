@@ -18,8 +18,8 @@ export function getOpenAiWorkflowConfig(): OpenAiWorkflowConfig {
     deviceResearchModel: process.env.OPENAI_DEVICE_RESEARCH_MODEL || "gpt-5.4-mini",
     deviceEscalationModel: process.env.OPENAI_DEVICE_ESCALATION_MODEL || "gpt-5.4",
     quoteExtractionReasoningEffort: normalizeEffort(process.env.OPENAI_QUOTE_EXTRACTION_REASONING_EFFORT, "low"),
-    deviceResearchReasoningEffort: normalizeEffort(process.env.OPENAI_DEVICE_RESEARCH_REASONING_EFFORT, "medium"),
-    deviceEscalationReasoningEffort: normalizeEffort(process.env.OPENAI_DEVICE_ESCALATION_REASONING_EFFORT, "medium"),
+    deviceResearchReasoningEffort: normalizeEffort(process.env.OPENAI_DEVICE_RESEARCH_REASONING_EFFORT, "low"),
+    deviceEscalationReasoningEffort: normalizeEffort(process.env.OPENAI_DEVICE_ESCALATION_REASONING_EFFORT, "low"),
   };
 }
 

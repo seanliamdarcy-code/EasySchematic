@@ -52,6 +52,8 @@ const STATUS_CLASSES: Record<LibraryMatchStatus, string> = {
   missing: "bg-red-100 text-red-800 border-red-200",
 };
 
+const MAX_PAID_RESEARCH_SELECTION = 5;
+
 export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChanged }: Props) {
   const addToast = useSchematicStore((s) => s.addToast);
   const importCustomTemplates = useSchematicStore((s) => s.importCustomTemplates);
@@ -79,7 +81,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [researchResults, setResearchResults] = useState<QuoteImportDraftReview[]>([]);
   const [possibleMatchDecisions, setPossibleMatchDecisions] = useState<Record<string, PossibleMatchDecision>>({});
   const [selectedDraftKeys, setSelectedDraftKeys] = useState<Set<string>>(new Set());
-  const [excludedExtractedKeys, setExcludedExtractedKeys] = useState<Set<string>>(new Set());
+  const [selectedResearchKeys, setSelectedResearchKeys] = useState<Set<string>>(new Set());
   const [ignoredDraftKeys, setIgnoredDraftKeys] = useState<Set<string>>(new Set());
   const [editingDraft, setEditingDraft] = useState<EditingDraftState | null>(null);
 
@@ -108,7 +110,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setResearchResults([]);
     setPossibleMatchDecisions({});
     setSelectedDraftKeys(new Set());
-    setExcludedExtractedKeys(new Set());
+    setSelectedResearchKeys(new Set());
     setIgnoredDraftKeys(new Set());
     setEditingDraft(null);
     onClose();
@@ -129,9 +131,19 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     });
   }, [extraction, possibleMatchDecisions]);
 
-  const devicesNeedingResearch = useMemo(
-    () => missingDevices.filter((item) => !excludedExtractedKeys.has(keyForExtractedDevice(item))),
-    [missingDevices, excludedExtractedKeys],
+  const researchResultKeys = useMemo(
+    () => new Set(researchResults.map((item) => keyForExtractedDevice(item.extractedDevice))),
+    [researchResults],
+  );
+
+  const unresolvedMissingDevices = useMemo(
+    () => missingDevices.filter((item) => !researchResultKeys.has(keyForExtractedDevice(item))),
+    [missingDevices, researchResultKeys],
+  );
+
+  const selectedResearchDevices = useMemo(
+    () => unresolvedMissingDevices.filter((item) => selectedResearchKeys.has(keyForExtractedDevice(item))),
+    [unresolvedMissingDevices, selectedResearchKeys],
   );
 
   const alreadyInLibraryItems = useMemo(() => {
@@ -168,7 +180,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setResearchResults([]);
     setPossibleMatchDecisions({});
     setSelectedDraftKeys(new Set());
-    setExcludedExtractedKeys(new Set());
+    setSelectedResearchKeys(new Set());
     setIgnoredDraftKeys(new Set());
     setResearchProgress(null);
   };
@@ -270,7 +282,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       setResearchResults([]);
       setPossibleMatchDecisions({});
       setSelectedDraftKeys(new Set());
-      setExcludedExtractedKeys(new Set());
+      setSelectedResearchKeys(new Set());
       setIgnoredDraftKeys(new Set());
       addToast(`Imported ${response.extractedCount} Jetbuilt device candidate${response.extractedCount === 1 ? "" : "s"}`, "success");
     } catch (err) {
@@ -282,53 +294,54 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   };
 
   const handleResearchMissing = async () => {
-    if (!extraction || devicesNeedingResearch.length === 0) return;
+    if (!extraction || selectedResearchDevices.length === 0) return;
     if (unresolvedPossibleMatches.length > 0) {
       setError("Review each possible library match before researching missing devices.");
       return;
     }
+
+    const confirmed = window.confirm(
+      `This will run paid AI web research for ${selectedResearchDevices.length} device${selectedResearchDevices.length === 1 ? "" : "s"}. Uncertain results will not be automatically upgraded. Continue?`,
+    );
+    if (!confirmed) return;
+
     setResearching(true);
-    setResearchProgress({ current: 0, total: devicesNeedingResearch.length, label: "Starting research..." });
+    setResearchProgress({ current: 0, total: selectedResearchDevices.length, label: "Starting paid AI research..." });
     setError(null);
     try {
-      const aggregatedResults: QuoteImportDraftReview[] = [];
-      const warnings = new Set<string>();
-
-      for (let index = 0; index < devicesNeedingResearch.length; index += 1) {
-        const item = devicesNeedingResearch[index];
-        setResearchProgress({
-          current: index + 1,
-          total: devicesNeedingResearch.length,
-          label: `Researching ${item.manufacturer ? `${item.manufacturer} ` : ""}${item.model}`.trim(),
-        });
-
-        const response = await researchQuoteDevices(extraction.fileName, [{
-          manufacturer: item.manufacturer,
-          model: item.model,
-          description: item.description,
-          quantity: item.quantity,
-          sourceLineText: item.sourceLineText,
-          normalizedLookupKey: item.normalizedLookupKey,
-        }]);
-
-        aggregatedResults.push(...response.results);
-        response.warnings.forEach((warning) => warnings.add(warning));
-        setResearchResults([...aggregatedResults]);
-        setSelectedDraftKeys((current) => {
-          const next = new Set(current);
-          response.results.forEach((result) => {
-            if (result.reviewStatus === "draft_ready" && result.template) {
-              next.add(keyForExtractedDevice(result.extractedDevice));
-            }
+      const response = await researchQuoteDevices(extraction.fileName, selectedResearchDevices, {
+        onProgress: (job) => {
+          setResearchProgress({
+            current: job.completed,
+            total: job.total,
+            label: job.currentLabel ? `Researching ${job.currentLabel}` : "Starting paid AI research...",
           });
-          return next;
+        },
+      });
+      const resultKeys = new Set(response.results.map((result) => keyForExtractedDevice(result.extractedDevice)));
+      setResearchResults((current) => [
+        ...current.filter((entry) => !resultKeys.has(keyForExtractedDevice(entry.extractedDevice))),
+        ...response.results,
+      ]);
+      setSelectedResearchKeys((current) => {
+        const next = new Set(current);
+        resultKeys.forEach((key) => next.delete(key));
+        return next;
+      });
+      setSelectedDraftKeys((current) => {
+        const next = new Set(current);
+        response.results.forEach((result) => {
+          if (result.reviewStatus === "draft_ready" && result.template) {
+            next.add(keyForExtractedDevice(result.extractedDevice));
+          }
         });
-      }
+        return next;
+      });
 
-      if (warnings.size > 0) {
-        addToast([...warnings].join(" "), "info");
+      if (response.warnings.length > 0) {
+        addToast(response.warnings.join(" "), "info");
       } else {
-        addToast(`Researched ${aggregatedResults.length} missing device candidate${aggregatedResults.length === 1 ? "" : "s"}`, "success");
+        addToast(`Researched ${response.results.length} missing device candidate${response.results.length === 1 ? "" : "s"}`, "success");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Missing-device research failed");
@@ -424,15 +437,34 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     });
   };
 
-  const toggleExcludedExtracted = (item: QuoteImportResultItem) => {
+  const isResearchSelected = (item: QuoteImportResultItem) => selectedResearchKeys.has(keyForExtractedDevice(item));
+
+  const toggleResearchSelection = (item: QuoteImportResultItem) => {
     const key = keyForExtractedDevice(item);
-    setExcludedExtractedKeys((current) => {
+    setSelectedResearchKeys((current) => {
       const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (next.has(key)) {
+        next.delete(key);
+        return next;
+      }
+      if (next.size >= MAX_PAID_RESEARCH_SELECTION) {
+        addToast(`Paid AI research is limited to ${MAX_PAID_RESEARCH_SELECTION} devices per batch.`, "info");
+        return current;
+      }
+      next.add(key);
       return next;
     });
   };
+
+  const selectResearchBatch = () => {
+    const selected = unresolvedMissingDevices.slice(0, MAX_PAID_RESEARCH_SELECTION);
+    setSelectedResearchKeys(new Set(selected.map(keyForExtractedDevice)));
+    if (unresolvedMissingDevices.length > MAX_PAID_RESEARCH_SELECTION) {
+      addToast(`Selected the first ${MAX_PAID_RESEARCH_SELECTION} devices. Run the next group separately.`, "info");
+    }
+  };
+
+  const clearResearchSelection = () => setSelectedResearchKeys(new Set());
 
   const handleDraftEdited = (updatedTemplate: DeviceTemplate) => {
     if (!editingDraft) return;
@@ -500,7 +532,11 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
         const remaining = current.filter((entry) => keyForExtractedDevice(entry.extractedDevice) !== draftKey);
         return [...remaining, review];
       });
-      setExcludedExtractedKeys((current) => new Set([...current, draftKey]));
+      setSelectedResearchKeys((current) => {
+        const next = new Set(current);
+        next.delete(draftKey);
+        return next;
+      });
       if (validation.ok) {
         setSelectedDraftKeys((current) => new Set([...current, draftKey]));
       }
@@ -766,7 +802,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   <SummaryCard label="Extracted devices" value={String(extraction.extractedCount)} tone="default" />
                   <SummaryCard label="Already in library" value={String(alreadyInLibraryItems.length)} tone="success" />
                   <SummaryCard label="Possible matches" value={String((extraction.results ?? []).filter((item) => item.status === "possible_match").length)} tone="warning" />
-                  <SummaryCard label="Missing devices" value={String(missingDevices.length)} tone="danger" />
+                  <SummaryCard label="Missing devices" value={String(unresolvedMissingDevices.length)} tone="danger" />
                 </div>
 
                 <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
@@ -809,28 +845,35 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   )}
                 </SectionCard>
 
-                <SectionCard title="Missing Devices" count={missingDevices.length} action={(
+                <SectionCard title="Missing Devices" count={unresolvedMissingDevices.length} action={(<div className="flex items-center gap-2">
                   <button
                     onClick={handleResearchMissing}
-                    disabled={devicesNeedingResearch.length === 0 || researching || unresolvedPossibleMatches.length > 0}
+                    disabled={selectedResearchDevices.length === 0 || researching || unresolvedPossibleMatches.length > 0}
                     className="px-3 py-1.5 rounded bg-blue-500 text-white text-xs hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   >
                     {researching
                       ? (researchProgress ? `${researchProgress.current}/${researchProgress.total} Researching...` : "Researching...")
-                      : "Research Missing Devices"}
+                      : `Research selected with AI (${selectedResearchDevices.length}/${MAX_PAID_RESEARCH_SELECTION})`}
                   </button>
-                )}>
+                  <button
+                    onClick={selectResearchBatch}
+                    disabled={unresolvedMissingDevices.length === 0 || researching}
+                    className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-white text-[11px] hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    Select all (max {MAX_PAID_RESEARCH_SELECTION})
+                  </button><button onClick={clearResearchSelection} disabled={selectedResearchDevices.length === 0 || researching} className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-white text-[11px] hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">Clear selection</button>
+                </div>)}>
                   {researchProgress && researching && (
                     <div className="px-3 py-2 text-[11px] text-blue-700 border-b" style={{ borderColor: "var(--color-border)" }}>
                       {researchProgress.label}
                     </div>
                   )}
-                  {missingDevices.length > 0 ? missingDevices.map((item) => (
+                  {unresolvedMissingDevices.length > 0 ? unresolvedMissingDevices.map((item) => (
                     <ExtractionRow
                       key={keyForExtractedDevice(item)}
                       item={item}
-                      excluded={excludedExtractedKeys.has(keyForExtractedDevice(item))}
-                      onToggleExcluded={() => toggleExcludedExtracted(item)}
+                      selectedForResearch={isResearchSelected(item)}
+                      onToggleResearchSelection={() => toggleResearchSelection(item)}
                       onCopyPortsFromCandidate={(candidate) => void handleCopyPortsFromLibraryCandidate(item, candidate)}
                     />
                   )) : (
@@ -979,18 +1022,18 @@ function SummaryCard({
 
 function ExtractionRow({
   item,
-  excluded = false,
-  onToggleExcluded,
+  selectedForResearch = false,
+  onToggleResearchSelection,
   onCopyPortsFromCandidate,
 }: {
   item: QuoteImportResultItem;
-  excluded?: boolean;
-  onToggleExcluded?: () => void;
+  selectedForResearch?: boolean;
+  onToggleResearchSelection?: () => void;
   onCopyPortsFromCandidate?: (candidate: QuoteImportCandidateMatch) => void;
 }) {
   const portReuseCandidates = item.portReuseCandidates ?? [];
   return (
-    <div className={`px-3 py-3 border-b text-xs ${excluded ? "opacity-55" : ""}`} style={{ borderColor: "var(--color-border)" }}>
+    <div className="px-3 py-3 border-b text-xs" style={{ borderColor: "var(--color-border)" }}>
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-1.5">
@@ -1005,9 +1048,9 @@ function ExtractionRow({
                 Qty {item.quantity}
               </span>
             )}
-            {excluded && (
-              <span className="px-2 py-0.5 rounded-full border text-[10px] border-slate-300 bg-slate-100 text-slate-700">
-                Excluded from research
+            {selectedForResearch && (
+              <span className="px-2 py-0.5 rounded-full border text-[10px] border-blue-200 bg-blue-50 text-blue-700">
+                Selected for paid AI research
               </span>
             )}
           </div>
@@ -1048,14 +1091,15 @@ function ExtractionRow({
             </div>
           )}
         </div>
-        {onToggleExcluded && (
-          <button
-            onClick={onToggleExcluded}
-            className="shrink-0 w-8 h-8 rounded border border-[var(--color-border)] bg-white text-[14px] leading-none font-semibold hover:bg-[var(--color-surface-hover)] cursor-pointer flex items-center justify-center"
-            title={excluded ? "Include this device in research again" : "Exclude this device from research"}
-          >
-            {excluded ? "↺" : "×"}
-          </button>
+        {onToggleResearchSelection && (
+          <label className="shrink-0 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selectedForResearch}
+              onChange={onToggleResearchSelection}
+            />
+            Include in paid AI research
+          </label>
         )}
       </div>
     </div>
@@ -1232,7 +1276,7 @@ function DraftReviewRow({
                 onClick={onRetryStronger}
                 className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-white text-[11px] hover:bg-[var(--color-surface-hover)] cursor-pointer"
               >
-                Retry With Stronger Model
+                Verify with stronger AI (paid)
               </button>
             )}
             <button
