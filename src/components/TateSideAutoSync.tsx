@@ -235,19 +235,31 @@ export default function TateSideAutoSync() {
   const schedulerRef = useRef<ReturnType<typeof createTateSideAutoSyncScheduler> | null>(null);
 
   useEffect(() => {
-    const cleanup = mountTateSideAutoSync({
-      addEventListener: window.addEventListener.bind(window),
-      clearTimer: clearTimeout,
-      create: createTatesideSchematic,
-      getStore: () => useSchematicStore.getState(),
-      removeEventListener: window.removeEventListener.bind(window),
-      save: saveTatesideSchematic,
-      setTimer: setTimeout,
-    });
-    schedulerRef.current = sharedScheduler;
+    let cleanup: (() => void) | null = null;
+
+    try {
+      cleanup = mountTateSideAutoSync({
+        addEventListener: window.addEventListener.bind(window),
+        clearTimer: window.clearTimeout.bind(window),
+        create: createTatesideSchematic,
+        getStore: () => useSchematicStore.getState(),
+        removeEventListener: window.removeEventListener.bind(window),
+        save: saveTatesideSchematic,
+        setTimer: window.setTimeout.bind(window),
+      });
+      schedulerRef.current = sharedScheduler;
+    } catch {
+      // Autosave must never take down the editor if a host browser rejects a
+      // detached Web API invocation or another background-only setup action.
+      try {
+        useSchematicStore.getState().setTatesideSyncState("error", getSafeTateSideSyncMessage(null));
+      } catch {
+        // A background-status update is optional; preserving the editor is not.
+      }
+    }
 
     return () => {
-      cleanup();
+      cleanup?.();
       schedulerRef.current = null;
     };
   }, []);
