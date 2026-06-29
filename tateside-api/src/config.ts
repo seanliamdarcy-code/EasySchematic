@@ -82,6 +82,10 @@ function testOnlyUrlOverride(label: string, rawValue: string | undefined, fallba
 }
 
 function getSharePointConfig(): SharePointConfig | null {
+  if (process.env.TATESIDE_DISABLE_SHAREPOINT === "1") {
+    return null;
+  }
+
   const values = {
     MS_ENTRA_TENANT_ID: stringFromEnv(process.env.MS_ENTRA_TENANT_ID),
     MS_GRAPH_CLIENT_ID: stringFromEnv(process.env.MS_GRAPH_CLIENT_ID),

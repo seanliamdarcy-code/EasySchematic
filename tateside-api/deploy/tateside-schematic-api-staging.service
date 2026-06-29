@@ -1,0 +1,24 @@
+[Unit]
+Description=TateSide Schematic API (Staging)
+After=network.target
+
+[Service]
+Type=simple
+User=debian
+WorkingDirectory=/home/debian/EasySchematic-staging
+Environment=NODE_ENV=production
+Environment=TATESIDE_DATA_DIR=/var/lib/tateside-schematic-staging
+Environment=TATESIDE_DB_PATH=/var/lib/tateside-schematic-staging/tateside.db
+Environment=TATESIDE_API_HOST=172.17.0.1
+Environment=TATESIDE_API_PORT=8789
+Environment=TATESIDE_ALLOWED_ORIGIN=https://testschematic.tateside.online
+Environment=TATESIDE_REQUIRE_ACCESS_IDENTITY=1
+Environment=TATESIDE_DISABLE_SHAREPOINT=1
+ExecStart=/usr/bin/node /home/debian/EasySchematic-staging/dist-tateside-api/tateside-api/src/server.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
