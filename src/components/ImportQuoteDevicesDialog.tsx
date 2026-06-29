@@ -39,6 +39,7 @@ interface EditingDraftState {
 }
 
 type PossibleMatchDecision = "use_library_match" | "research_missing";
+type OutcomeReviewItem = QuoteImportResultItem | QuoteImportDraftReview;
 
 const STATUS_LABELS: Record<LibraryMatchStatus, string> = {
   already_in_library: "Already in library",
@@ -83,6 +84,9 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [selectedDraftKeys, setSelectedDraftKeys] = useState<Set<string>>(new Set());
   const [selectedResearchKeys, setSelectedResearchKeys] = useState<Set<string>>(new Set());
   const [ignoredDraftKeys, setIgnoredDraftKeys] = useState<Set<string>>(new Set());
+  const [savedDraftKeys, setSavedDraftKeys] = useState<Set<string>>(new Set());
+  const [locallyAddedDraftKeys, setLocallyAddedDraftKeys] = useState<Set<string>>(new Set());
+  const [showOutcomeReview, setShowOutcomeReview] = useState(false);
   const [editingDraft, setEditingDraft] = useState<EditingDraftState | null>(null);
 
   const keyForExtractedDevice = (device: ExtractedQuoteDevice) => `${device.normalizedLookupKey || "device"}:${device.model}`;
@@ -112,6 +116,9 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setSelectedDraftKeys(new Set());
     setSelectedResearchKeys(new Set());
     setIgnoredDraftKeys(new Set());
+    setSavedDraftKeys(new Set());
+    setLocallyAddedDraftKeys(new Set());
+    setShowOutcomeReview(false);
     setEditingDraft(null);
     onClose();
   };
@@ -159,17 +166,55 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     [researchResults, ignoredDraftKeys],
   );
 
+  const savedDrafts = useMemo(
+    () => readyDrafts.filter((item) => savedDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [readyDrafts, savedDraftKeys],
+  );
+
+  const locallyAddedDrafts = useMemo(
+    () => readyDrafts.filter((item) => locallyAddedDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [readyDrafts, locallyAddedDraftKeys],
+  );
+
+  const pendingReadyDrafts = useMemo(
+    () => readyDrafts.filter((item) => {
+      const key = keyForExtractedDevice(item.extractedDevice);
+      return !savedDraftKeys.has(key) && !locallyAddedDraftKeys.has(key);
+    }),
+    [readyDrafts, savedDraftKeys, locallyAddedDraftKeys],
+  );
+
   const manualReviewItems = useMemo(
     () => researchResults.filter((item) => item.reviewStatus === "manual_review_required" && !ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
     [researchResults, ignoredDraftKeys],
   );
 
+  const ignoredDrafts = useMemo(
+    () => researchResults.filter((item) => ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [researchResults, ignoredDraftKeys],
+  );
+
+  const unresolvedOutcomeItems = useMemo(() => {
+    const byKey = new Map<string, QuoteImportResultItem>();
+    [...unresolvedPossibleMatches, ...unresolvedMissingDevices].forEach((item) => {
+      byKey.set(keyForExtractedDevice(item), item);
+    });
+    return [...byKey.values()];
+  }, [unresolvedPossibleMatches, unresolvedMissingDevices]);
+
+  const selectedPendingDraftKeys = useMemo(
+    () => pendingReadyDrafts
+      .filter((item) => selectedDraftKeys.has(keyForExtractedDevice(item.extractedDevice)))
+      .map((item) => keyForExtractedDevice(item.extractedDevice)),
+    [pendingReadyDrafts, selectedDraftKeys],
+  );
+
   const selectedDraftTemplates = useMemo(
-    () => readyDrafts
+    () => pendingReadyDrafts
       .filter((item) => selectedDraftKeys.has(keyForExtractedDevice(item.extractedDevice)))
       .map((item) => item.template)
       .filter((template): template is DeviceTemplate => !!template),
-    [readyDrafts, selectedDraftKeys],
+    [pendingReadyDrafts, selectedDraftKeys],
   );
 
   const handleFileSelected = (file: File | null) => {
@@ -182,6 +227,9 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setSelectedDraftKeys(new Set());
     setSelectedResearchKeys(new Set());
     setIgnoredDraftKeys(new Set());
+    setSavedDraftKeys(new Set());
+    setLocallyAddedDraftKeys(new Set());
+    setShowOutcomeReview(false);
     setResearchProgress(null);
   };
 
@@ -203,6 +251,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       setExtraction(response);
       setImportSourceLabel(selectedFile.name);
       setResearchResults([]);
+      setPossibleMatchDecisions({});
+      setSelectedDraftKeys(new Set());
+      setSelectedResearchKeys(new Set());
+      setIgnoredDraftKeys(new Set());
+      setSavedDraftKeys(new Set());
+      setLocallyAddedDraftKeys(new Set());
+      setShowOutcomeReview(false);
       addToast(`Extracted ${response.extractedCount} quote device candidate${response.extractedCount === 1 ? "" : "s"}`, "success");
     } catch (err) {
       const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Quote import failed";
@@ -284,6 +339,9 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       setSelectedDraftKeys(new Set());
       setSelectedResearchKeys(new Set());
       setIgnoredDraftKeys(new Set());
+      setSavedDraftKeys(new Set());
+      setLocallyAddedDraftKeys(new Set());
+      setShowOutcomeReview(false);
       addToast(`Imported ${response.extractedCount} Jetbuilt device candidate${response.extractedCount === 1 ? "" : "s"}`, "success");
     } catch (err) {
       const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Jetbuilt project import failed";
@@ -400,6 +458,12 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
         note: `Approved from import workflow: ${importSourceLabel ?? extraction.fileName}`,
       });
       await onLibraryChanged?.();
+      setSavedDraftKeys((current) => new Set([...current, ...selectedPendingDraftKeys]));
+      setSelectedDraftKeys((current) => {
+        const next = new Set(current);
+        selectedPendingDraftKeys.forEach((key) => next.delete(key));
+        return next;
+      });
       addToast(`Saved ${result.templates.length} reviewed device draft${result.templates.length === 1 ? "" : "s"} to the TateSide library`, "success");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save selected devices");
@@ -411,6 +475,12 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const handleAddSelectedLocally = () => {
     if (selectedDraftTemplates.length === 0) return;
     importCustomTemplates(selectedDraftTemplates);
+    setLocallyAddedDraftKeys((current) => new Set([...current, ...selectedPendingDraftKeys]));
+    setSelectedDraftKeys((current) => {
+      const next = new Set(current);
+      selectedPendingDraftKeys.forEach((key) => next.delete(key));
+      return next;
+    });
     addToast(`Added ${selectedDraftTemplates.length} reviewed device draft${selectedDraftTemplates.length === 1 ? "" : "s"} locally`, "success");
   };
 
@@ -585,10 +655,12 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-sm font-semibold" style={{ color: "var(--color-text-heading)" }}>
-                  Import Devices
+                  {showOutcomeReview ? "Import Outcome Review" : "Import Devices"}
                 </h2>
                 <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                  Import directly from a Jetbuilt project first, then fall back to quote PDF upload only when needed.
+                  {showOutcomeReview
+                    ? "Review exactly how this import was resolved before the future Start Schematic hand-off."
+                    : "Import directly from a Jetbuilt project first, then fall back to quote PDF upload only when needed."}
                 </p>
               </div>
               <button onClick={reset} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer">✕</button>
@@ -596,6 +668,20 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {showOutcomeReview ? (
+              <OutcomeReviewPanel
+                importSourceLabel={importSourceLabel}
+                extractedCount={extraction?.extractedCount ?? 0}
+                alreadyInLibraryItems={alreadyInLibraryItems}
+                savedDrafts={savedDrafts}
+                locallyAddedDrafts={locallyAddedDrafts}
+                pendingReadyDrafts={pendingReadyDrafts}
+                manualReviewItems={manualReviewItems}
+                ignoredDrafts={ignoredDrafts}
+                unresolvedItems={unresolvedOutcomeItems}
+              />
+            ) : (
+              <div className="space-y-4">
             <div className="rounded border p-3 space-y-3" style={{ borderColor: "var(--color-border)" }}>
               <div>
                 <div className="text-xs font-medium text-[var(--color-text-heading)]">Import from Jetbuilt Project</div>
@@ -890,7 +976,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
             {researchResults.length > 0 && (
               <>
-                <SectionCard title="Generated Drafts Ready For Review" count={readyDrafts.length} action={(
+                <SectionCard title="Generated Drafts Ready For Review" count={pendingReadyDrafts.length} action={(
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleAddSelectedLocally}
@@ -908,7 +994,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                     </button>
                   </div>
                 )}>
-                  {readyDrafts.length > 0 ? readyDrafts.map((item) => (
+                  {pendingReadyDrafts.length > 0 ? pendingReadyDrafts.map((item) => (
                     <DraftReviewRow
                       key={keyForExtractedDevice(item.extractedDevice)}
                       item={item}
@@ -944,15 +1030,43 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                 </SectionCard>
               </>
             )}
+              </div>
+            )}
           </div>
 
           <div className="px-4 py-3 border-t flex items-center justify-end gap-2" style={{ borderColor: "var(--color-border)" }}>
-            <button
-              onClick={reset}
-              className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] cursor-pointer"
-            >
-              Close
-            </button>
+            {showOutcomeReview ? (
+              <>
+                <button
+                  onClick={() => setShowOutcomeReview(false)}
+                  className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] cursor-pointer"
+                >
+                  ← Back to resolution
+                </button>
+                <button
+                  onClick={reset}
+                  className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] cursor-pointer"
+                >
+                  Close
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setShowOutcomeReview(true)}
+                  disabled={!extraction || researching || saving}
+                  className="px-3 py-1.5 rounded bg-blue-500 text-white text-xs hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Review outcomes →
+                </button>
+                <button
+                  onClick={reset}
+                  className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] cursor-pointer"
+                >
+                  Close
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -1016,6 +1130,127 @@ function SummaryCard({
     <div className={`rounded border px-3 py-2 ${toneClass}`}>
       <div className="text-[10px] uppercase tracking-wide opacity-70">{label}</div>
       <div className="text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function OutcomeReviewPanel({
+  importSourceLabel,
+  extractedCount,
+  alreadyInLibraryItems,
+  savedDrafts,
+  locallyAddedDrafts,
+  pendingReadyDrafts,
+  manualReviewItems,
+  ignoredDrafts,
+  unresolvedItems,
+}: {
+  importSourceLabel: string | null;
+  extractedCount: number;
+  alreadyInLibraryItems: QuoteImportResultItem[];
+  savedDrafts: QuoteImportDraftReview[];
+  locallyAddedDrafts: QuoteImportDraftReview[];
+  pendingReadyDrafts: QuoteImportDraftReview[];
+  manualReviewItems: QuoteImportDraftReview[];
+  ignoredDrafts: QuoteImportDraftReview[];
+  unresolvedItems: QuoteImportResultItem[];
+}) {
+  const completelyResolved = pendingReadyDrafts.length === 0 && manualReviewItems.length === 0 && unresolvedItems.length === 0;
+  const onlyReadyDraftsRemain = pendingReadyDrafts.length > 0 && manualReviewItems.length === 0 && unresolvedItems.length === 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded border border-blue-200 bg-blue-50 px-3 py-3 text-xs text-blue-800">
+        <div className="font-semibold text-[var(--color-text-heading)]">{importSourceLabel ?? "Imported device inventory"}</div>
+        <div className="mt-1">
+          This is the session outcome for {extractedCount} extracted device line item{extractedCount === 1 ? "" : "s"}. It will become the hand-off point for Start Schematic in a later phase.
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2">
+        <SummaryCard label="Already in library" value={String(alreadyInLibraryItems.length)} tone="success" />
+        <SummaryCard label="Saved to library" value={String(savedDrafts.length)} tone="success" />
+        <SummaryCard label="Added locally" value={String(locallyAddedDrafts.length)} tone="default" />
+        <SummaryCard label="Ready drafts" value={String(pendingReadyDrafts.length)} tone="warning" />
+        <SummaryCard label="Manual review" value={String(manualReviewItems.length)} tone="danger" />
+        <SummaryCard label="Ignored" value={String(ignoredDrafts.length)} tone="default" />
+        <SummaryCard label="Unresolved" value={String(unresolvedItems.length)} tone="danger" />
+      </div>
+
+      <div className={`rounded border px-3 py-2 text-xs ${completelyResolved ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+        {completelyResolved
+          ? "All included devices have a library template or a saved/local draft."
+          : onlyReadyDraftsRemain
+            ? "All devices are matched or drafted, but some ready drafts have not been added to a library yet."
+            : "Some devices still need a decision, manual review, or an explicit ignore before this is a clean project inventory."}
+      </div>
+
+      <div className="space-y-2">
+        <OutcomeReviewSection title="Already in TateSide library" description="Existing shared templates selected directly or accepted from a possible match." items={alreadyInLibraryItems} />
+        <OutcomeReviewSection title="Saved to TateSide library in this session" description="New reviewed drafts that were approved and saved to the shared library." items={savedDrafts} />
+        <OutcomeReviewSection title="Added locally in this session" description="Drafts added to this browser's local custom-device library only." items={locallyAddedDrafts} />
+        <OutcomeReviewSection title="Ready new drafts — not yet added" description="Valid drafts waiting for you to add locally or save to the TateSide library." items={pendingReadyDrafts} />
+        <OutcomeReviewSection title="Drafts requiring manual review" description="Research returned a draft, but it needs human checking before it should be used." items={manualReviewItems} />
+        <OutcomeReviewSection title="Ignored" description="Research results deliberately excluded from this import outcome." items={ignoredDrafts} />
+        <OutcomeReviewSection title="Still unresolved" description="No confirmed library match or device draft has been chosen yet." items={unresolvedItems} />
+      </div>
+    </div>
+  );
+}
+
+function OutcomeReviewSection({
+  title,
+  description,
+  items,
+}: {
+  title: string;
+  description: string;
+  items: OutcomeReviewItem[];
+}) {
+  return (
+    <details className="rounded border" style={{ borderColor: "var(--color-border)" }}>
+      <summary className="px-3 py-2 cursor-pointer list-none flex items-center justify-between gap-3 text-xs">
+        <div>
+          <div className="font-semibold text-[var(--color-text-heading)]">{title}</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{description}</div>
+        </div>
+        <span className="shrink-0 px-2 py-0.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] text-[11px] text-[var(--color-text-muted)]">
+          {items.length}
+        </span>
+      </summary>
+      <div className="border-t max-h-56 overflow-y-auto" style={{ borderColor: "var(--color-border)" }}>
+        {items.length > 0 ? items.map((item) => <OutcomeReviewItemRow key={outcomeReviewItemKey(item)} item={item} />) : (
+          <EmptyState text="None in this category." />
+        )}
+      </div>
+    </details>
+  );
+}
+
+function outcomeReviewItemKey(item: OutcomeReviewItem): string {
+  const device = "extractedDevice" in item ? item.extractedDevice : item;
+  return `${device.normalizedLookupKey || "device"}:${device.model}`;
+}
+
+function OutcomeReviewItemRow({ item }: { item: OutcomeReviewItem }) {
+  const device = "extractedDevice" in item ? item.extractedDevice : item;
+  const detail = "extractedDevice" in item
+    ? item.draftSource === "library_port_copy"
+      ? "Ports copied from a TateSide library device"
+      : item.reviewStatus === "manual_review_required"
+        ? "Manual review required"
+        : "Generated device draft"
+    : device.description || device.sourceLineText || "No additional quote detail captured.";
+
+  return (
+    <div className="px-3 py-2 border-b last:border-b-0 text-xs" style={{ borderColor: "var(--color-border)" }}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-[var(--color-text-heading)]">{[device.manufacturer, device.model].filter(Boolean).join(" ")}</span>
+        {typeof device.quantity === "number" && (
+          <span className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">Qty {device.quantity}</span>
+        )}
+      </div>
+      <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{detail}</div>
     </div>
   );
 }
