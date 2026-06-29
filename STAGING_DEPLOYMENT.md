@@ -4,10 +4,10 @@ This repository has a separate staging lane for testing EasySchematic changes in
 
 ## Environments
 
-| Environment | Branch | Hostname | VPS path | Compose project | Local port |
-| --- | --- | --- | --- | --- | --- |
-| Production | `master` | `schematic.tateside.online` | `/home/debian/EasySchematic` | `easyschematic` | `127.0.0.1:8080` |
-| Staging | `staging` | `testschematic.tateside.online` | `/home/debian/EasySchematic-staging` | `easyschematic-staging` | `127.0.0.1:8081` |
+| Environment | Branch | Hostname | VPS path | Compose project | API port | Frontend port |
+| --- | --- | --- | --- | --- | --- | --- |
+| Production | `master` | `schematic.tateside.online` | `/home/debian/EasySchematic` | `easyschematic` | `8788` | `127.0.0.1:8080` |
+| Staging | `staging` | `testschematic.tateside.online` | `/home/debian/EasySchematic-staging` | `easyschematic-staging` | `8789` | `127.0.0.1:8081` |
 
 ## Branch flow
 
@@ -34,6 +34,15 @@ Staging frontend container proxies `/api/tateside/*` to host gateway `172.17.0.1
 
 Caddy proxies the public staging hostname directly to the staging frontend container (port 8081). Do not edit Caddy configuration.
 
+## AI provider and OpenRouter guardrails
+
+- **Current provider:** OpenAI. OpenRouter is not active.
+- **Experiment scope:** OpenRouter is a planned staging-only experiment. Do not enable it in production or change production provider configuration while evaluating it.
+- **Single integration point:** Keep provider work centralised in `tateside-api/src/openaiResponses.ts`. Do not spread provider-specific request code across routes, import flows, or UI components.
+- **Adapter required:** Do not attempt a base-URL/key swap. Before enabling OpenRouter, add a provider adapter that deliberately supports file uploads, web-search tools, source extraction, structured output, and provider-specific error handling.
+- **Secrets:** Never commit provider keys, tokens, or environment files. Put any staging-only credentials in the intended untracked staging systemd override/EnvironmentFile.
+- **Operational prerequisite:** Read this document before VPS/API/provider work. Do not deploy or alter VPS configuration as part of a documentation-only change.
+
 ## Staging deploy (API + frontend)
 
 Run these commands on the VPS as `debian`. All steps are manual. The staging checkout must be updated and the API build must complete before the first `enable --now`.
@@ -58,7 +67,7 @@ Run these commands on the VPS as `debian`. All steps are manual. The staging che
    ```
 
 4. (Optional) Create a staging-only systemd override or EnvironmentFile (never commit secrets):
-   - May contain only `OPENAI_API_KEY` and/or `JETBUILT_API_KEY` (and related non-SharePoint vars) when intentionally testing those features.
+   - May contain only `OPENAI_API_KEY` and/or `JETBUILT_API_KEY` (and related non-SharePoint vars) when intentionally testing those features. OpenRouter is not active; do not add OpenRouter credentials until an approved staging-only provider adapter exists.
    - Must contain **no** SharePoint variables (`MS_ENTRA_*`, `TATESIDE_SHAREPOINT_*`, etc.) — SharePoint is hard-disabled by the unit file.
    - Example template: `tateside-api/deploy/tateside-schematic-api-staging.env.example`
    - Load via a drop-in at `/etc/systemd/system/tateside-schematic-api-staging.service.d/override.conf` (or EnvironmentFile).
@@ -123,7 +132,7 @@ curl -I http://127.0.0.1:8080
 
 ## Architecture and safety (staging isolation)
 
-- **Isolated components**: separate SQLite DB (`tateside.db`), schematic repository dir, research cache (quote-research-cache.json), jetbuilt index, dedicated API process, dedicated API port (8789), and container.
+- **Isolated components**: separate SQLite DB (`tateside.db`), schematic repository dir, JetBuilt index, quote-research cache (`quote-research-cache.json`), dedicated API process, dedicated API port (8789), and container.
 - Device library in staging is a deliberate one-way snapshot copy of production's active (non-deleted) device records + all of their versions (with each device's current_version_id relationship preserved).
 - No SharePoint integration is possible in staging (hard-disabled by `TATESIDE_DISABLE_SHAREPOINT=1` in the staging unit; `getConfig()` always returns `sharePoint: null` regardless of any SharePoint/Microsoft Graph variables; endpoints 503). The staging unit file sets the flag. Never set SharePoint env vars on staging.
 - Staging writes (new library edits, new schematics, research cache) remain local to staging DB/repo and are overwritten or removed on the next deliberate library refresh.
