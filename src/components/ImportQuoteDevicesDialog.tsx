@@ -56,6 +56,29 @@ const STATUS_CLASSES: Record<LibraryMatchStatus, string> = {
 };
 
 const MAX_PAID_RESEARCH_SELECTION = 5;
+const AI_RESEARCH_MODEL_STORAGE_KEY = "tateside.ai.researchModel";
+const AI_ESCALATION_MODEL_STORAGE_KEY = "tateside.ai.escalationModel";
+
+function readStoredModelChoice(key: string): string {
+  try {
+    return window.localStorage.getItem(key)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredModelChoice(key: string, value: string): void {
+  try {
+    const trimmed = value.trim();
+    if (trimmed) {
+      window.localStorage.setItem(key, trimmed);
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage failures; the selected model still applies for this open dialog.
+  }
+}
 
 export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChanged }: Props) {
   const addToast = useSchematicStore((s) => s.addToast);
@@ -76,8 +99,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [jetbuiltStatus, setJetbuiltStatus] = useState<JetbuiltIndexStatus | null>(null);
   const [aiSettings, setAiSettings] = useState<AiProviderSettings | null>(null);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
-  const [selectedResearchModel, setSelectedResearchModel] = useState("");
-  const [selectedEscalationModel, setSelectedEscalationModel] = useState("");
+  const [selectedResearchModel, setSelectedResearchModel] = useState(() => readStoredModelChoice(AI_RESEARCH_MODEL_STORAGE_KEY));
+  const [selectedEscalationModel, setSelectedEscalationModel] = useState(() => readStoredModelChoice(AI_ESCALATION_MODEL_STORAGE_KEY));
   const [libraryTemplatesById, setLibraryTemplatesById] = useState<Record<string, DeviceTemplate>>({});
   const [extracting, setExtracting] = useState(false);
   const [researching, setResearching] = useState(false);
@@ -112,8 +135,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setJetbuiltStatus(null);
     setAiSettings(null);
     setAiSettingsOpen(false);
-    setSelectedResearchModel("");
-    setSelectedEscalationModel("");
     setLibraryTemplatesById({});
     setExtracting(false);
     setResearching(false);
@@ -646,8 +667,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       .then((settings) => {
         if (cancelled) return;
         setAiSettings(settings);
-        setSelectedResearchModel((current) => current || settings.defaults.deviceResearchModel);
-        setSelectedEscalationModel((current) => current || settings.defaults.deviceEscalationModel);
+        setSelectedResearchModel((current) => current || readStoredModelChoice(AI_RESEARCH_MODEL_STORAGE_KEY) || settings.defaults.deviceResearchModel);
+        setSelectedEscalationModel((current) => current || readStoredModelChoice(AI_ESCALATION_MODEL_STORAGE_KEY) || settings.defaults.deviceEscalationModel);
       })
       .catch(() => {
         if (!cancelled) setAiSettings(null);
@@ -745,7 +766,10 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                           type="text"
                           list="openrouter-models"
                           value={selectedResearchModel}
-                          onChange={(e) => setSelectedResearchModel(e.target.value)}
+                          onChange={(e) => {
+                            setSelectedResearchModel(e.target.value);
+                            writeStoredModelChoice(AI_RESEARCH_MODEL_STORAGE_KEY, e.target.value);
+                          }}
                           placeholder={aiSettings.defaults.deviceResearchModel}
                           className="mt-1 w-full bg-white border border-[var(--color-border)] rounded px-2.5 py-1.5 text-xs text-[var(--color-text-heading)] outline-none focus:border-blue-500"
                         />
@@ -756,7 +780,10 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                           type="text"
                           list="openrouter-models"
                           value={selectedEscalationModel}
-                          onChange={(e) => setSelectedEscalationModel(e.target.value)}
+                          onChange={(e) => {
+                            setSelectedEscalationModel(e.target.value);
+                            writeStoredModelChoice(AI_ESCALATION_MODEL_STORAGE_KEY, e.target.value);
+                          }}
                           placeholder={aiSettings.defaults.deviceEscalationModel}
                           className="mt-1 w-full bg-white border border-[var(--color-border)] rounded px-2.5 py-1.5 text-xs text-[var(--color-text-heading)] outline-none focus:border-blue-500"
                         />
