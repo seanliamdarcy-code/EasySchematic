@@ -15,15 +15,15 @@ SharePoint is hard-disabled in staging. Do not add SharePoint/Microsoft Graph en
 
 ## AI provider rules
 
-The active AI provider is OpenAI.
+AI provider integration is centralised in `tateside-api/src/aiProvider.ts`, replacing the former `tateside-api/src/openaiResponses.ts` wrapper. Do not scatter provider-specific request logic across routes, import flows, or UI components.
 
-OpenRouter is only a planned staging-only experiment. It is not active yet and must not be treated as a drop-in production provider.
+The current provider experiment uses OpenRouter only in staging: the separate staging API on port `8789` behind `testschematic.tateside.online`. Production remains on its existing configuration and must not be reconfigured as part of OpenRouter testing.
 
-Provider work must stay centralised in `tateside-api/src/openaiResponses.ts` unless a deliberate provider adapter abstraction is added there. Do not scatter provider-specific request logic elsewhere.
+Quote PDF extraction is intentionally unavailable through the current OpenRouter adapter. Direct users to JetBuilt project import until a provider-compatible file/PDF path has been designed, implemented, and validated.
 
-Do not use a base-URL/key swap shortcut for OpenRouter. File uploads, web-search tools, source extraction, structured output, and error handling need a real provider adapter before any trial.
+OpenRouter credentials belong only in untracked server environment files or systemd overrides. Never commit keys, tokens, secrets, or environment files, and never alter the production API on port `8788` while testing staging provider changes.
 
-Never commit keys, tokens, secrets, or environment files. Never alter production configuration while testing OpenRouter or any staging-only provider experiment.
+Before any deploy or promotion, validate actual structured-output and web-search behaviour with the selected OpenRouter models. Do not assume a model is compatible just because it appears in the OpenRouter model list.
 
 ## Operational guardrails
 

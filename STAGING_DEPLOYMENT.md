@@ -36,11 +36,13 @@ Caddy proxies the public staging hostname directly to the staging frontend conta
 
 ## AI provider and OpenRouter guardrails
 
-- **Current provider:** OpenAI. OpenRouter is not active.
-- **Experiment scope:** OpenRouter is a planned staging-only experiment. Do not enable it in production or change production provider configuration while evaluating it.
-- **Single integration point:** Keep provider work centralised in `tateside-api/src/openaiResponses.ts`. Do not spread provider-specific request code across routes, import flows, or UI components.
-- **Adapter required:** Do not attempt a base-URL/key swap. Before enabling OpenRouter, add a provider adapter that deliberately supports file uploads, web-search tools, source extraction, structured output, and provider-specific error handling.
+- **Current staging experiment:** OpenRouter is used only by the separate staging API on port `8789`, reached through `testschematic.tateside.online`.
+- **Production isolation:** Production API port `8788` and `schematic.tateside.online` remain untouched. Do not reconfigure production provider settings while testing OpenRouter.
+- **Single integration point:** Provider integration is centralised in `tateside-api/src/aiProvider.ts`, replacing the former `tateside-api/src/openaiResponses.ts` wrapper. Do not spread provider-specific request code across routes, import flows, or UI components.
+- **Model testing:** The Import Devices dialog reads `/api/tateside/ai/settings` and lets users choose research and stronger-retry models per run.
+- **Legacy PDF path:** Quote PDF extraction is intentionally unavailable through the current OpenRouter adapter. Use JetBuilt project import, then research missing devices through OpenRouter until a provider-compatible file/PDF path is implemented.
 - **Secrets:** Never commit provider keys, tokens, or environment files. Put any staging-only credentials in the intended untracked staging systemd override/EnvironmentFile.
+- **Validation required:** Before deploying or promoting provider changes, validate actual structured-output and web-search behaviour with the selected OpenRouter models. Do not rely only on the OpenRouter model list.
 - **Operational prerequisite:** Read this document before VPS/API/provider work. Do not deploy or alter VPS configuration as part of a documentation-only change.
 
 ## Staging deploy (API + frontend)
@@ -67,7 +69,7 @@ Run these commands on the VPS as `debian`. All steps are manual. The staging che
    ```
 
 4. (Optional) Create a staging-only systemd override or EnvironmentFile (never commit secrets):
-   - May contain only `OPENAI_API_KEY` and/or `JETBUILT_API_KEY` (and related non-SharePoint vars) when intentionally testing those features. OpenRouter is not active; do not add OpenRouter credentials until an approved staging-only provider adapter exists.
+   - May contain only `OPENROUTER_API_KEY`, OpenRouter model/default vars, `JETBUILT_API_KEY`, and related non-SharePoint vars when intentionally testing those features.
    - Must contain **no** SharePoint variables (`MS_ENTRA_*`, `TATESIDE_SHAREPOINT_*`, etc.) — SharePoint is hard-disabled by the unit file.
    - Example template: `tateside-api/deploy/tateside-schematic-api-staging.env.example`
    - Load via a drop-in at `/etc/systemd/system/tateside-schematic-api-staging.service.d/override.conf` (or EnvironmentFile).
