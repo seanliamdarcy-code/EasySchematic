@@ -4,6 +4,27 @@ export type LibraryMatchStatus = "already_in_library" | "possible_match" | "miss
 
 export type QuoteImportReasoningEffort = "low" | "medium" | "high";
 
+export interface AiModelSummary {
+  id: string;
+  name: string;
+  contextLength?: number;
+}
+
+export interface AiProviderSettings {
+  provider: "openrouter";
+  configured: boolean;
+  defaults: {
+    quoteExtractionModel: string;
+    deviceResearchModel: string;
+    deviceEscalationModel: string;
+    quoteExtractionReasoningEffort: QuoteImportReasoningEffort;
+    deviceResearchReasoningEffort: QuoteImportReasoningEffort;
+    deviceEscalationReasoningEffort: QuoteImportReasoningEffort;
+  };
+  models: AiModelSummary[];
+  modelListError: string | null;
+}
+
 export interface ExtractedQuoteDevice {
   manufacturer: string | null;
   model: string;

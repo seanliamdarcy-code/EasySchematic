@@ -15,7 +15,7 @@ import {
   searchJetbuiltProjects,
 } from "./jetbuilt.js";
 import { researchQuoteDevices } from "./deviceResearch.js";
-import { importQuoteDevicesFromPdf } from "./quoteImport.js";
+import { fallbackAiModels, getAiWorkflowConfig, hasAiProviderKey, listAiModels } from "./aiProvider.js";
 import {
   SchematicStoreError,
   createSchematic,
@@ -272,7 +272,12 @@ function isApplicationPdf(contentTypeHeader: string | string[] | undefined): boo
 
 const MAX_PAID_DEVICE_RESEARCH_BATCH_SIZE = 5;
 
-async function runResearchJob(record: ResearchJobRecord, devices: ExtractedQuoteDevice[], forceEscalation: boolean): Promise<void> {
+async function runResearchJob(
+  record: ResearchJobRecord,
+  devices: ExtractedQuoteDevice[],
+  forceEscalation: boolean,
+  models: { researchModel?: string; escalationModel?: string } = {},
+): Promise<void> {
   try {
     record.status = "running";
     record.updatedAt = new Date().toISOString();
@@ -290,6 +295,8 @@ async function runResearchJob(record: ResearchJobRecord, devices: ExtractedQuote
         devices: [device],
         forceEscalation,
         cachePath: config.quoteResearchCachePath,
+        researchModel: models.researchModel,
+        escalationModel: models.escalationModel,
       });
 
       aggregatedResults.push(...response.results);
@@ -330,6 +337,30 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
 
   if (ctx.req.method === "GET" && path === "/health") {
     sendJson(ctx.res, 200, { ok: true, service: "tateside-api" }, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/ai/settings") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+
+    const workflow = getAiWorkflowConfig();
+    let models = fallbackAiModels();
+    let modelListError: string | null = null;
+    try {
+      models = await listAiModels();
+    } catch (err) {
+      modelListError = err instanceof Error ? err.message : "OpenRouter model list could not be loaded";
+    }
+
+    sendJson(ctx.res, 200, {
+      provider: "openrouter",
+      configured: hasAiProviderKey(),
+      defaults: workflow,
+      models,
+      modelListError,
+    }, corsHeaders);
     return;
   }
 
@@ -494,26 +525,9 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     if (email === undefined) return;
     void email;
 
-    if (!process.env.OPENAI_API_KEY) {
-      sendJson(ctx.res, 503, {
-        error: "Import Devices from Quote is not available because OPENAI_API_KEY is not configured on the TateSide API server",
-      }, corsHeaders);
-      return;
-    }
-
-    const contentType = ctx.req.headers["content-type"] ?? "";
-    const fileNameHeader = ctx.req.headers["x-tateside-upload-filename"];
-    const fileNameRaw = Array.isArray(fileNameHeader) ? fileNameHeader[0] : fileNameHeader;
-    const fileName = fileNameRaw ? decodeURIComponent(fileNameRaw) : "quote.pdf";
-
-    if (!contentType.toLowerCase().includes("application/pdf")) {
-      sendJson(ctx.res, 400, { error: "Import Devices from Quote currently supports PDF files only" }, corsHeaders);
-      return;
-    }
-
-    const fileBuffer = await readBody(ctx.req, config.quoteImportMaxFileBytes);
-    const result = await importQuoteDevicesFromPdf(db, fileName, fileBuffer, "application/pdf");
-    sendJson(ctx.res, 200, result, corsHeaders);
+    sendJson(ctx.res, 410, {
+      error: "PDF quote extraction is no longer active. Use the Jetbuilt project import workflow instead.",
+    }, corsHeaders);
     return;
   }
 
@@ -672,9 +686,9 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     if (email === undefined) return;
     void email;
 
-    if (!process.env.OPENAI_API_KEY) {
+    if (!hasAiProviderKey()) {
       sendJson(ctx.res, 503, {
-        error: "AI quote import is not available because OPENAI_API_KEY is not configured on the TateSide API server",
+        error: "AI research is not available because OPENROUTER_API_KEY is not configured on the TateSide API server",
       }, corsHeaders);
       return;
     }
@@ -683,6 +697,8 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
       fileName?: unknown;
       devices?: unknown[];
       forceEscalation?: unknown;
+      researchModel?: unknown;
+      escalationModel?: unknown;
     } | null;
 
     const fileName = typeof body?.fileName === "string" && body.fileName.trim() ? body.fileName.trim() : "quote.pdf";
@@ -702,7 +718,10 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
 
     const job = createResearchJobRecord(fileName, devices);
     quoteResearchJobs.set(job.jobId, job);
-    void runResearchJob(job, devices, body?.forceEscalation === true);
+    void runResearchJob(job, devices, body?.forceEscalation === true, {
+      researchModel: typeof body?.researchModel === "string" ? body.researchModel.trim() : undefined,
+      escalationModel: typeof body?.escalationModel === "string" ? body.escalationModel.trim() : undefined,
+    });
     sendJson(ctx.res, 202, publicResearchJob(job), corsHeaders);
     return;
   }

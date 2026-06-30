@@ -1,5 +1,6 @@
 import type { DeviceTemplate, SchematicFile } from "./types";
 import type {
+  AiProviderSettings,
   ExtractedQuoteDevice,
   JetbuiltClientSearchResult,
   JetbuiltIndexStatus,
@@ -142,6 +143,10 @@ async function sleep(ms: number): Promise<void> {
 
 export async function fetchTatesideDeviceTemplates(): Promise<DeviceTemplate[]> {
   return requestJson<DeviceTemplate[]>("/devices/templates");
+}
+
+export async function fetchAiProviderSettings(): Promise<AiProviderSettings> {
+  return requestJson<AiProviderSettings>("/ai/settings");
 }
 
 export async function saveTatesideDeviceTemplates(
@@ -366,6 +371,8 @@ export async function researchQuoteDevices(
   options: {
     forceEscalation?: boolean;
     onProgress?: (job: QuoteImportResearchJobResponse) => void;
+    researchModel?: string;
+    escalationModel?: string;
   } = {},
 ): Promise<QuoteImportResearchResponse> {
   const startResponse = await requestJson<QuoteImportResearchJobResponse>("/quote-import/research", {
@@ -374,6 +381,8 @@ export async function researchQuoteDevices(
       fileName,
       devices,
       ...(options.forceEscalation ? { forceEscalation: true } : {}),
+      ...(options.researchModel ? { researchModel: options.researchModel } : {}),
+      ...(options.escalationModel ? { escalationModel: options.escalationModel } : {}),
     },
   });
 

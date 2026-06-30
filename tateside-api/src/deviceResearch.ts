@@ -16,7 +16,7 @@ import type {
 } from "../../src/quoteImportTypes.js";
 import { SIGNAL_LABELS, CONNECTOR_LABELS } from "../../src/types.js";
 import { DEVICE_TYPE_TO_CATEGORY } from "../../src/deviceTypeCategories.js";
-import { createOpenAiResponse, extractOutputText, extractWebSearchSources, getOpenAiWorkflowConfig, type ReasoningEffort } from "./openaiResponses.js";
+import { createAiJsonResponse, getAiWorkflowConfig, type ReasoningEffort } from "./aiProvider.js";
 import { validateDeviceTemplate } from "./validation.js";
 
 interface ResearchRouteOptions {
@@ -24,6 +24,8 @@ interface ResearchRouteOptions {
   devices: ExtractedQuoteDevice[];
   forceEscalation?: boolean;
   cachePath?: string;
+  researchModel?: string;
+  escalationModel?: string;
 }
 
 const MAX_CONCURRENT_RESEARCH_CALLS = 3;
@@ -98,8 +100,7 @@ type ResearchSourceResolverId = "jetbuilt" | "supplier_catalogue" | "manufacture
 
 interface ResearchSourceResolver {
   id: ResearchSourceResolverId;
-  buildTools(): unknown[];
-  extractFallbackSources(responseJson: unknown): { title: string; url: string }[];
+  webSearch: boolean;
 }
 
 interface CachedResearchReview {
@@ -109,12 +110,7 @@ interface CachedResearchReview {
 
 const WEB_SEARCH_RESOLVER: ResearchSourceResolver = {
   id: "web_search",
-  buildTools() {
-    return [{ type: "web_search_preview", search_context_size: "low" }];
-  },
-  extractFallbackSources(responseJson: unknown) {
-    return extractWebSearchSources(responseJson);
-  },
+  webSearch: true,
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -401,10 +397,11 @@ function isPortRelatedWarning(warning: string): boolean {
   return PORT_WARNING_KEYWORDS.some((keyword) => normalized.includes(keyword));
 }
 
-function cacheKeyForDevice(device: ExtractedQuoteDevice): string {
-  return (device.normalizedLookupKey || `${device.manufacturer ?? ""}::${device.model}`)
+function cacheKeyForDevice(device: ExtractedQuoteDevice, model: string): string {
+  const deviceKey = (device.normalizedLookupKey || `${device.manufacturer ?? ""}::${device.model}`)
     .trim()
     .toLowerCase();
+  return `${deviceKey}::${model.trim().toLowerCase()}`;
 }
 
 function readResearchCache(cachePath: string | undefined): Map<string, CachedResearchReview> {
@@ -438,44 +435,27 @@ async function runResearchPass(
   validation: QuoteImportDraftValidation;
   modelCall: AiDeviceGenerationModelCall;
 }> {
-  const responseJson = await createOpenAiResponse({
+  const response = await createAiJsonResponse({
     model,
-    reasoning: { effort: reasoningEffort },
-    tools: resolver.buildTools(),
-    input: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "input_text",
-            text: buildResearchPrompt(device, quoteFileName, purpose),
-          },
-        ],
-      },
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "device_template_research",
-        strict: true,
-        schema: researchSchema(),
-      },
-    },
+    reasoningEffort,
+    prompt: buildResearchPrompt(device, quoteFileName, purpose),
+    schemaName: "device_template_research",
+    schema: researchSchema(),
+    webSearch: resolver.webSearch,
   });
 
-  const outputText = extractOutputText(responseJson);
+  const outputText = response.outputText;
   if (!outputText) {
-    throw new Error("OpenAI did not return any research result");
+    throw new Error("OpenRouter did not return any research result");
   }
 
   let parsed: OpenAiDraftPayload;
   try {
     parsed = JSON.parse(outputText) as OpenAiDraftPayload;
   } catch {
-    throw new Error("OpenAI returned an unreadable research result");
+    throw new Error("OpenRouter returned an unreadable research result");
   }
 
-  const fallbackSources = resolver.extractFallbackSources(responseJson);
   const warnings = normalizeWarningList(parsed.warnings);
   const template = sanitizeTemplate(parsed.template, device);
   const validation = validateResearchDraftTemplate(template);
@@ -484,7 +464,7 @@ async function runResearchPass(
     template,
     confidence: normalizeConfidence(parsed.confidence),
     officialSourceFound: Boolean(parsed.officialSourceFound),
-    sourceReferences: normalizeReferences(parsed.sourceReferences, fallbackSources),
+    sourceReferences: normalizeReferences(parsed.sourceReferences, response.sources),
     warnings,
     validation,
     modelCall: {
@@ -506,7 +486,8 @@ function portSummaryFromTemplate(template: Omit<DeviceTemplate, "id" | "version"
 
 export function getResearchPassRoute(
   forceEscalation: boolean | undefined,
-  config: ReturnType<typeof getOpenAiWorkflowConfig>,
+  config: ReturnType<typeof getAiWorkflowConfig>,
+  models: { researchModel?: string; escalationModel?: string } = {},
 ): {
   model: string;
   reasoningEffort: ReasoningEffort;
@@ -514,34 +495,36 @@ export function getResearchPassRoute(
 } {
   if (forceEscalation) {
     return {
-      model: config.deviceEscalationModel,
+      model: models.escalationModel?.trim() || config.deviceEscalationModel,
       reasoningEffort: config.deviceEscalationReasoningEffort,
       purpose: "escalated_verification",
     };
   }
 
   return {
-    model: config.deviceResearchModel,
+    model: models.researchModel?.trim() || config.deviceResearchModel,
     reasoningEffort: config.deviceResearchReasoningEffort,
     purpose: "routine_generation",
   };
 }
 
 export async function researchQuoteDevices(options: ResearchRouteOptions): Promise<QuoteImportResearchResponse> {
-  const config = getOpenAiWorkflowConfig();
+  const config = getAiWorkflowConfig();
   const resolver = WEB_SEARCH_RESOLVER;
+  const researchModel = options.researchModel?.trim() || config.deviceResearchModel;
+  const escalationModel = options.escalationModel?.trim() || config.deviceEscalationModel;
   const cache = readResearchCache(options.cachePath);
   const warnings: string[] = [];
   const results = await runLimitedConcurrency(options.devices, MAX_CONCURRENT_RESEARCH_CALLS, async (device) => {
     const modelCallRecords: AiDeviceGenerationModelCall[] = [];
-    const cacheKey = cacheKeyForDevice(device);
+    const route = getResearchPassRoute(options.forceEscalation, config, { researchModel, escalationModel });
+    const cacheKey = cacheKeyForDevice(device, route.model);
     const cached = !options.forceEscalation ? cache.get(cacheKey) : undefined;
     if (cached?.review?.metadata?.sourceReferences?.length) {
       return cached.review;
     }
 
     try {
-      const route = getResearchPassRoute(options.forceEscalation, config);
       const finalPass = await runResearchPass(
         device,
         options.fileName,

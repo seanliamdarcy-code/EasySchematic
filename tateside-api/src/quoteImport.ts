@@ -7,17 +7,6 @@ import type {
   QuoteImportResultItem,
 } from "../../src/quoteImportTypes.js";
 import { listCurrentTemplates } from "./deviceStore.js";
-import { createOpenAiResponse, extractOutputText, getOpenAiWorkflowConfig, uploadOpenAiFile } from "./openaiResponses.js";
-
-interface OpenAiExtractionPayload {
-  devices?: Array<{
-    manufacturer?: unknown;
-    model?: unknown;
-    description?: unknown;
-    quantity?: unknown;
-    sourceLineText?: unknown;
-  }>;
-}
 
 interface MatchContext {
   templates: DeviceTemplate[];
@@ -323,68 +312,15 @@ function extractionPrompt(): string {
 }
 
 async function extractDevicesFromPdf(fileName: string, fileBuffer: Buffer, fileType: string): Promise<ExtractedQuoteDevice[]> {
-  const config = getOpenAiWorkflowConfig();
-  const fileId = await uploadOpenAiFile(fileName, fileBuffer, fileType);
-  const responseJson = await createOpenAiResponse({
-    model: config.quoteExtractionModel,
-    reasoning: {
-      effort: config.quoteExtractionReasoningEffort,
-    },
-    input: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "input_file",
-            file_id: fileId,
-          },
-          {
-            type: "input_text",
-            text: extractionPrompt(),
-          },
-        ],
-      },
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "quote_device_extraction",
-        strict: true,
-        schema: extractionSchema(),
-      },
-    },
-  });
-
-  const outputText = extractOutputText(responseJson);
-  if (!outputText) {
-    throw new Error("OpenAI did not return any extraction result");
-  }
-
-  let parsed: OpenAiExtractionPayload;
-  try {
-    parsed = JSON.parse(outputText) as OpenAiExtractionPayload;
-  } catch {
-    throw new Error("OpenAI returned an unreadable extraction result");
-  }
-
-  const extracted = (parsed.devices ?? [])
-    .map((device) => {
-      const manufacturer = sanitizeString(device.manufacturer);
-      const model = sanitizeString(device.model);
-      if (!model) return null;
-      const normalized: ExtractedQuoteDevice = {
-        manufacturer,
-        model,
-        description: sanitizeString(device.description),
-        quantity: sanitizeQuantity(device.quantity),
-        sourceLineText: sanitizeString(device.sourceLineText),
-        normalizedLookupKey: normalizedLookupKey(manufacturer, model),
-      };
-      return normalized;
-    })
-    .filter((device): device is ExtractedQuoteDevice => device !== null);
-
-  return mergeDevices(extracted);
+  void fileName;
+  void fileBuffer;
+  void fileType;
+  void extractionPrompt;
+  void extractionSchema;
+  void sanitizeString;
+  void sanitizeQuantity;
+  void mergeDevices;
+  throw new Error("PDF quote extraction is no longer active. Use the Jetbuilt project import workflow instead.");
 }
 
 export async function importQuoteDevicesFromPdf(
@@ -393,7 +329,6 @@ export async function importQuoteDevicesFromPdf(
   fileBuffer: Buffer,
   fileType = "application/pdf",
 ): Promise<QuoteImportExtractionResponse> {
-  const config = getOpenAiWorkflowConfig();
   const extractedDevices = await extractDevicesFromPdf(fileName, fileBuffer, fileType);
   const results = inspectQuoteDevicesAgainstLibrary(db, extractedDevices);
 
@@ -401,8 +336,8 @@ export async function importQuoteDevicesFromPdf(
     fileName,
     fileType,
     extractedCount: results.length,
-    extractionModel: config.quoteExtractionModel,
-    extractionReasoningEffort: config.quoteExtractionReasoningEffort,
+    extractionModel: "jetbuilt-api",
+    extractionReasoningEffort: "low",
     results,
     warnings: [
       "Quote extraction is complete. Review possible matches before researching missing devices.",

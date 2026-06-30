@@ -157,9 +157,9 @@ export function getConfig(): ApiConfig {
     allowedOrigin: process.env.TATESIDE_ALLOWED_ORIGIN || "https://schematic.tateside.online",
     requireAccessIdentity: process.env.TATESIDE_REQUIRE_ACCESS_IDENTITY === "1",
     quoteImportMaxFileBytes: integerFromEnv(
-      process.env.OPENAI_QUOTE_IMPORT_MAX_FILE_BYTES,
+      process.env.TATESIDE_QUOTE_IMPORT_MAX_FILE_BYTES,
       15 * 1024 * 1024,
-      "OPENAI_QUOTE_IMPORT_MAX_FILE_BYTES",
+      "TATESIDE_QUOTE_IMPORT_MAX_FILE_BYTES",
       1024,
     ),
     jetbuiltApiBaseUrl: process.env.JETBUILT_API_BASE_URL || "https://app.jetbuilt.com/api",
@@ -170,7 +170,9 @@ export function getConfig(): ApiConfig {
       "JETBUILT_INDEX_REFRESH_MS",
       1,
     ),
-    quoteResearchCachePath: process.env.OPENAI_QUOTE_RESEARCH_CACHE_PATH || path.join(dataDir, "quote-research-cache.json"),
+    quoteResearchCachePath: process.env.OPENROUTER_QUOTE_RESEARCH_CACHE_PATH
+      || process.env.TATESIDE_QUOTE_RESEARCH_CACHE_PATH
+      || path.join(dataDir, "quote-research-cache.json"),
     sharePoint: getSharePointConfig(),
   };
 }

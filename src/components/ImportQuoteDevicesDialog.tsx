@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSchematicStore } from "../store";
 import type { DeviceTemplate } from "../types";
 import type {
+  AiProviderSettings,
   ExtractedQuoteDevice,
   QuoteImportCandidateMatch,
   JetbuiltClientSearchResult,
@@ -13,6 +14,7 @@ import type {
   QuoteImportResultItem,
 } from "../quoteImportTypes";
 import {
+  fetchAiProviderSettings,
   fetchTatesideDeviceTemplates,
   fetchJetbuiltIndexStatus,
   importDevicesFromJetbuiltProject,
@@ -72,6 +74,10 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [selectedJetbuiltClient, setSelectedJetbuiltClient] = useState<JetbuiltClientSearchResult | null>(null);
   const [clientProjects, setClientProjects] = useState<JetbuiltProjectSearchResult[]>([]);
   const [jetbuiltStatus, setJetbuiltStatus] = useState<JetbuiltIndexStatus | null>(null);
+  const [aiSettings, setAiSettings] = useState<AiProviderSettings | null>(null);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [selectedResearchModel, setSelectedResearchModel] = useState("");
+  const [selectedEscalationModel, setSelectedEscalationModel] = useState("");
   const [libraryTemplatesById, setLibraryTemplatesById] = useState<Record<string, DeviceTemplate>>({});
   const [extracting, setExtracting] = useState(false);
   const [researching, setResearching] = useState(false);
@@ -104,6 +110,10 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setSelectedJetbuiltClient(null);
     setClientProjects([]);
     setJetbuiltStatus(null);
+    setAiSettings(null);
+    setAiSettingsOpen(false);
+    setSelectedResearchModel("");
+    setSelectedEscalationModel("");
     setLibraryTemplatesById({});
     setExtracting(false);
     setResearching(false);
@@ -368,6 +378,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setError(null);
     try {
       const response = await researchQuoteDevices(extraction.fileName, selectedResearchDevices, {
+        researchModel: selectedResearchModel || undefined,
+        escalationModel: selectedEscalationModel || undefined,
         onProgress: (job) => {
           setResearchProgress({
             current: job.completed,
@@ -416,6 +428,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     try {
       const response = await researchQuoteDevices(extraction?.fileName ?? selectedFile?.name ?? "quote.pdf", [item.extractedDevice], {
         forceEscalation: true,
+        researchModel: selectedResearchModel || undefined,
+        escalationModel: selectedEscalationModel || undefined,
       });
       const replacement = response.results[0];
       if (!replacement) return;
@@ -628,6 +642,17 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
         if (!cancelled) setJetbuiltStatus(null);
       });
 
+    void fetchAiProviderSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        setAiSettings(settings);
+        setSelectedResearchModel((current) => current || settings.defaults.deviceResearchModel);
+        setSelectedEscalationModel((current) => current || settings.defaults.deviceEscalationModel);
+      })
+      .catch(() => {
+        if (!cancelled) setAiSettings(null);
+      });
+
     return () => {
       cancelled = true;
     };
@@ -694,6 +719,64 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                 {jetbuiltStatus
                   ? `Jetbuilt index: ${jetbuiltStatus.projectCount} projects, ${jetbuiltStatus.clientCount} clients${jetbuiltStatus.syncedAt ? `, last synced ${new Date(jetbuiltStatus.syncedAt).toLocaleString()}` : ""}${jetbuiltStatus.refreshing ? " (refreshing)" : ""}`
                   : "Jetbuilt index status loads when you search."}
+              </div>
+
+              <div className="rounded border bg-[var(--color-bg)]" style={{ borderColor: "var(--color-border)" }}>
+                <button
+                  type="button"
+                  onClick={() => setAiSettingsOpen((current) => !current)}
+                  className="w-full px-3 py-2 flex items-center justify-between gap-3 text-left cursor-pointer hover:bg-[var(--color-surface-hover)]"
+                >
+                  <span className="text-xs font-medium text-[var(--color-text-heading)]">
+                    AI model testing
+                  </span>
+                  <span className="text-[11px] text-[var(--color-text-muted)] truncate">
+                    {aiSettings
+                      ? `${aiSettings.provider} · ${aiSettings.configured ? "configured" : "missing key"} · ${selectedResearchModel || aiSettings.defaults.deviceResearchModel}`
+                      : "OpenRouter settings unavailable"}
+                  </span>
+                </button>
+                {aiSettingsOpen && aiSettings && (
+                  <div className="px-3 pb-3 pt-1 border-t space-y-2" style={{ borderColor: "var(--color-border)" }}>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <label className="text-[11px] text-[var(--color-text-muted)]">
+                        Research model
+                        <input
+                          type="text"
+                          list="openrouter-models"
+                          value={selectedResearchModel}
+                          onChange={(e) => setSelectedResearchModel(e.target.value)}
+                          placeholder={aiSettings.defaults.deviceResearchModel}
+                          className="mt-1 w-full bg-white border border-[var(--color-border)] rounded px-2.5 py-1.5 text-xs text-[var(--color-text-heading)] outline-none focus:border-blue-500"
+                        />
+                      </label>
+                      <label className="text-[11px] text-[var(--color-text-muted)]">
+                        Stronger retry model
+                        <input
+                          type="text"
+                          list="openrouter-models"
+                          value={selectedEscalationModel}
+                          onChange={(e) => setSelectedEscalationModel(e.target.value)}
+                          placeholder={aiSettings.defaults.deviceEscalationModel}
+                          className="mt-1 w-full bg-white border border-[var(--color-border)] rounded px-2.5 py-1.5 text-xs text-[var(--color-text-heading)] outline-none focus:border-blue-500"
+                        />
+                      </label>
+                    </div>
+                    <datalist id="openrouter-models">
+                      {aiSettings.models.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name}
+                        </option>
+                      ))}
+                    </datalist>
+                    <div className={`text-[11px] ${aiSettings.configured ? "text-[var(--color-text-muted)]" : "text-amber-700"}`}>
+                      {aiSettings.configured
+                        ? "Selections apply to the next research run only, so you can compare models without changing server defaults."
+                        : "OPENROUTER_API_KEY is not configured on the API server yet."}
+                      {aiSettings.modelListError ? ` Model list fallback in use: ${aiSettings.modelListError}` : ""}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2">

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getOpenAiWorkflowConfig } from "../../tateside-api/src/openaiResponses.ts";
+import { getAiWorkflowConfig } from "../../tateside-api/src/aiProvider.ts";
 import { getEscalationReason, getHighRiskDeviceTypes, getResearchPassRoute } from "../../tateside-api/src/deviceResearch.ts";
 import { openDatabase, runMigrations } from "../../tateside-api/src/db.ts";
 import { saveTemplates, listCurrentTemplates } from "../../tateside-api/src/deviceStore.ts";
@@ -11,12 +11,12 @@ import type { DeviceTemplate } from "../types";
 const tempDirs: string[] = [];
 
 afterEach(() => {
-  delete process.env.OPENAI_QUOTE_EXTRACTION_MODEL;
-  delete process.env.OPENAI_DEVICE_RESEARCH_MODEL;
-  delete process.env.OPENAI_DEVICE_ESCALATION_MODEL;
-  delete process.env.OPENAI_QUOTE_EXTRACTION_REASONING_EFFORT;
-  delete process.env.OPENAI_DEVICE_RESEARCH_REASONING_EFFORT;
-  delete process.env.OPENAI_DEVICE_ESCALATION_REASONING_EFFORT;
+  delete process.env.OPENROUTER_QUOTE_EXTRACTION_MODEL;
+  delete process.env.OPENROUTER_DEVICE_RESEARCH_MODEL;
+  delete process.env.OPENROUTER_DEVICE_ESCALATION_MODEL;
+  delete process.env.OPENROUTER_QUOTE_EXTRACTION_REASONING_EFFORT;
+  delete process.env.OPENROUTER_DEVICE_RESEARCH_REASONING_EFFORT;
+  delete process.env.OPENROUTER_DEVICE_ESCALATION_REASONING_EFFORT;
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -24,10 +24,10 @@ afterEach(() => {
 
 describe("quote import research config", () => {
   it("uses the required default model routing and reasoning effort", () => {
-    const config = getOpenAiWorkflowConfig();
-    expect(config.quoteExtractionModel).toBe("gpt-5.4-nano");
-    expect(config.deviceResearchModel).toBe("gpt-5.4-mini");
-    expect(config.deviceEscalationModel).toBe("gpt-5.4");
+    const config = getAiWorkflowConfig();
+    expect(config.quoteExtractionModel).toBe("google/gemini-2.5-pro");
+    expect(config.deviceResearchModel).toBe("anthropic/claude-sonnet-4.5:online");
+    expect(config.deviceEscalationModel).toBe("google/gemini-2.5-pro:online");
     expect(config.quoteExtractionReasoningEffort).toBe("low");
     expect(config.deviceResearchReasoningEffort).toBe("low");
     expect(config.deviceEscalationReasoningEffort).toBe("low");
@@ -83,15 +83,15 @@ describe("quote import research config", () => {
   });
 
   it("selects one-pass routes for routine and manual modes", () => {
-    const config = getOpenAiWorkflowConfig();
+    const config = getAiWorkflowConfig();
 
     expect(getResearchPassRoute(false, config)).toEqual({
-      model: "gpt-5.4-mini",
+      model: "anthropic/claude-sonnet-4.5:online",
       reasoningEffort: "low",
       purpose: "routine_generation",
     });
     expect(getResearchPassRoute(true, config)).toEqual({
-      model: "gpt-5.4",
+      model: "google/gemini-2.5-pro:online",
       reasoningEffort: "low",
       purpose: "escalated_verification",
     });
@@ -127,7 +127,7 @@ describe("quote import research config", () => {
             quoteFilename: "sample-quote.pdf",
             extractedManufacturer: "Sony",
             extractedModel: "SRG-A40",
-            modelUsed: "gpt-5.4-mini",
+            modelUsed: "anthropic/claude-sonnet-4.5:online",
             reasoningEffort: "medium",
             researchedAt: "2026-06-02T12:00:00.000Z",
             confidence: "high",
@@ -152,7 +152,7 @@ describe("quote import research config", () => {
     const saved = listCurrentTemplates(db)[0];
     expect(saved?.aiMetadata?.origin).toBe("ai_quote_import");
     expect(saved?.aiMetadata?.quoteFilename).toBe("sample-quote.pdf");
-    expect(saved?.aiMetadata?.modelUsed).toBe("gpt-5.4-mini");
+    expect(saved?.aiMetadata?.modelUsed).toBe("anthropic/claude-sonnet-4.5:online");
     expect(saved?.aiMetadata?.sourceReferences[0]?.url).toBe("https://pro.sony/");
 
     db.close();
