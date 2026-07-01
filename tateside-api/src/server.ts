@@ -10,6 +10,7 @@ import {
   getJetbuiltIndexStatus,
   importJetbuiltProject,
   initializeJetbuiltIndex,
+  listLatestJetbuiltProjects,
   listJetbuiltProjectsForClient,
   searchJetbuiltClients,
   searchJetbuiltProjects,
@@ -543,19 +544,20 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
       return;
     }
 
-    const query = (ctx.url.searchParams.get("query") ?? "").trim();
-    if (!query) {
-      sendJson(ctx.res, 200, { projects: [] }, corsHeaders);
-      return;
-    }
-
     await ensureJetbuiltIndexReady({
       apiKey: process.env.JETBUILT_API_KEY,
       baseUrl: config.jetbuiltApiBaseUrl,
       indexPath: config.jetbuiltIndexPath,
       refreshMs: config.jetbuiltIndexRefreshMs,
     });
-    const projects = searchJetbuiltProjects(query);
+    const latest = ctx.url.searchParams.get("latest") === "true";
+    const query = (ctx.url.searchParams.get("query") ?? "").trim();
+    const limit = Number(ctx.url.searchParams.get("limit") ?? "25");
+    const projects = latest
+      ? listLatestJetbuiltProjects(Number.isFinite(limit) ? limit : 25)
+      : query
+        ? searchJetbuiltProjects(query)
+        : [];
     sendJson(ctx.res, 200, { projects }, corsHeaders);
     return;
   }

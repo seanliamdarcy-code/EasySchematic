@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSchematicStore } from "../store";
 import type { DeviceTemplate } from "../types";
 import type {
@@ -18,7 +18,7 @@ import {
   fetchTatesideDeviceTemplates,
   fetchJetbuiltIndexStatus,
   importDevicesFromJetbuiltProject,
-  importDevicesFromQuote,
+  listLatestJetbuiltProjects,
   listJetbuiltProjectsForClient,
   researchQuoteDevices,
   saveTatesideDeviceTemplates,
@@ -85,15 +85,15 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const addToast = useSchematicStore((s) => s.addToast);
   const importCustomTemplates = useSchematicStore((s) => s.importCustomTemplates);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importSourceLabel, setImportSourceLabel] = useState<string | null>(null);
   const [jetbuiltQuery, setJetbuiltQuery] = useState("");
   const [jetbuiltClientQuery, setJetbuiltClientQuery] = useState("");
   const [jetbuiltSearching, setJetbuiltSearching] = useState(false);
+  const [latestJetbuiltLoading, setLatestJetbuiltLoading] = useState(false);
   const [jetbuiltClientSearching, setJetbuiltClientSearching] = useState(false);
   const [jetbuiltImporting, setJetbuiltImporting] = useState(false);
   const [jetbuiltProjects, setJetbuiltProjects] = useState<JetbuiltProjectSearchResult[]>([]);
+  const [latestJetbuiltProjects, setLatestJetbuiltProjects] = useState<JetbuiltProjectSearchResult[]>([]);
   const [jetbuiltClients, setJetbuiltClients] = useState<JetbuiltClientSearchResult[]>([]);
   const [selectedJetbuiltClient, setSelectedJetbuiltClient] = useState<JetbuiltClientSearchResult | null>(null);
   const [clientProjects, setClientProjects] = useState<JetbuiltProjectSearchResult[]>([]);
@@ -103,7 +103,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [selectedResearchModel, setSelectedResearchModel] = useState(() => readStoredModelChoice(AI_RESEARCH_MODEL_STORAGE_KEY));
   const [selectedEscalationModel, setSelectedEscalationModel] = useState(() => readStoredModelChoice(AI_ESCALATION_MODEL_STORAGE_KEY));
   const [libraryTemplatesById, setLibraryTemplatesById] = useState<Record<string, DeviceTemplate>>({});
-  const [extracting, setExtracting] = useState(false);
   const [researching, setResearching] = useState(false);
   const [researchProgress, setResearchProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -124,14 +123,15 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const keyForExtractedDevice = (device: ExtractedQuoteDevice) => `${device.normalizedLookupKey || "device"}:${device.model}`;
 
   const reset = () => {
-    setSelectedFile(null);
     setImportSourceLabel(null);
     setJetbuiltQuery("");
     setJetbuiltClientQuery("");
     setJetbuiltSearching(false);
+    setLatestJetbuiltLoading(false);
     setJetbuiltClientSearching(false);
     setJetbuiltImporting(false);
     setJetbuiltProjects([]);
+    setLatestJetbuiltProjects([]);
     setJetbuiltClients([]);
     setSelectedJetbuiltClient(null);
     setClientProjects([]);
@@ -139,7 +139,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setAiSettings(null);
     setAiSettingsOpen(false);
     setLibraryTemplatesById({});
-    setExtracting(false);
     setResearching(false);
     setResearchProgress(null);
     setSaving(false);
@@ -295,24 +294,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
           ? "Next: missing devices"
           : "Review outcomes";
 
-  const handleFileSelected = (file: File | null) => {
-    setSelectedFile(file);
-    setImportSourceLabel(file?.name ?? null);
-    setError(null);
-    setExtraction(null);
-    setResearchResults([]);
-    setPossibleMatchDecisions({});
-    setPossibleMatchTemplateIds({});
-    setSelectedDraftKeys(new Set());
-    setSelectedResearchKeys(new Set());
-    setIgnoredDraftKeys(new Set());
-    setSavedDraftKeys(new Set());
-    setLocallyAddedDraftKeys(new Set());
-    setReviewStep("import");
-    setShowOutcomeReview(false);
-    setResearchProgress(null);
-  };
-
   const refreshJetbuiltStatus = async () => {
     try {
       const status = await fetchJetbuiltIndexStatus();
@@ -322,30 +303,22 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     }
   };
 
-  const handleExtract = async () => {
-    if (!selectedFile) return;
-    setExtracting(true);
+  const handleLoadLatestJetbuiltProjects = async () => {
+    setLatestJetbuiltLoading(true);
     setError(null);
     try {
-      const response = await importDevicesFromQuote(selectedFile);
-      setExtraction(response);
-      setImportSourceLabel(selectedFile.name);
-      setResearchResults([]);
-      setPossibleMatchDecisions({});
-      setPossibleMatchTemplateIds({});
-      setSelectedDraftKeys(new Set());
-      setSelectedResearchKeys(new Set());
-      setIgnoredDraftKeys(new Set());
-      setSavedDraftKeys(new Set());
-      setLocallyAddedDraftKeys(new Set());
-      setReviewStep("import");
-      setShowOutcomeReview(false);
-      addToast(`Extracted ${response.extractedCount} quote device candidate${response.extractedCount === 1 ? "" : "s"}`, "success");
+      await refreshJetbuiltStatus();
+      const projects = await listLatestJetbuiltProjects(25);
+      setLatestJetbuiltProjects(projects);
+      if (projects.length === 0) {
+        addToast("No cached Jetbuilt projects are available yet.", "info");
+      }
     } catch (err) {
-      const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Quote import failed";
+      const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Latest Jetbuilt projects could not be loaded";
       setError(message);
+      setLatestJetbuiltProjects([]);
     } finally {
-      setExtracting(false);
+      setLatestJetbuiltLoading(false);
     }
   };
 
@@ -500,7 +473,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setResearchProgress({ current: 1, total: 1, label: `Retrying ${item.extractedDevice.model}` });
     setError(null);
     try {
-      const response = await researchQuoteDevices(extraction?.fileName ?? selectedFile?.name ?? "quote.pdf", [item.extractedDevice], {
+      const response = await researchQuoteDevices(extraction?.fileName ?? importSourceLabel ?? "Jetbuilt import", [item.extractedDevice], {
         forceEscalation: true,
         researchModel: selectedResearchModel || undefined,
         escalationModel: selectedEscalationModel || undefined,
@@ -959,6 +932,58 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
               )}
 
               <div className="pt-2 border-t" style={{ borderColor: "var(--color-border)" }}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex-1 min-w-[220px]">
+                    <div className="text-xs font-medium text-[var(--color-text-heading)]">Browse Latest Jetbuilt Projects</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
+                      Load the most recently updated cached projects and import directly from the list.
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleLoadLatestJetbuiltProjects}
+                    disabled={latestJetbuiltLoading}
+                    className="px-4 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {latestJetbuiltLoading ? "Loading..." : "Load Latest"}
+                  </button>
+                </div>
+              </div>
+
+              {latestJetbuiltProjects.length > 0 && (
+                <div className="rounded border overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
+                  <div className="max-h-56 overflow-y-auto">
+                    {latestJetbuiltProjects.map((project) => (
+                      <div
+                        key={`latest:${project.id}`}
+                        className="px-3 py-2 border-b flex items-center gap-3"
+                        style={{ borderColor: "var(--color-border)" }}
+                      >
+                        <div className="flex-1 min-w-0 text-xs">
+                          <div className="font-medium text-[var(--color-text-heading)] truncate">
+                            {project.customId ? `${project.customId} - ${project.name}` : project.name}
+                          </div>
+                          <div className="text-[11px] text-[var(--color-text-muted)] truncate">
+                            Jetbuilt #{project.id}
+                            {project.clientName ? ` · ${project.clientName}` : ""}
+                            {project.stage ? ` · ${project.stage}` : ""}
+                            {typeof project.itemCount === "number" ? ` · ${project.itemCount} items` : ""}
+                            {project.updatedAt ? ` · updated ${new Date(project.updatedAt).toLocaleDateString()}` : ""}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => void handleImportJetbuiltProject(project)}
+                          disabled={jetbuiltImporting}
+                          className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          {jetbuiltImporting ? "Importing..." : "Import"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-2 border-t" style={{ borderColor: "var(--color-border)" }}>
                 <div className="text-xs font-medium text-[var(--color-text-heading)]">Browse by Client</div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
                   Search for a client, then choose one of their Jetbuilt projects from the list.
@@ -1051,35 +1076,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   </div>
                 </div>
               )}
-            </div>
-
-            <div className="rounded border p-3" style={{ borderColor: "var(--color-border)" }}>
-              <div className="text-xs font-medium text-[var(--color-text-heading)] mb-2">Fallback Quote PDF Upload</div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] cursor-pointer"
-                >
-                  Choose PDF
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,application/pdf"
-                  className="hidden"
-                  onChange={(e) => handleFileSelected(e.target.files?.[0] ?? null)}
-                />
-                <div className="text-xs text-[var(--color-text-muted)]">
-                  {selectedFile ? selectedFile.name : "Keep this as a fallback when Jetbuilt project import is not suitable."}
-                </div>
-                <button
-                  onClick={handleExtract}
-                  disabled={!selectedFile || extracting}
-                  className="ml-auto px-4 py-1.5 rounded bg-blue-500 text-white text-xs hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {extracting ? "Extracting..." : "Extract Device Models"}
-                </button>
-              </div>
             </div>
               </>
             )}

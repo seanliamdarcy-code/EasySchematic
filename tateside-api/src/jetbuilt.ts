@@ -466,6 +466,10 @@ export function searchJetbuiltProjects(query: string): JetbuiltProjectSearchResu
     .map((entry) => entry.project);
 }
 
+export function listLatestJetbuiltProjects(limit = 25): JetbuiltProjectSearchResult[] {
+  return sortByUpdatedDesc(indexState.data.projects).slice(0, Math.max(1, Math.min(limit, 50)));
+}
+
 export function searchJetbuiltClients(query: string): JetbuiltClientSearchResult[] {
   const trimmed = query.trim();
   if (!trimmed) return [];

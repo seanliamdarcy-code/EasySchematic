@@ -312,33 +312,15 @@ export async function saveTatesideSchematic(
   });
 }
 
-export async function importDevicesFromQuote(file: File): Promise<QuoteImportExtractionResponse> {
-  const res = await fetch(`${TATESIDE_API_URL}/quote-import/extract`, {
-    method: "POST",
-    headers: {
-      "Content-Type": file.type || "application/pdf",
-      "X-Tateside-Upload-Filename": encodeURIComponent(file.name),
-    },
-    credentials: "include",
-    body: file,
-  });
-
-  if (!res.ok) {
-    const fallback =
-      res.status === 404
-        ? "TateSide quote import endpoint is not available yet"
-        : `TateSide API request failed (${res.status})`;
-    const data = (await res.json().catch(() => null)) as { error?: string } | null;
-    throw new TatesideApiError(data?.error || fallback, res.status);
-  }
-
-  return res.json() as Promise<QuoteImportExtractionResponse>;
-}
-
 export async function searchJetbuiltProjects(query: string): Promise<JetbuiltProjectSearchResult[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
   const response = await requestJson<{ projects: JetbuiltProjectSearchResult[] }>(`/jetbuilt/projects?query=${encodeURIComponent(trimmed)}`);
+  return response.projects;
+}
+
+export async function listLatestJetbuiltProjects(limit = 25): Promise<JetbuiltProjectSearchResult[]> {
+  const response = await requestJson<{ projects: JetbuiltProjectSearchResult[] }>(`/jetbuilt/projects?latest=true&limit=${encodeURIComponent(String(limit))}`);
   return response.projects;
 }
 
