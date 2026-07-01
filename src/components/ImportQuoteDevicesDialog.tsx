@@ -40,7 +40,8 @@ interface EditingDraftState {
   template: DeviceTemplate;
 }
 
-type PossibleMatchDecision = "use_library_match" | "research_missing";
+type PossibleMatchDecision = "use_library_match" | "use_match_as_template" | "research_missing";
+type ImportReviewStep = "import" | "already" | "matches" | "missing";
 type OutcomeReviewItem = QuoteImportResultItem | QuoteImportDraftReview;
 
 const STATUS_LABELS: Record<LibraryMatchStatus, string> = {
@@ -110,11 +111,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [extraction, setExtraction] = useState<QuoteImportExtractionResponse | null>(null);
   const [researchResults, setResearchResults] = useState<QuoteImportDraftReview[]>([]);
   const [possibleMatchDecisions, setPossibleMatchDecisions] = useState<Record<string, PossibleMatchDecision>>({});
+  const [possibleMatchTemplateIds, setPossibleMatchTemplateIds] = useState<Record<string, string>>({});
   const [selectedDraftKeys, setSelectedDraftKeys] = useState<Set<string>>(new Set());
   const [selectedResearchKeys, setSelectedResearchKeys] = useState<Set<string>>(new Set());
   const [ignoredDraftKeys, setIgnoredDraftKeys] = useState<Set<string>>(new Set());
   const [savedDraftKeys, setSavedDraftKeys] = useState<Set<string>>(new Set());
   const [locallyAddedDraftKeys, setLocallyAddedDraftKeys] = useState<Set<string>>(new Set());
+  const [reviewStep, setReviewStep] = useState<ImportReviewStep>("import");
   const [showOutcomeReview, setShowOutcomeReview] = useState(false);
   const [editingDraft, setEditingDraft] = useState<EditingDraftState | null>(null);
 
@@ -144,11 +147,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setExtraction(null);
     setResearchResults([]);
     setPossibleMatchDecisions({});
+    setPossibleMatchTemplateIds({});
     setSelectedDraftKeys(new Set());
     setSelectedResearchKeys(new Set());
     setIgnoredDraftKeys(new Set());
     setSavedDraftKeys(new Set());
     setLocallyAddedDraftKeys(new Set());
+    setReviewStep("import");
     setShowOutcomeReview(false);
     setEditingDraft(null);
     onClose();
@@ -248,6 +253,48 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     [pendingReadyDrafts, selectedDraftKeys],
   );
 
+  const possibleMatchItems = useMemo(
+    () => (extraction?.results ?? []).filter((item) => item.status === "possible_match"),
+    [extraction],
+  );
+
+  const hasImportedDevices = !!extraction;
+  const reviewStepIndex: Record<ImportReviewStep, number> = { import: 0, already: 1, matches: 2, missing: 3 };
+  const reviewStepTitle: Record<ImportReviewStep, string> = {
+    import: "Import Devices",
+    already: "Already In Library",
+    matches: "Possible Matches",
+    missing: "Missing Devices",
+  };
+
+  const goToReviewStep = (step: ImportReviewStep) => {
+    setShowOutcomeReview(false);
+    setReviewStep(step);
+  };
+
+  const goToNextReviewStep = () => {
+    if (!extraction) return;
+    if (reviewStep === "import") goToReviewStep("already");
+    else if (reviewStep === "already") goToReviewStep("matches");
+    else if (reviewStep === "matches") goToReviewStep("missing");
+    else setShowOutcomeReview(true);
+  };
+
+  const goToPreviousReviewStep = () => {
+    if (reviewStep === "missing") goToReviewStep("matches");
+    else if (reviewStep === "matches") goToReviewStep("already");
+    else if (reviewStep === "already") goToReviewStep("import");
+  };
+
+  const nextReviewLabel =
+    reviewStep === "import"
+      ? "Next: already in library"
+      : reviewStep === "already"
+        ? "Next: possible matches"
+        : reviewStep === "matches"
+          ? "Next: missing devices"
+          : "Review outcomes";
+
   const handleFileSelected = (file: File | null) => {
     setSelectedFile(file);
     setImportSourceLabel(file?.name ?? null);
@@ -255,11 +302,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setExtraction(null);
     setResearchResults([]);
     setPossibleMatchDecisions({});
+    setPossibleMatchTemplateIds({});
     setSelectedDraftKeys(new Set());
     setSelectedResearchKeys(new Set());
     setIgnoredDraftKeys(new Set());
     setSavedDraftKeys(new Set());
     setLocallyAddedDraftKeys(new Set());
+    setReviewStep("import");
     setShowOutcomeReview(false);
     setResearchProgress(null);
   };
@@ -283,11 +332,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       setImportSourceLabel(selectedFile.name);
       setResearchResults([]);
       setPossibleMatchDecisions({});
+      setPossibleMatchTemplateIds({});
       setSelectedDraftKeys(new Set());
       setSelectedResearchKeys(new Set());
       setIgnoredDraftKeys(new Set());
       setSavedDraftKeys(new Set());
       setLocallyAddedDraftKeys(new Set());
+      setReviewStep("import");
       setShowOutcomeReview(false);
       addToast(`Extracted ${response.extractedCount} quote device candidate${response.extractedCount === 1 ? "" : "s"}`, "success");
     } catch (err) {
@@ -367,11 +418,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       setImportSourceLabel(project.customId ? `${project.customId} ${project.name}` : project.name);
       setResearchResults([]);
       setPossibleMatchDecisions({});
+      setPossibleMatchTemplateIds({});
       setSelectedDraftKeys(new Set());
       setSelectedResearchKeys(new Set());
       setIgnoredDraftKeys(new Set());
       setSavedDraftKeys(new Set());
       setLocallyAddedDraftKeys(new Set());
+      setReviewStep("import");
       setShowOutcomeReview(false);
       addToast(`Imported ${response.extractedCount} Jetbuilt device candidate${response.extractedCount === 1 ? "" : "s"}`, "success");
     } catch (err) {
@@ -522,6 +575,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const setPossibleDecision = (item: QuoteImportResultItem, decision: PossibleMatchDecision) => {
     const key = keyForExtractedDevice(item);
     setPossibleMatchDecisions((current) => ({ ...current, [key]: decision }));
+    if (decision !== "use_match_as_template") {
+      setPossibleMatchTemplateIds((current) => {
+        const { [key]: _removed, ...rest } = current;
+        void _removed;
+        return rest;
+      });
+    }
   };
 
   const toggleDraftSelected = (item: QuoteImportDraftReview) => {
@@ -593,7 +653,11 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     return byId;
   };
 
-  const handleCopyPortsFromLibraryCandidate = async (item: QuoteImportResultItem, candidate: QuoteImportCandidateMatch) => {
+  const handleCopyPortsFromLibraryCandidate = async (
+    item: QuoteImportResultItem,
+    candidate: QuoteImportCandidateMatch,
+    decision?: PossibleMatchDecision,
+  ) => {
     setError(null);
     try {
       const templatesById = await ensureLibraryTemplatesLoaded();
@@ -644,6 +708,12 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       });
       if (validation.ok) {
         setSelectedDraftKeys((current) => new Set([...current, draftKey]));
+      }
+      if (decision) {
+        setPossibleMatchDecisions((current) => ({ ...current, [draftKey]: decision }));
+        if (decision === "use_match_as_template") {
+          setPossibleMatchTemplateIds((current) => ({ ...current, [draftKey]: candidate.id }));
+        }
       }
       addToast(`Copied ports from ${candidate.label} into a draft for ${item.model}`, "success");
     } catch (err) {
@@ -701,12 +771,14 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-sm font-semibold" style={{ color: "var(--color-text-heading)" }}>
-                  {showOutcomeReview ? "Import Outcome Review" : "Import Devices"}
+                  {showOutcomeReview ? "Import Outcome Review" : reviewStepTitle[reviewStep]}
                 </h2>
                 <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
                   {showOutcomeReview
                     ? "Review exactly how this import was resolved before the future Start Schematic hand-off."
-                    : "Import directly from a Jetbuilt project first, then fall back to quote PDF upload only when needed."}
+                    : reviewStep === "import"
+                      ? "Import directly from a Jetbuilt project first, then fall back to quote PDF upload only when needed."
+                      : "Step through the imported project inventory before researching or creating missing devices."}
                 </p>
               </div>
               <button onClick={reset} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer">✕</button>
@@ -728,6 +800,30 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
               />
             ) : (
               <div className="space-y-4">
+            {hasImportedDevices && (
+              <div className="rounded border bg-[var(--color-bg)] px-3 py-2" style={{ borderColor: "var(--color-border)" }}>
+                <div className="grid grid-cols-4 gap-1">
+                  {(["import", "already", "matches", "missing"] as ImportReviewStep[]).map((step) => (
+                    <button
+                      key={step}
+                      type="button"
+                      onClick={() => goToReviewStep(step)}
+                      className={`min-h-8 rounded px-2 py-1 text-[11px] border cursor-pointer ${
+                        reviewStep === step
+                          ? "border-blue-300 bg-blue-50 text-blue-800"
+                          : reviewStepIndex[step] < reviewStepIndex[reviewStep]
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                            : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)]"
+                      }`}
+                    >
+                      {reviewStepTitle[step]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {reviewStep === "import" && (
+              <>
             <div className="rounded border p-3 space-y-3" style={{ borderColor: "var(--color-border)" }}>
               <div>
                 <div className="text-xs font-medium text-[var(--color-text-heading)]">Import from Jetbuilt Project</div>
@@ -985,6 +1081,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                 </button>
               </div>
             </div>
+              </>
+            )}
 
             {error && (
               <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -997,7 +1095,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                   <SummaryCard label="Extracted devices" value={String(extraction.extractedCount)} tone="default" />
                   <SummaryCard label="Already in library" value={String(alreadyInLibraryItems.length)} tone="success" />
-                  <SummaryCard label="Possible matches" value={String((extraction.results ?? []).filter((item) => item.status === "possible_match").length)} tone="warning" />
+                  <SummaryCard label="Possible matches" value={String(possibleMatchItems.length)} tone="warning" />
                   <SummaryCard label="Missing devices" value={String(unresolvedMissingDevices.length)} tone="danger" />
                 </div>
 
@@ -1017,31 +1115,36 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   </div>
                 )}
 
-                <SectionCard title="Already In Library" count={alreadyInLibraryItems.length}>
-                  {alreadyInLibraryItems.length > 0 ? alreadyInLibraryItems.map((item) => (
-                    <ExtractionRow key={keyForExtractedDevice(item)} item={item} />
-                  )) : <EmptyState text="No extracted devices are confirmed as already in the TateSide library yet." />}
-                </SectionCard>
+                {reviewStep === "already" && (
+                  <SectionCard title="Already In Library" count={alreadyInLibraryItems.length}>
+                    {alreadyInLibraryItems.length > 0 ? alreadyInLibraryItems.map((item) => (
+                      <ExtractionRow key={keyForExtractedDevice(item)} item={item} />
+                    )) : <EmptyState text="No extracted devices are confirmed as already in the TateSide library yet." />}
+                  </SectionCard>
+                )}
 
-                <SectionCard title="Possible Matches" count={(extraction.results ?? []).filter((item) => item.status === "possible_match").length}>
-                  {(extraction.results ?? []).filter((item) => item.status === "possible_match").length > 0 ? (
-                    extraction.results
-                      .filter((item) => item.status === "possible_match")
-                      .map((item) => (
+                {reviewStep === "matches" && (
+                  <SectionCard title="Possible Matches" count={possibleMatchItems.length}>
+                    {possibleMatchItems.length > 0 ? (
+                      possibleMatchItems.map((item) => (
                         <PossibleMatchRow
                           key={keyForExtractedDevice(item)}
                           item={item}
                           decision={possibleMatchDecisions[keyForExtractedDevice(item)]}
+                          selectedTemplateMatchId={possibleMatchTemplateIds[keyForExtractedDevice(item)]}
                           onUseLibraryMatch={() => setPossibleDecision(item, "use_library_match")}
+                          onUseMatchAsTemplate={(match) => void handleCopyPortsFromLibraryCandidate(item, match, "use_match_as_template")}
                           onResearchMissing={() => setPossibleDecision(item, "research_missing")}
                         />
                       ))
-                  ) : (
-                    <EmptyState text="No possible matches need review." />
-                  )}
-                </SectionCard>
+                    ) : (
+                      <EmptyState text="No possible matches need review." />
+                    )}
+                  </SectionCard>
+                )}
 
-                <SectionCard title="Missing Devices" count={unresolvedMissingDevices.length} action={(<div className="flex items-center gap-2">
+                {reviewStep === "missing" && (
+                  <SectionCard title="Missing Devices" count={unresolvedMissingDevices.length} action={(<div className="flex items-center gap-2">
                   <button
                     onClick={handleResearchMissing}
                     disabled={selectedResearchDevices.length === 0 || researching || unresolvedPossibleMatches.length > 0}
@@ -1080,11 +1183,12 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                       Review each possible match before researching missing devices.
                     </div>
                   )}
-                </SectionCard>
+                  </SectionCard>
+                )}
               </>
             )}
 
-            {researchResults.length > 0 && (
+            {researchResults.length > 0 && (reviewStep === "matches" || reviewStep === "missing") && (
               <>
                 <SectionCard title="Generated Drafts Ready For Review" count={pendingReadyDrafts.length} action={(
                   <div className="flex items-center gap-2">
@@ -1162,12 +1266,20 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
               </>
             ) : (
               <>
+                {reviewStep !== "import" && (
+                  <button
+                    onClick={goToPreviousReviewStep}
+                    className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] cursor-pointer"
+                  >
+                    Back
+                  </button>
+                )}
                 <button
-                  onClick={() => setShowOutcomeReview(true)}
-                  disabled={!extraction || researching || saving}
+                  onClick={goToNextReviewStep}
+                  disabled={!hasImportedDevices || researching || saving}
                   className="px-3 py-1.5 rounded bg-blue-500 text-white text-xs hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  Review outcomes →
+                  {nextReviewLabel}
                 </button>
                 <button
                   onClick={reset}
@@ -1454,12 +1566,16 @@ function ExtractionRow({
 function PossibleMatchRow({
   item,
   decision,
+  selectedTemplateMatchId,
   onUseLibraryMatch,
+  onUseMatchAsTemplate,
   onResearchMissing,
 }: {
   item: QuoteImportResultItem;
   decision?: PossibleMatchDecision;
+  selectedTemplateMatchId?: string;
   onUseLibraryMatch: () => void;
+  onUseMatchAsTemplate: (match: QuoteImportCandidateMatch) => void;
   onResearchMissing: () => void;
 }) {
   return (
@@ -1479,9 +1595,23 @@ function PossibleMatchRow({
       <div className="mt-2 space-y-1">
         {item.possibleMatches.map((match) => (
           <div key={match.id} className="rounded border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800">
-            <div className="font-medium">{match.label}</div>
-            <div>{[match.manufacturer, match.modelNumber].filter(Boolean).join(" ")}</div>
-            <div className="opacity-80">{match.matchReason}</div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium">{match.label}</div>
+                <div>{[match.manufacturer, match.modelNumber].filter(Boolean).join(" ")}</div>
+                <div className="opacity-80">{match.matchReason}</div>
+              </div>
+              <button
+                onClick={() => onUseMatchAsTemplate(match)}
+                className={`shrink-0 px-2.5 py-1 rounded text-[11px] border cursor-pointer ${
+                  decision === "use_match_as_template" && selectedTemplateMatchId === match.id
+                    ? "border-blue-300 bg-blue-100 text-blue-800"
+                    : "border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+                }`}
+              >
+                Use as template
+              </button>
+            </div>
           </div>
         ))}
       </div>
