@@ -5,6 +5,7 @@ import type {
   JetbuiltClientSearchResult,
   JetbuiltIndexStatus,
   JetbuiltProjectSearchResult,
+  JetbuiltSearchResponse,
   QuoteImportResearchJobResponse,
   QuoteImportExtractionResponse,
   QuoteImportResearchResponse,
@@ -322,6 +323,12 @@ export async function searchJetbuiltProjects(query: string): Promise<JetbuiltPro
 export async function listLatestJetbuiltProjects(limit = 25): Promise<JetbuiltProjectSearchResult[]> {
   const response = await requestJson<{ projects: JetbuiltProjectSearchResult[] }>(`/jetbuilt/projects?latest=true&limit=${encodeURIComponent(String(limit))}`);
   return response.projects;
+}
+
+export async function searchJetbuilt(query: string): Promise<JetbuiltSearchResponse> {
+  const trimmed = query.trim();
+  if (!trimmed) return { projects: [], clients: [] };
+  return requestJson<JetbuiltSearchResponse>(`/jetbuilt/search?query=${encodeURIComponent(trimmed)}`);
 }
 
 export async function searchJetbuiltClients(query: string): Promise<JetbuiltClientSearchResult[]> {

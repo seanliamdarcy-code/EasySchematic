@@ -5,9 +5,10 @@ import type {
   AiProviderSettings,
   ExtractedQuoteDevice,
   QuoteImportCandidateMatch,
-  JetbuiltClientSearchResult,
+  JetbuiltClientProjectSearchResult,
   JetbuiltIndexStatus,
   JetbuiltProjectSearchResult,
+  JetbuiltSearchResponse,
   LibraryMatchStatus,
   QuoteImportDraftReview,
   QuoteImportExtractionResponse,
@@ -19,10 +20,9 @@ import {
   fetchJetbuiltIndexStatus,
   importDevicesFromJetbuiltProject,
   listLatestJetbuiltProjects,
-  listJetbuiltProjectsForClient,
   researchQuoteDevices,
   saveTatesideDeviceTemplates,
-  searchJetbuiltClients,
+  searchJetbuilt,
   searchJetbuiltProjects,
   TatesideApiError,
 } from "../tatesideApi";
@@ -88,16 +88,11 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
   const [importSourceLabel, setImportSourceLabel] = useState<string | null>(null);
   const [jetbuiltQuery, setJetbuiltQuery] = useState("");
-  const [jetbuiltClientQuery, setJetbuiltClientQuery] = useState("");
   const [jetbuiltSearching, setJetbuiltSearching] = useState(false);
   const [latestJetbuiltLoading, setLatestJetbuiltLoading] = useState(false);
-  const [jetbuiltClientSearching, setJetbuiltClientSearching] = useState(false);
   const [jetbuiltImporting, setJetbuiltImporting] = useState(false);
-  const [jetbuiltProjects, setJetbuiltProjects] = useState<JetbuiltProjectSearchResult[]>([]);
+  const [jetbuiltSearchResults, setJetbuiltSearchResults] = useState<JetbuiltSearchResponse>({ projects: [], clients: [] });
   const [latestJetbuiltProjects, setLatestJetbuiltProjects] = useState<JetbuiltProjectSearchResult[]>([]);
-  const [jetbuiltClients, setJetbuiltClients] = useState<JetbuiltClientSearchResult[]>([]);
-  const [selectedJetbuiltClient, setSelectedJetbuiltClient] = useState<JetbuiltClientSearchResult | null>(null);
-  const [clientProjects, setClientProjects] = useState<JetbuiltProjectSearchResult[]>([]);
   const [jetbuiltStatus, setJetbuiltStatus] = useState<JetbuiltIndexStatus | null>(null);
   const [aiSettings, setAiSettings] = useState<AiProviderSettings | null>(null);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
@@ -126,16 +121,11 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const reset = () => {
     setImportSourceLabel(null);
     setJetbuiltQuery("");
-    setJetbuiltClientQuery("");
     setJetbuiltSearching(false);
     setLatestJetbuiltLoading(false);
-    setJetbuiltClientSearching(false);
     setJetbuiltImporting(false);
-    setJetbuiltProjects([]);
+    setJetbuiltSearchResults({ projects: [], clients: [] });
     setLatestJetbuiltProjects([]);
-    setJetbuiltClients([]);
-    setSelectedJetbuiltClient(null);
-    setClientProjects([]);
     setJetbuiltStatus(null);
     setAiSettings(null);
     setAiSettingsOpen(false);
@@ -339,56 +329,17 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setError(null);
     try {
       await refreshJetbuiltStatus();
-      const projects = await searchJetbuiltProjects(query);
-      setJetbuiltProjects(projects);
-      if (projects.length === 0) {
-        addToast(`No Jetbuilt projects matched ${query}. Try a P number, project name, or Jetbuilt project id.`, "info");
+      const results = await searchJetbuilt(query);
+      setJetbuiltSearchResults(results);
+      if (results.projects.length === 0 && results.clients.length === 0) {
+        addToast(`No Jetbuilt matches for ${query}. Try a P number, project name, client, or Jetbuilt project id.`, "info");
       }
     } catch (err) {
-      const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Jetbuilt project search failed";
+      const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Jetbuilt search failed";
       setError(message);
-      setJetbuiltProjects([]);
+      setJetbuiltSearchResults({ projects: [], clients: [] });
     } finally {
       setJetbuiltSearching(false);
-    }
-  };
-
-  const handleSearchJetbuiltClients = async () => {
-    const query = jetbuiltClientQuery.trim();
-    if (!query) return;
-    setJetbuiltClientSearching(true);
-    setError(null);
-    try {
-      await refreshJetbuiltStatus();
-      const clients = await searchJetbuiltClients(query);
-      setJetbuiltClients(clients);
-      setSelectedJetbuiltClient(null);
-      setClientProjects([]);
-      if (clients.length === 0) {
-        addToast(`No Jetbuilt clients matched ${query}`, "info");
-      }
-    } catch (err) {
-      const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Jetbuilt client search failed";
-      setError(message);
-      setJetbuiltClients([]);
-    } finally {
-      setJetbuiltClientSearching(false);
-    }
-  };
-
-  const handleSelectJetbuiltClient = async (client: JetbuiltClientSearchResult) => {
-    setSelectedJetbuiltClient(client);
-    setJetbuiltImporting(true);
-    setError(null);
-    try {
-      const projects = await listJetbuiltProjectsForClient(client.id);
-      setClientProjects(projects);
-    } catch (err) {
-      const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Jetbuilt client projects could not be loaded";
-      setError(message);
-      setClientProjects([]);
-    } finally {
-      setJetbuiltImporting(false);
     }
   };
 
@@ -911,35 +862,24 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   {jetbuiltSearching ? "Searching..." : "Search Jetbuilt"}
                 </button>
               </div>
-
-              {jetbuiltProjects.length > 0 && (
+              {(jetbuiltSearchResults.projects.length > 0 || jetbuiltSearchResults.clients.length > 0) && (
                 <div className="rounded border overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
                   <div className="max-h-56 overflow-y-auto">
-                    {jetbuiltProjects.map((project) => (
-                      <div
-                        key={project.id}
-                        className="px-3 py-2 border-b flex items-center gap-3"
-                        style={{ borderColor: "var(--color-border)" }}
-                      >
-                        <div className="flex-1 min-w-0 text-xs">
-                          <div className="font-medium text-[var(--color-text-heading)] truncate">
-                            {project.customId ? `${project.customId} - ${project.name}` : project.name}
-                          </div>
-                          <div className="text-[11px] text-[var(--color-text-muted)] truncate">
-                            Jetbuilt #{project.id}
-                            {project.stage ? ` · ${project.stage}` : ""}
-                            {typeof project.itemCount === "number" ? ` · ${project.itemCount} items` : ""}
-                            {project.updatedAt ? ` · updated ${new Date(project.updatedAt).toLocaleDateString()}` : ""}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => void handleImportJetbuiltProject(project)}
-                          disabled={jetbuiltImporting}
-                          className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                        >
-                          {jetbuiltImporting ? "Importing..." : "Import"}
-                        </button>
-                      </div>
+                    {jetbuiltSearchResults.projects.map((project) => (
+                      <JetbuiltProjectRow
+                        key={`project:${project.id}`}
+                        project={project}
+                        importing={jetbuiltImporting}
+                        onImport={() => void handleImportJetbuiltProject(project)}
+                      />
+                    ))}
+                    {jetbuiltSearchResults.clients.map((client) => (
+                      <JetbuiltClientGroup
+                        key={`client:${client.id}`}
+                        client={client}
+                        importing={jetbuiltImporting}
+                        onImportProject={(project) => void handleImportJetbuiltProject(project)}
+                      />
                     ))}
                   </div>
                 </div>
@@ -973,126 +913,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                 <div className="rounded border overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
                   <div className="max-h-56 overflow-y-auto">
                     {latestJetbuiltProjects.map((project) => (
-                      <div
+                      <JetbuiltProjectRow
                         key={`latest:${project.id}`}
-                        className="px-3 py-2 border-b flex items-center gap-3"
-                        style={{ borderColor: "var(--color-border)" }}
-                      >
-                        <div className="flex-1 min-w-0 text-xs">
-                          <div className="font-medium text-[var(--color-text-heading)] truncate">
-                            {project.customId ? `${project.customId} - ${project.name}` : project.name}
-                          </div>
-                          <div className="text-[11px] text-[var(--color-text-muted)] truncate">
-                            Jetbuilt #{project.id}
-                            {project.clientName ? ` · ${project.clientName}` : ""}
-                            {project.stage ? ` · ${project.stage}` : ""}
-                            {typeof project.itemCount === "number" ? ` · ${project.itemCount} items` : ""}
-                            {project.updatedAt ? ` · updated ${new Date(project.updatedAt).toLocaleDateString()}` : ""}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => void handleImportJetbuiltProject(project)}
-                          disabled={jetbuiltImporting}
-                          className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                        >
-                          {jetbuiltImporting ? "Importing..." : "Import"}
-                        </button>
-                      </div>
+                        project={project}
+                        importing={jetbuiltImporting}
+                        onImport={() => void handleImportJetbuiltProject(project)}
+                      />
                     ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="pt-2 border-t" style={{ borderColor: "var(--color-border)" }}>
-                <div className="text-xs font-medium text-[var(--color-text-heading)]">Browse by Client</div>
-                <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                  Search for a client, then choose one of their Jetbuilt projects from the list.
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  value={jetbuiltClientQuery}
-                  onChange={(e) => setJetbuiltClientQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void handleSearchJetbuiltClients();
-                    }
-                  }}
-                  placeholder="Search Jetbuilt client"
-                  className="flex-1 min-w-[240px] bg-white border border-[var(--color-border)] rounded px-2.5 py-1.5 text-xs text-[var(--color-text-heading)] outline-none focus:border-blue-500 placeholder:text-[var(--color-text-muted)]"
-                />
-                <button
-                  onClick={handleSearchJetbuiltClients}
-                  disabled={!jetbuiltClientQuery.trim() || jetbuiltClientSearching}
-                  className="px-4 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {jetbuiltClientSearching ? "Searching..." : "Search Clients"}
-                </button>
-              </div>
-
-              {jetbuiltClients.length > 0 && (
-                <div className="rounded border overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
-                  <div className="max-h-40 overflow-y-auto">
-                    {jetbuiltClients.map((client) => (
-                      <button
-                        key={client.id}
-                        onClick={() => void handleSelectJetbuiltClient(client)}
-                        className={`w-full text-left px-3 py-2 border-b cursor-pointer hover:bg-[var(--color-surface-hover)] ${
-                          selectedJetbuiltClient?.id === client.id ? "bg-blue-50" : ""
-                        }`}
-                        style={{ borderColor: "var(--color-border)" }}
-                      >
-                        <div className="text-xs font-medium text-[var(--color-text-heading)]">{client.companyName}</div>
-                        <div className="text-[11px] text-[var(--color-text-muted)]">
-                          Client #{client.id}
-                          {client.primaryContactName ? ` · ${client.primaryContactName}` : ""}
-                          {typeof client.projectCount === "number" ? ` · ${client.projectCount} projects` : ""}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {selectedJetbuiltClient && (
-                <div className="rounded border overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
-                  <div className="px-3 py-2 border-b text-xs font-medium text-[var(--color-text-heading)]" style={{ borderColor: "var(--color-border)" }}>
-                    Projects for {selectedJetbuiltClient.companyName}
-                  </div>
-                  <div className="max-h-56 overflow-y-auto">
-                    {clientProjects.length > 0 ? clientProjects.map((project) => (
-                      <div
-                        key={`${selectedJetbuiltClient.id}:${project.id}`}
-                        className="px-3 py-2 border-b flex items-center gap-3"
-                        style={{ borderColor: "var(--color-border)" }}
-                      >
-                        <div className="flex-1 min-w-0 text-xs">
-                          <div className="font-medium text-[var(--color-text-heading)] truncate">
-                            {project.customId ? `${project.customId} - ${project.name}` : project.name}
-                          </div>
-                          <div className="text-[11px] text-[var(--color-text-muted)] truncate">
-                            Jetbuilt #{project.id}
-                            {project.stage ? ` · ${project.stage}` : ""}
-                            {typeof project.itemCount === "number" ? ` · ${project.itemCount} items` : ""}
-                            {project.updatedAt ? ` · updated ${new Date(project.updatedAt).toLocaleDateString()}` : ""}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => void handleImportJetbuiltProject(project)}
-                          disabled={jetbuiltImporting}
-                          className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                        >
-                          {jetbuiltImporting ? "Importing..." : "Import"}
-                        </button>
-                      </div>
-                    )) : (
-                      <div className="px-3 py-3 text-[11px] text-[var(--color-text-muted)]">
-                        No cached projects were found for this client.
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
@@ -1322,6 +1149,84 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   );
 }
 
+function formatJetbuiltProjectTitle(project: JetbuiltProjectSearchResult): string {
+  return project.customId ? `${project.customId} - ${project.name}` : project.name;
+}
+
+function formatJetbuiltDate(value: string | null): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString();
+}
+
+function JetbuiltProjectRow({
+  project,
+  importing,
+  onImport,
+}: {
+  project: JetbuiltProjectSearchResult;
+  importing: boolean;
+  onImport: () => void;
+}) {
+  const updated = formatJetbuiltDate(project.updatedAt);
+  return (
+    <div className="px-3 py-2 border-b flex items-center gap-3" style={{ borderColor: "var(--color-border)" }}>
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-900/80 text-xs text-emerald-100">P</div>
+      <div className="flex-1 min-w-0 text-xs">
+        <div className="font-medium text-[var(--color-text-heading)] truncate">{formatJetbuiltProjectTitle(project)}</div>
+        <div className="text-[11px] text-[var(--color-text-muted)] truncate">
+          Jetbuilt #{project.id}
+          {project.clientName ? ` · ${project.clientName}` : ""}
+          {project.stage ? ` · ${project.stage}` : ""}
+          {typeof project.itemCount === "number" ? ` · ${project.itemCount} items` : ""}
+          {updated ? ` · updated ${updated}` : ""}
+        </div>
+      </div>
+      <button
+        onClick={onImport}
+        disabled={importing}
+        className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+      >
+        {importing ? "Importing..." : "Import"}
+      </button>
+    </div>
+  );
+}
+
+function JetbuiltClientGroup({
+  client,
+  importing,
+  onImportProject,
+}: {
+  client: JetbuiltClientProjectSearchResult;
+  importing: boolean;
+  onImportProject: (project: JetbuiltProjectSearchResult) => void;
+}) {
+  return (
+    <div className="border-b last:border-b-0" style={{ borderColor: "var(--color-border)" }}>
+      <div className="px-3 py-2 border-b flex items-center gap-3 bg-[var(--color-bg)]" style={{ borderColor: "var(--color-border)" }}>
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-900/80 text-xs text-blue-100">C</div>
+        <div className="min-w-0 flex-1 text-xs">
+          <div className="font-medium text-[var(--color-text-heading)] truncate">{client.companyName}</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] truncate">
+            Client #{client.id}
+            {client.primaryContactName ? ` · ${client.primaryContactName}` : ""}
+            {typeof client.projectCount === "number" ? ` · ${client.projectCount} projects` : ""}
+          </div>
+        </div>
+      </div>
+      {client.projects.map((project) => (
+        <JetbuiltProjectRow
+          key={`${client.id}:${project.id}`}
+          project={project}
+          importing={importing}
+          onImport={() => onImportProject(project)}
+        />
+      ))}
+    </div>
+  );
+}
 function SectionCard({
   title,
   count,
