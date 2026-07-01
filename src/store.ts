@@ -309,6 +309,7 @@ interface SchematicState {
 
   // Actions
   addDevice: (template: DeviceTemplate, position: { x: number; y: number }) => void;
+  addProjectDevices: (templates: DeviceTemplate[], options?: { start?: { x: number; y: number }; sourceName?: string }) => void;
   removeSelected: () => void;
   deleteNode: (nodeId: string) => void;
   deleteNodeAndChildren: (nodeId: string) => void;
@@ -1040,6 +1041,83 @@ function processTemplateSlots(
   return { installedSlots, ports };
 }
 
+function createDeviceNodeFromTemplate(
+  template: DeviceTemplate,
+  position: { x: number; y: number },
+  preset?: TemplatePreset,
+): DeviceNode {
+  let ports: Port[];
+  let hiddenPorts: string[] | undefined;
+  let color = template.color;
+
+  if (preset) {
+    const cloned = clonePorts(preset.ports);
+    const idMap = new Map<string, string>();
+    preset.ports.forEach((p, i) => {
+      idMap.set(p.id, cloned[i].id);
+      if (p.templatePortId) cloned[i].templatePortId = p.templatePortId;
+    });
+    ports = cloned;
+    hiddenPorts = preset.hiddenPorts?.map((id) => idMap.get(id) ?? id).filter((id) => cloned.some((p) => p.id === id));
+    color = preset.color ?? template.color;
+  } else {
+    ports = clonePorts(template.ports);
+    ports.forEach((p, i) => { p.templatePortId = template.ports[i].id; });
+  }
+
+  let installedSlots: InstalledSlot[] | undefined;
+  if (template.slots && template.slots.length > 0) {
+    const result = processTemplateSlots(template.slots);
+    installedSlots = result.installedSlots;
+    ports = [...ports, ...result.ports];
+  }
+
+  return {
+    id: nextNodeId(),
+    type: "device",
+    position,
+    data: {
+      label: template.label,
+      deviceType: template.deviceType,
+      ports,
+      color,
+      baseLabel: template.label,
+      model: template.label,
+      ...(template.shortName ? { shortName: template.shortName } : {}),
+      ...(template.id ? { templateId: template.id } : {}),
+      ...(template.version ? { templateVersion: template.version } : {}),
+      ...(template.manufacturer ? { manufacturer: template.manufacturer } : {}),
+      ...(template.modelNumber ? { modelNumber: template.modelNumber } : {}),
+      ...(template.referenceUrl ? { referenceUrl: template.referenceUrl } : {}),
+      ...(template.category ? { category: template.category } : {}),
+      ...(template.powerDrawW != null ? { powerDrawW: template.powerDrawW } : {}),
+      ...(template.powerCapacityW != null ? { powerCapacityW: template.powerCapacityW } : {}),
+      ...(template.voltage ? { voltage: template.voltage } : {}),
+      ...(template.poeBudgetW != null ? { poeBudgetW: template.poeBudgetW } : {}),
+      ...(template.poeDrawW != null ? { poeDrawW: template.poeDrawW } : {}),
+      ...(template.unitCost != null ? { unitCost: template.unitCost } : {}),
+      ...(template.thermalBtuh != null ? { thermalBtuh: template.thermalBtuh } : {}),
+      ...(template.searchTerms?.length ? { searchTerms: [...template.searchTerms] } : {}),
+      ...(template.heightMm != null ? { heightMm: template.heightMm } : {}),
+      ...(template.widthMm != null ? { widthMm: template.widthMm } : {}),
+      ...(template.depthMm != null ? { depthMm: template.depthMm } : {}),
+      ...(template.weightKg != null ? { weightKg: template.weightKg } : {}),
+      ...(template.hostname ? { hostname: template.hostname } : {}),
+      ...(hiddenPorts && hiddenPorts.length > 0 ? { hiddenPorts } : {}),
+      ...(template.isVenueProvided ? { isVenueProvided: true } : {}),
+      ...(template.deviceType === "cable-accessory" ? { isCableAccessory: true } : {}),
+      ...(template.deviceType === "cable-accessory" &&
+        template.ports.some((p) => p.isMulticable && p.connectorType === "none")
+        ? { integratedWithCable: true }
+        : {}),
+      ...(installedSlots && installedSlots.length > 0 ? { slots: installedSlots } : {}),
+      ...(template.auxiliaryData?.length
+        ? { auxiliaryData: template.auxiliaryData.map((r) => ({ ...r })) }
+        : { auxiliaryData: [{ text: "{{deviceType}}", position: "header" as const }] }),
+    },
+  };
+}
+
 /** Auto-number devices that share a baseLabel. Returns a new array if anything changed. */
 function renumberNodes(nodes: SchematicNode[]): SchematicNode[] {
   // Group by baseLabel (only device nodes have this)
@@ -1692,87 +1770,39 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   addDevice: (template, position) => {
     const state = get();
     pushUndo({ nodes: state.nodes, edges: state.edges });
-
-    // Check for a project preset for this template
     const preset = template.id ? state.templatePresets[template.id] : undefined;
+    const newNode = createDeviceNodeFromTemplate(template, position, preset);
 
-    let ports: Port[];
-    let hiddenPorts: string[] | undefined;
-    let color = template.color;
-
-    if (preset) {
-      // Clone preset ports, then map preset hiddenPorts through old→new ID mapping
-      const cloned = clonePorts(preset.ports);
-      const idMap = new Map<string, string>();
-      preset.ports.forEach((p, i) => {
-        idMap.set(p.id, cloned[i].id);
-        // Preserve templatePortId across the preset → placement clone.
-        if (p.templatePortId) cloned[i].templatePortId = p.templatePortId;
-      });
-      ports = cloned;
-      hiddenPorts = preset.hiddenPorts?.map((id) => idMap.get(id) ?? id).filter((id) => cloned.some((p) => p.id === id));
-      color = preset.color ?? template.color;
-    } else {
-      ports = clonePorts(template.ports);
-      // Stamp templatePortId so sync can reconcile even if port IDs drift.
-      ports.forEach((p, i) => { p.templatePortId = template.ports[i].id; });
-    }
-
-    // Initialize expansion slots from template (recursively handles sub-slots)
-    let installedSlots: InstalledSlot[] | undefined;
-    if (template.slots && template.slots.length > 0) {
-      const result = processTemplateSlots(template.slots);
-      installedSlots = result.installedSlots;
-      ports = [...ports, ...result.ports];
-    }
-
-    const newNode: DeviceNode = {
-      id: nextNodeId(),
-      type: "device",
-      position,
-      data: {
-        label: template.label,
-        deviceType: template.deviceType,
-        ports,
-        color,
-        baseLabel: template.label,
-        model: template.label,
-        ...(template.shortName ? { shortName: template.shortName } : {}),
-        ...(template.id ? { templateId: template.id } : {}),
-        ...(template.version ? { templateVersion: template.version } : {}),
-        ...(template.manufacturer ? { manufacturer: template.manufacturer } : {}),
-        ...(template.modelNumber ? { modelNumber: template.modelNumber } : {}),
-        ...(template.referenceUrl ? { referenceUrl: template.referenceUrl } : {}),
-        ...(template.category ? { category: template.category } : {}),
-        ...(template.powerDrawW != null ? { powerDrawW: template.powerDrawW } : {}),
-        ...(template.powerCapacityW != null ? { powerCapacityW: template.powerCapacityW } : {}),
-        ...(template.voltage ? { voltage: template.voltage } : {}),
-        ...(template.poeBudgetW != null ? { poeBudgetW: template.poeBudgetW } : {}),
-        ...(template.poeDrawW != null ? { poeDrawW: template.poeDrawW } : {}),
-        ...(template.unitCost != null ? { unitCost: template.unitCost } : {}),
-        ...(template.thermalBtuh != null ? { thermalBtuh: template.thermalBtuh } : {}),
-        ...(template.searchTerms?.length ? { searchTerms: [...template.searchTerms] } : {}),
-        ...(template.heightMm != null ? { heightMm: template.heightMm } : {}),
-        ...(template.widthMm != null ? { widthMm: template.widthMm } : {}),
-        ...(template.depthMm != null ? { depthMm: template.depthMm } : {}),
-        ...(template.weightKg != null ? { weightKg: template.weightKg } : {}),
-        ...(template.hostname ? { hostname: template.hostname } : {}),
-        ...(hiddenPorts && hiddenPorts.length > 0 ? { hiddenPorts } : {}),
-        ...(template.isVenueProvided ? { isVenueProvided: true } : {}),
-        ...(template.deviceType === "cable-accessory" ? { isCableAccessory: true } : {}),
-        ...(template.deviceType === "cable-accessory" &&
-          template.ports.some((p) => p.isMulticable && p.connectorType === "none")
-          ? { integratedWithCable: true }
-          : {}),
-        ...(installedSlots && installedSlots.length > 0 ? { slots: installedSlots } : {}),
-        // Aux data: carry template's rows, or seed a default {{deviceType}} header row so
-        // new placements match the unified aux-data model from schema v27.
-        ...(template.auxiliaryData?.length
-          ? { auxiliaryData: template.auxiliaryData.map((r) => ({ ...r })) }
-          : { auxiliaryData: [{ text: "{{deviceType}}", position: "header" as const }] }),
-      },
-    };
     set({ nodes: renumberNodes([...get().nodes, newNode]) });
+    get().saveToLocalStorage();
+  },
+
+  addProjectDevices: (templates, options = {}) => {
+    if (templates.length === 0) return;
+    const state = get();
+    pushUndo({ nodes: state.nodes, edges: state.edges });
+
+    const start = options.start ?? { x: 80, y: 80 };
+    const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(templates.length))));
+    const xGap = 260;
+    const yGap = 180;
+    const newNodes = templates.map((template, index) => {
+      const preset = template.id ? state.templatePresets[template.id] : undefined;
+      const position = {
+        x: start.x + (index % columns) * xGap,
+        y: start.y + Math.floor(index / columns) * yGap,
+      };
+      return createDeviceNodeFromTemplate(template, position, preset);
+    });
+
+    set({
+      nodes: renumberNodes([
+        ...state.nodes.map((n) => (n.selected ? { ...n, selected: false } : n)),
+        ...newNodes.map((n) => ({ ...n, selected: true })),
+      ]),
+      schematicName: options.sourceName?.trim() || state.schematicName,
+      loadSeq: state.loadSeq + 1,
+    });
     get().saveToLocalStorage();
   },
 

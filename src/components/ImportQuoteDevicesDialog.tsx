@@ -85,6 +85,7 @@ function writeStoredModelChoice(key: string, value: string): void {
 export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChanged }: Props) {
   const addToast = useSchematicStore((s) => s.addToast);
   const importCustomTemplates = useSchematicStore((s) => s.importCustomTemplates);
+  const addProjectDevices = useSchematicStore((s) => s.addProjectDevices);
 
   const [importSourceLabel, setImportSourceLabel] = useState<string | null>(null);
   const [jetbuiltQuery, setJetbuiltQuery] = useState("");
@@ -254,8 +255,16 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   );
 
   const hasImportedDevices = !!extraction;
+  const resolvedProjectDeviceCount = useMemo(() => {
+    const draftCount = [...savedDrafts, ...locallyAddedDrafts, ...pendingReadyDrafts]
+      .filter((item) => item.template && item.validation.ok)
+      .reduce((sum, item) => sum + Math.max(1, item.extractedDevice.quantity ?? 1), 0);
+    const libraryCount = alreadyInLibraryItems
+      .reduce((sum, item) => sum + Math.max(1, item.quantity ?? 1), 0);
+    return draftCount + libraryCount;
+  }, [alreadyInLibraryItems, locallyAddedDrafts, pendingReadyDrafts, savedDrafts]);
   const reviewStepTitle: Record<ImportReviewStep, string> = {
-    import: "Import Devices",
+    import: "Start New Project",
     already: "Already In Library",
     matches: "Possible Matches",
     missing: "Missing Devices",
@@ -605,6 +614,17 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setEditingDraft(null);
   };
 
+  const expandTemplateQuantity = (template: DeviceTemplate, quantity: number | null | undefined): DeviceTemplate[] => {
+    const count = Math.max(1, quantity ?? 1);
+    return Array.from({ length: count }, () => ({
+      ...template,
+      ports: template.ports.map((port) => ({ ...port })),
+      slots: template.slots?.map((slot) => ({ ...slot })),
+      auxiliaryData: template.auxiliaryData?.map((row) => ({ ...row })),
+      searchTerms: template.searchTerms ? [...template.searchTerms] : undefined,
+    }));
+  };
+
   const ensureLibraryTemplatesLoaded = async (): Promise<Record<string, DeviceTemplate>> => {
     if (Object.keys(libraryTemplatesById).length > 0) return libraryTemplatesById;
     const templates = await fetchTatesideDeviceTemplates();
@@ -685,6 +705,43 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     }
   };
 
+  const handleStartSchematic = async () => {
+    if (!extraction) return;
+    setError(null);
+    try {
+      const templatesById = alreadyInLibraryItems.length > 0 ? await ensureLibraryTemplatesLoaded() : {};
+      const projectTemplates: DeviceTemplate[] = [];
+
+      for (const item of alreadyInLibraryItems) {
+        const key = keyForExtractedDevice(item);
+        const chosenMatch =
+          item.exactMatch
+          ?? (possibleMatchDecisions[key] === "use_library_match" ? item.possibleMatches[0] : null);
+        const template = chosenMatch ? templatesById[chosenMatch.id] : null;
+        if (template) projectTemplates.push(...expandTemplateQuantity(template, item.quantity));
+      }
+
+      for (const item of [...savedDrafts, ...locallyAddedDrafts, ...pendingReadyDrafts]) {
+        if (item.template && item.validation.ok) {
+          projectTemplates.push(...expandTemplateQuantity(item.template, item.extractedDevice.quantity));
+        }
+      }
+
+      if (projectTemplates.length === 0) {
+        setError("Resolve at least one imported device before starting the schematic.");
+        return;
+      }
+
+      addProjectDevices(projectTemplates, {
+        sourceName: importSourceLabel ?? extraction.fileName,
+      });
+      addToast(`Started schematic with ${projectTemplates.length} project device${projectTemplates.length === 1 ? "" : "s"}`, "success");
+      reset();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start schematic from this project");
+    }
+  };
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -756,11 +813,11 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-sm font-semibold" style={{ color: "var(--color-text-heading)" }}>
-                  {showOutcomeReview ? "Import Outcome Review" : reviewStepTitle[reviewStep]}
+                  {showOutcomeReview ? "Start Schematic" : reviewStepTitle[reviewStep]}
                 </h2>
                 <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
                   {showOutcomeReview
-                    ? "Review exactly how this import was resolved before the future Start Schematic hand-off."
+                    ? "Review the resolved project inventory, then place those devices onto the schematic canvas."
                     : reviewStep === "import"
                       ? "Import directly from Jetbuilt by searching projects, browsing latest projects, or browsing by client."
                       : "Step through the imported project inventory before researching or creating missing devices."}
@@ -782,6 +839,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                 manualReviewItems={manualReviewItems}
                 ignoredDrafts={ignoredDrafts}
                 unresolvedItems={unresolvedOutcomeItems}
+                startableDeviceCount={resolvedProjectDeviceCount}
               />
             ) : (
               <div className="space-y-4">
@@ -809,7 +867,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
               <>
             <div className="rounded border p-3 space-y-3" style={{ borderColor: "var(--color-border)" }}>
               <div>
-                <div className="text-xs font-medium text-[var(--color-text-heading)]">Import from Jetbuilt Project</div>
+                <div className="text-xs font-medium text-[var(--color-text-heading)]">Choose Jetbuilt Project</div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
                   Search by P number, project name, or Jetbuilt project id.
                 </div>
@@ -1163,10 +1221,11 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   ← Back to resolution
                 </button>
                 <button
-                  onClick={reset}
-                  className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] cursor-pointer"
+                  onClick={handleStartSchematic}
+                  disabled={resolvedProjectDeviceCount === 0 || saving || researching}
+                  className="px-3 py-1.5 rounded bg-blue-500 text-white text-xs hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  Close
+                  Start Schematic
                 </button>
               </>
             ) : (
@@ -1351,6 +1410,7 @@ function SummaryCard({
 function OutcomeReviewPanel({
   importSourceLabel,
   extractedCount,
+  startableDeviceCount,
   alreadyInLibraryItems,
   savedDrafts,
   locallyAddedDrafts,
@@ -1361,6 +1421,7 @@ function OutcomeReviewPanel({
 }: {
   importSourceLabel: string | null;
   extractedCount: number;
+  startableDeviceCount: number;
   alreadyInLibraryItems: QuoteImportResultItem[];
   savedDrafts: QuoteImportDraftReview[];
   locallyAddedDrafts: QuoteImportDraftReview[];
@@ -1377,7 +1438,7 @@ function OutcomeReviewPanel({
       <div className="rounded border border-blue-200 bg-blue-50 px-3 py-3 text-xs text-blue-800">
         <div className="font-semibold text-[var(--color-text-heading)]">{importSourceLabel ?? "Imported device inventory"}</div>
         <div className="mt-1">
-          This is the session outcome for {extractedCount} extracted device line item{extractedCount === 1 ? "" : "s"}. It will become the hand-off point for Start Schematic in a later phase.
+          This project has {extractedCount} extracted device line item{extractedCount === 1 ? "" : "s"} and {startableDeviceCount} resolved device placement{startableDeviceCount === 1 ? "" : "s"} ready for the schematic canvas.
         </div>
       </div>
 
@@ -1389,6 +1450,7 @@ function OutcomeReviewPanel({
         <SummaryCard label="Manual review" value={String(manualReviewItems.length)} tone="danger" />
         <SummaryCard label="Ignored" value={String(ignoredDrafts.length)} tone="default" />
         <SummaryCard label="Unresolved" value={String(unresolvedItems.length)} tone="danger" />
+        <SummaryCard label="Ready for schematic" value={String(startableDeviceCount)} tone="success" />
       </div>
 
       <div className={`rounded border px-3 py-2 text-xs ${completelyResolved ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>

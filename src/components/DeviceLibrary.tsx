@@ -2154,7 +2154,6 @@ export default function DeviceLibrary() {
         <DeviceCreatorPicker
           onClose={() => setShowDeviceCreator(false)}
           onImport={() => setShowImportDialog(true)}
-          onImportQuote={() => setShowImportQuoteDialog(true)}
         />
       )}
       <ImportDevicesDialog
@@ -2165,6 +2164,7 @@ export default function DeviceLibrary() {
       <ImportQuoteDevicesDialog
         open={showImportQuoteDialog}
         onClose={() => setShowImportQuoteDialog(false)}
+        onLibraryChanged={reloadSharedTemplates}
       />
       <ManageTatesideTemplateDialog
         open={!!managingTemplate}
@@ -2274,6 +2274,22 @@ export default function DeviceLibrary() {
               <line x1="5" y1="8" x2="11" y2="8" />
             </svg>
             Create New Device
+          </button>
+        )}
+
+        {/* Start New Project */}
+        {!hasFilter && (!query || "start new project jetbuilt".includes(query.toLowerCase())) && (
+          <button
+            onClick={() => setShowImportQuoteDialog(true)}
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded border border-emerald-400/50 bg-emerald-500/10 hover:bg-emerald-500/15 text-xs text-emerald-700 cursor-pointer transition-colors"
+          >
+            <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={1.5}>
+              <path d="M2.5 13.5h11" />
+              <path d="M3.5 11.5v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" />
+              <path d="M5.5 6.5h5" />
+              <path d="M5.5 8.5h5" />
+            </svg>
+            Start New Project
           </button>
         )}
 
