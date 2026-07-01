@@ -57,7 +57,7 @@ const STATUS_CLASSES: Record<LibraryMatchStatus, string> = {
 };
 
 const MAX_PAID_RESEARCH_SELECTION = 5;
-const LATEST_JETBUILT_PROJECT_LIMIT = 25;
+const LATEST_JETBUILT_PROJECT_LIMIT = 50;
 const AI_RESEARCH_MODEL_STORAGE_KEY = "tateside.ai.researchModel";
 const AI_ESCALATION_MODEL_STORAGE_KEY = "tateside.ai.escalationModel";
 
@@ -338,6 +338,10 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
   const handleLoadLatestJetbuiltProjects = () => {
     void loadLatestJetbuiltProjects({ showEmptyToast: true });
+  };
+
+  const handleLoadMoreLatestJetbuiltProjects = () => {
+    void loadLatestJetbuiltProjects({ append: true });
   };
 
   const handleLatestJetbuiltScroll = (event: UIEvent<HTMLDivElement>) => {
@@ -948,11 +952,18 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                       />
                     ))}
                     <div className="px-3 py-2 text-center text-[11px] text-[var(--color-text-muted)]">
-                      {latestJetbuiltLoading
-                        ? "Loading more projects..."
-                        : latestJetbuiltHasMore
-                          ? "Scroll for more projects"
-                          : "All cached projects loaded"}
+                      {latestJetbuiltHasMore ? (
+                        <button
+                          type="button"
+                          onClick={handleLoadMoreLatestJetbuiltProjects}
+                          disabled={latestJetbuiltLoading}
+                          className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs text-[var(--color-text-heading)] hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          {latestJetbuiltLoading ? "Loading more projects..." : "Load more projects"}
+                        </button>
+                      ) : (
+                        "All cached projects loaded"
+                      )}
                     </div>
                   </div>
                 </div>
