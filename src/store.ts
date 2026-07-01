@@ -1780,27 +1780,82 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   addProjectDevices: (templates, options = {}) => {
     if (templates.length === 0) return;
     const state = get();
-    pushUndo({ nodes: state.nodes, edges: state.edges });
+    undoStack.length = 0;
+    redoStack.length = 0;
 
     const start = options.start ?? { x: 80, y: 80 };
     const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(templates.length))));
     const xGap = 260;
     const yGap = 180;
     const newNodes = templates.map((template, index) => {
-      const preset = template.id ? state.templatePresets[template.id] : undefined;
       const position = {
         x: start.x + (index % columns) * xGap,
         y: start.y + Math.floor(index / columns) * yGap,
       };
-      return createDeviceNodeFromTemplate(template, position, preset);
+      return createDeviceNodeFromTemplate(template, position);
     });
 
     set({
       nodes: renumberNodes([
-        ...state.nodes.map((n) => (n.selected ? { ...n, selected: false } : n)),
         ...newNodes.map((n) => ({ ...n, selected: true })),
       ]),
-      schematicName: options.sourceName?.trim() || state.schematicName,
+      edges: [],
+      schematicName: options.sourceName?.trim() || "Untitled Schematic",
+      isDemo: false,
+      ownedGear: [],
+      cloudSchematicId: null,
+      cloudSavedAt: null,
+      tatesideSchematicId: null,
+      tatesideSavedAt: null,
+      tatesideSyncState: "idle",
+      tatesideSyncError: null,
+      fileHandle: null,
+      titleBlock: {
+        showName: options.sourceName?.trim() || "",
+        venue: "",
+        designer: "",
+        engineer: "",
+        date: "",
+        drawingTitle: options.sourceName?.trim() || "",
+        company: "",
+        revision: "",
+        logo: "",
+        customFields: [],
+      },
+      titleBlockLayout: createDefaultLayout(),
+      hiddenSignalTypes: "",
+      hiddenPinSignalTypes: "",
+      hideUnconnectedPorts: false,
+      showPortCounts: false,
+      templateHiddenSignals: {},
+      templatePresets: {},
+      favoriteTemplates: [],
+      reportLayouts: {},
+      globalReportHeaderLayout: null,
+      globalReportFooterLayout: null,
+      scrollConfig: { ...DEFAULT_SCROLL_CONFIG },
+      cableNamingScheme: "type-prefix",
+      showLineJumps: true,
+      showConnectionLabels: false,
+      showCableIdLabels: false,
+      showCustomLabels: true,
+      cableIdGap: 4,
+      cableIdMidOffset: 0,
+      cableIdLabelMode: "endpoint" as CableIdLabelMode,
+      stubLabelShowPort: DEFAULT_STUB_LABEL_SHOW_PORT,
+      stubLabelShowRoom: DEFAULT_STUB_LABEL_SHOW_ROOM,
+      stubLabelPageMode: DEFAULT_STUB_LABEL_PAGE_MODE,
+      useShortNames: false,
+      wrapDeviceLabels: true,
+      autoRoute: true,
+      edgeHitboxSize: 10,
+      panMode: DEFAULT_PAN_MODE,
+      showOwnedGearPane: false,
+      libraryActiveTab: "devices" as "devices" | "owned",
+      undoSize: 0,
+      redoSize: 0,
+      pages: [],
+      activePage: "schematic",
       loadSeq: state.loadSeq + 1,
     });
     get().saveToLocalStorage();
