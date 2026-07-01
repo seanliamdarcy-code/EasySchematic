@@ -90,7 +90,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [jetbuiltQuery, setJetbuiltQuery] = useState("");
   const [jetbuiltSearching, setJetbuiltSearching] = useState(false);
   const [latestJetbuiltLoading, setLatestJetbuiltLoading] = useState(false);
-  const [jetbuiltImporting, setJetbuiltImporting] = useState(false);
+  const [jetbuiltImportingProjectId, setJetbuiltImportingProjectId] = useState<string | null>(null);
   const [jetbuiltSearchResults, setJetbuiltSearchResults] = useState<JetbuiltSearchResponse>({ projects: [], clients: [] });
   const [latestJetbuiltProjects, setLatestJetbuiltProjects] = useState<JetbuiltProjectSearchResult[]>([]);
   const [jetbuiltStatus, setJetbuiltStatus] = useState<JetbuiltIndexStatus | null>(null);
@@ -123,7 +123,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setJetbuiltQuery("");
     setJetbuiltSearching(false);
     setLatestJetbuiltLoading(false);
-    setJetbuiltImporting(false);
+    setJetbuiltImportingProjectId(null);
     setJetbuiltSearchResults({ projects: [], clients: [] });
     setLatestJetbuiltProjects([]);
     setJetbuiltStatus(null);
@@ -344,7 +344,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   };
 
   const handleImportJetbuiltProject = async (project: JetbuiltProjectSearchResult) => {
-    setJetbuiltImporting(true);
+    if (jetbuiltImportingProjectId) return;
+    setJetbuiltImportingProjectId(project.id);
     setError(null);
     try {
       const response = await importDevicesFromJetbuiltProject(project.id);
@@ -358,14 +359,14 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       setIgnoredDraftKeys(new Set());
       setSavedDraftKeys(new Set());
       setLocallyAddedDraftKeys(new Set());
-      setReviewStep("import");
+      setReviewStep("already");
       setShowOutcomeReview(false);
       addToast(`Imported ${response.extractedCount} Jetbuilt device candidate${response.extractedCount === 1 ? "" : "s"}`, "success");
     } catch (err) {
       const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Jetbuilt project import failed";
       setError(message);
     } finally {
-      setJetbuiltImporting(false);
+      setJetbuiltImportingProjectId(null);
     }
   };
 
@@ -869,7 +870,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                       <JetbuiltProjectRow
                         key={`project:${project.id}`}
                         project={project}
-                        importing={jetbuiltImporting}
+                        importing={jetbuiltImportingProjectId === project.id}
+                        disabled={!!jetbuiltImportingProjectId}
                         onImport={() => void handleImportJetbuiltProject(project)}
                       />
                     ))}
@@ -877,7 +879,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                       <JetbuiltClientGroup
                         key={`client:${client.id}`}
                         client={client}
-                        importing={jetbuiltImporting}
+                        importingProjectId={jetbuiltImportingProjectId}
                         onImportProject={(project) => void handleImportJetbuiltProject(project)}
                       />
                     ))}
@@ -916,7 +918,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                       <JetbuiltProjectRow
                         key={`latest:${project.id}`}
                         project={project}
-                        importing={jetbuiltImporting}
+                        importing={jetbuiltImportingProjectId === project.id}
+                        disabled={!!jetbuiltImportingProjectId}
                         onImport={() => void handleImportJetbuiltProject(project)}
                       />
                     ))}
@@ -1163,10 +1166,12 @@ function formatJetbuiltDate(value: string | null): string | null {
 function JetbuiltProjectRow({
   project,
   importing,
+  disabled,
   onImport,
 }: {
   project: JetbuiltProjectSearchResult;
   importing: boolean;
+  disabled?: boolean;
   onImport: () => void;
 }) {
   const updated = formatJetbuiltDate(project.updatedAt);
@@ -1185,7 +1190,7 @@ function JetbuiltProjectRow({
       </div>
       <button
         onClick={onImport}
-        disabled={importing}
+        disabled={disabled || importing}
         className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
       >
         {importing ? "Importing..." : "Import"}
@@ -1196,11 +1201,11 @@ function JetbuiltProjectRow({
 
 function JetbuiltClientGroup({
   client,
-  importing,
+  importingProjectId,
   onImportProject,
 }: {
   client: JetbuiltClientProjectSearchResult;
-  importing: boolean;
+  importingProjectId: string | null;
   onImportProject: (project: JetbuiltProjectSearchResult) => void;
 }) {
   return (
@@ -1220,7 +1225,8 @@ function JetbuiltClientGroup({
         <JetbuiltProjectRow
           key={`${client.id}:${project.id}`}
           project={project}
-          importing={importing}
+          importing={importingProjectId === project.id}
+          disabled={!!importingProjectId}
           onImport={() => onImportProject(project)}
         />
       ))}
