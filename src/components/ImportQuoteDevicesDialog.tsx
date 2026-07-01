@@ -249,7 +249,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   );
 
   const hasImportedDevices = !!extraction;
-  const reviewStepIndex: Record<ImportReviewStep, number> = { import: 0, already: 1, matches: 2, missing: 3 };
   const reviewStepTitle: Record<ImportReviewStep, string> = {
     import: "Import Devices",
     already: "Already In Library",
@@ -750,9 +749,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                       className={`min-h-8 rounded px-2 py-1 text-[11px] border cursor-pointer ${
                         reviewStep === step
                           ? "border-blue-300 bg-blue-50 text-blue-800"
-                          : reviewStepIndex[step] < reviewStepIndex[reviewStep]
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                            : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)]"
+                          : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)]"
                       }`}
                     >
                       {reviewStepTitle[step]}
