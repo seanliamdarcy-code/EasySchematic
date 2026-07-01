@@ -6,7 +6,6 @@ import type {
   JetbuiltClientSearchResult,
   JetbuiltIndexStatus,
   JetbuiltProjectSearchResult,
-  JetbuiltSearchResponse,
   QuoteImportExtractionResponse,
 } from "../../src/quoteImportTypes.js";
 import { inspectQuoteDevicesAgainstLibrary, normalizedLookupKey } from "./quoteImport.js";
@@ -476,26 +475,6 @@ export function searchJetbuiltClients(query: string): JetbuiltClientSearchResult
     .sort((a, b) => b.score - a.score || (b.client.projectCount - a.client.projectCount))
     .slice(0, 25)
     .map((entry) => entry.client);
-}
-
-export function searchJetbuilt(query: string): JetbuiltSearchResponse {
-  const trimmed = query.trim();
-  if (!trimmed) return { projects: [], clients: [] };
-
-  const projects = searchJetbuiltProjects(trimmed);
-  const directProjectIds = new Set(projects.map((project) => project.id));
-
-  const clients = searchJetbuiltClients(trimmed)
-    .map((client) => ({
-      ...client,
-      projects: listJetbuiltProjectsForClient(client.id)
-        .filter((project) => !directProjectIds.has(project.id))
-        .slice(0, 8),
-    }))
-    .filter((client) => client.projects.length > 0)
-    .slice(0, 10);
-
-  return { projects, clients };
 }
 
 export function listJetbuiltProjectsForClient(clientId: string): JetbuiltProjectSearchResult[] {

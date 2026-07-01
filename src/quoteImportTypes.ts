@@ -97,15 +97,6 @@ export interface JetbuiltClientSearchResult {
   projectCount: number;
 }
 
-export interface JetbuiltClientProjectSearchResult extends JetbuiltClientSearchResult {
-  projects: JetbuiltProjectSearchResult[];
-}
-
-export interface JetbuiltSearchResponse {
-  projects: JetbuiltProjectSearchResult[];
-  clients: JetbuiltClientProjectSearchResult[];
-}
-
 export interface JetbuiltIndexStatus {
   syncedAt: string | null;
   refreshing: boolean;
