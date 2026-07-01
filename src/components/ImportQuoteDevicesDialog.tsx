@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSchematicStore } from "../store";
 import type { DeviceTemplate } from "../types";
 import type {
@@ -95,6 +95,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [latestJetbuiltProjects, setLatestJetbuiltProjects] = useState<JetbuiltProjectSearchResult[]>([]);
   const [latestJetbuiltHasMore, setLatestJetbuiltHasMore] = useState(true);
   const latestJetbuiltLoadingRef = useRef(false);
+  const latestJetbuiltScrollerRef = useRef<HTMLDivElement | null>(null);
+  const pendingLatestProjectScrollIdRef = useRef<string | null>(null);
   const [jetbuiltStatus, setJetbuiltStatus] = useState<JetbuiltIndexStatus | null>(null);
   const [aiSettings, setAiSettings] = useState<AiProviderSettings | null>(null);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
@@ -311,10 +313,15 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       if (!options.append && projects.length === 0 && (status?.projectCount ?? 0) > 0) {
         projects = await searchJetbuiltProjects("P");
       }
+      const currentProjectIds = new Set(latestJetbuiltProjects.map((project) => project.id));
+      const appendedProjects = options.append ? projects.filter((project) => !currentProjectIds.has(project.id)) : projects;
+      const firstAppendedProjectId = options.append ? appendedProjects[0]?.id ?? null : null;
+      pendingLatestProjectScrollIdRef.current = firstAppendedProjectId;
       setLatestJetbuiltProjects((current) => {
         if (!options.append) return projects;
         const seen = new Set(current.map((project) => project.id));
-        return [...current, ...projects.filter((project) => !seen.has(project.id))];
+        const appended = projects.filter((project) => !seen.has(project.id));
+        return [...current, ...appended];
       });
       setLatestJetbuiltHasMore(
         status ? offset + projects.length < status.projectCount : projects.length === LATEST_JETBUILT_PROJECT_LIMIT,
@@ -342,14 +349,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
   const handleLoadMoreLatestJetbuiltProjects = () => {
     void loadLatestJetbuiltProjects({ append: true });
-  };
-
-  const handleLatestJetbuiltScroll = (event: UIEvent<HTMLDivElement>) => {
-    const target = event.currentTarget;
-    const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
-    if (remaining < 80) {
-      void loadLatestJetbuiltProjects({ append: true });
-    }
   };
 
   const handleSearchJetbuilt = async () => {
@@ -718,6 +717,23 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     };
   }, [open]);
 
+  useEffect(() => {
+    const projectId = pendingLatestProjectScrollIdRef.current;
+    if (!projectId) return;
+
+    window.requestAnimationFrame(() => {
+      const scroller = latestJetbuiltScrollerRef.current;
+      if (!scroller) return;
+      const firstNewRow = Array.from(scroller.querySelectorAll<HTMLElement>("[data-latest-project-id]"))
+        .find((row) => row.dataset.latestProjectId === projectId);
+      if (!firstNewRow) return;
+      const scrollerTop = scroller.getBoundingClientRect().top;
+      const rowTop = firstNewRow.getBoundingClientRect().top;
+      scroller.scrollTop += rowTop - scrollerTop;
+      pendingLatestProjectScrollIdRef.current = null;
+    });
+  }, [latestJetbuiltProjects]);
+
   if (!open) return null;
 
   return (
@@ -941,11 +957,12 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
               {latestJetbuiltProjects.length > 0 && (
                 <div className="rounded border overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
-                  <div className="max-h-56 overflow-y-auto" onScroll={handleLatestJetbuiltScroll}>
+                  <div ref={latestJetbuiltScrollerRef} className="max-h-56 overflow-y-auto">
                     {latestJetbuiltProjects.map((project) => (
                       <JetbuiltProjectRow
                         key={`latest:${project.id}`}
                         project={project}
+                        latestProjectId={project.id}
                         importing={jetbuiltImportingProjectId === project.id}
                         disabled={!!jetbuiltImportingProjectId}
                         onImport={() => void handleImportJetbuiltProject(project)}
@@ -1207,18 +1224,24 @@ function formatJetbuiltDate(value: string | null): string | null {
 
 function JetbuiltProjectRow({
   project,
+  latestProjectId,
   importing,
   disabled,
   onImport,
 }: {
   project: JetbuiltProjectSearchResult;
+  latestProjectId?: string;
   importing: boolean;
   disabled?: boolean;
   onImport: () => void;
 }) {
   const updated = formatJetbuiltDate(project.updatedAt);
   return (
-    <div className="px-3 py-2 border-b flex items-center gap-3" style={{ borderColor: "var(--color-border)" }}>
+    <div
+      className="px-3 py-2 border-b flex items-center gap-3"
+      data-latest-project-id={latestProjectId}
+      style={{ borderColor: "var(--color-border)" }}
+    >
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-900/80 text-xs text-emerald-100">P</div>
       <div className="flex-1 min-w-0 text-xs">
         <div className="font-medium text-[var(--color-text-heading)] truncate">{formatJetbuiltProjectTitle(project)}</div>
