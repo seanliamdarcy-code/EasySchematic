@@ -554,8 +554,9 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     const latest = ctx.url.searchParams.get("latest") === "true";
     const query = (ctx.url.searchParams.get("query") ?? "").trim();
     const limit = Number(ctx.url.searchParams.get("limit") ?? "25");
+    const offset = Number(ctx.url.searchParams.get("offset") ?? "0");
     const projects = latest
-      ? listLatestJetbuiltProjects(Number.isFinite(limit) ? limit : 25)
+      ? listLatestJetbuiltProjects(Number.isFinite(limit) ? limit : 25, Number.isFinite(offset) ? offset : 0)
       : query
         ? searchJetbuiltProjects(query)
         : [];

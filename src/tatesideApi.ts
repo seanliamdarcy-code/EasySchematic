@@ -320,8 +320,10 @@ export async function searchJetbuiltProjects(query: string): Promise<JetbuiltPro
   return response.projects;
 }
 
-export async function listLatestJetbuiltProjects(limit = 25): Promise<JetbuiltProjectSearchResult[]> {
-  const response = await requestJson<{ projects: JetbuiltProjectSearchResult[] }>(`/jetbuilt/projects?latest=true&limit=${encodeURIComponent(String(limit))}`);
+export async function listLatestJetbuiltProjects(limit = 25, offset = 0): Promise<JetbuiltProjectSearchResult[]> {
+  const response = await requestJson<{ projects: JetbuiltProjectSearchResult[] }>(
+    `/jetbuilt/projects?latest=true&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`,
+  );
   return response.projects;
 }
 

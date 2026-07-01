@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { useSchematicStore } from "../store";
 import type { DeviceTemplate } from "../types";
 import type {
@@ -93,6 +93,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [jetbuiltImportingProjectId, setJetbuiltImportingProjectId] = useState<string | null>(null);
   const [jetbuiltSearchResults, setJetbuiltSearchResults] = useState<JetbuiltSearchResponse>({ projects: [], clients: [] });
   const [latestJetbuiltProjects, setLatestJetbuiltProjects] = useState<JetbuiltProjectSearchResult[]>([]);
+  const [latestJetbuiltHasMore, setLatestJetbuiltHasMore] = useState(true);
+  const latestJetbuiltLoadingRef = useRef(false);
   const [jetbuiltStatus, setJetbuiltStatus] = useState<JetbuiltIndexStatus | null>(null);
   const [aiSettings, setAiSettings] = useState<AiProviderSettings | null>(null);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
@@ -126,6 +128,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setJetbuiltImportingProjectId(null);
     setJetbuiltSearchResults({ projects: [], clients: [] });
     setLatestJetbuiltProjects([]);
+    setLatestJetbuiltHasMore(true);
     setJetbuiltStatus(null);
     setAiSettings(null);
     setAiSettingsOpen(false);
@@ -293,17 +296,29 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     }
   };
 
-  const loadLatestJetbuiltProjects = async (options: { showEmptyToast?: boolean } = {}) => {
+  const loadLatestJetbuiltProjects = async (options: { showEmptyToast?: boolean; append?: boolean } = {}) => {
+    if (latestJetbuiltLoadingRef.current) return;
+    if (options.append && !latestJetbuiltHasMore) return;
+
+    const offset = options.append ? latestJetbuiltProjects.length : 0;
+    latestJetbuiltLoadingRef.current = true;
     setLatestJetbuiltLoading(true);
     setError(null);
     try {
       await refreshJetbuiltStatus();
       const status = await fetchJetbuiltIndexStatus().catch(() => null);
-      let projects = await listLatestJetbuiltProjects(LATEST_JETBUILT_PROJECT_LIMIT);
-      if (projects.length === 0 && (status?.projectCount ?? 0) > 0) {
+      let projects = await listLatestJetbuiltProjects(LATEST_JETBUILT_PROJECT_LIMIT, offset);
+      if (!options.append && projects.length === 0 && (status?.projectCount ?? 0) > 0) {
         projects = await searchJetbuiltProjects("P");
       }
-      setLatestJetbuiltProjects(projects);
+      setLatestJetbuiltProjects((current) => {
+        if (!options.append) return projects;
+        const seen = new Set(current.map((project) => project.id));
+        return [...current, ...projects.filter((project) => !seen.has(project.id))];
+      });
+      setLatestJetbuiltHasMore(
+        status ? offset + projects.length < status.projectCount : projects.length === LATEST_JETBUILT_PROJECT_LIMIT,
+      );
       if (projects.length === 0 && options.showEmptyToast) {
         const detail = status?.lastError ? ` Last Jetbuilt sync error: ${status.lastError}` : "";
         addToast(`No Jetbuilt projects are available yet.${detail}`, "info");
@@ -311,14 +326,26 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     } catch (err) {
       const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Latest Jetbuilt projects could not be loaded";
       setError(message);
-      setLatestJetbuiltProjects([]);
+      if (!options.append) {
+        setLatestJetbuiltProjects([]);
+        setLatestJetbuiltHasMore(true);
+      }
     } finally {
+      latestJetbuiltLoadingRef.current = false;
       setLatestJetbuiltLoading(false);
     }
   };
 
   const handleLoadLatestJetbuiltProjects = () => {
     void loadLatestJetbuiltProjects({ showEmptyToast: true });
+  };
+
+  const handleLatestJetbuiltScroll = (event: UIEvent<HTMLDivElement>) => {
+    const target = event.currentTarget;
+    const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
+    if (remaining < 80) {
+      void loadLatestJetbuiltProjects({ append: true });
+    }
   };
 
   const handleSearchJetbuilt = async () => {
@@ -910,7 +937,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
               {latestJetbuiltProjects.length > 0 && (
                 <div className="rounded border overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
-                  <div className="max-h-56 overflow-y-auto">
+                  <div className="max-h-56 overflow-y-auto" onScroll={handleLatestJetbuiltScroll}>
                     {latestJetbuiltProjects.map((project) => (
                       <JetbuiltProjectRow
                         key={`latest:${project.id}`}
@@ -920,6 +947,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                         onImport={() => void handleImportJetbuiltProject(project)}
                       />
                     ))}
+                    <div className="px-3 py-2 text-center text-[11px] text-[var(--color-text-muted)]">
+                      {latestJetbuiltLoading
+                        ? "Loading more projects..."
+                        : latestJetbuiltHasMore
+                          ? "Scroll for more projects"
+                          : "All cached projects loaded"}
+                    </div>
                   </div>
                 </div>
               )}
