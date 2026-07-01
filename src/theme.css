@@ -77,16 +77,22 @@
 }
 
 .dark {
-  --color-bg: #0f172a;
-  --color-surface: #1e293b;
-  --color-surface-hover: #334155;
-  --color-border: #94a3b8;
-  --color-text: #cbd5e1;
-  --color-text-heading: #f1f5f9;
-  --color-text-muted: #94a3b8;
+  --color-bg: #050b16;
+  --color-surface: #0b1626;
+  --color-surface-hover: #15263d;
+  --color-border: #365171;
+  --color-text: #d7e4f6;
+  --color-text-heading: #f8fbff;
+  --color-text-muted: #aab9cf;
+  --color-panel: #0a1423;
+  --color-panel-strong: #101f34;
+  --color-accent: #2563eb;
+  --color-accent-strong: #1d4ed8;
+  --color-accent-soft: rgba(37, 99, 235, 0.2);
+  --color-focus-ring: rgba(96, 165, 250, 0.45);
   /* Power colors adjusted for dark backgrounds */
-  --color-power-neutral: #b0b0b0;
-  --color-power-l1: #e5e5e5;
-  /* Canvas origin overlay — slightly lighter than bg to mark non-printable zone */
-  --color-canvas-origin: #1e293b;
+  --color-power-neutral: #cbd5e1;
+  --color-power-l1: #f8fafc;
+  /* Canvas origin overlay - slightly lighter than bg to mark non-printable zone */
+  --color-canvas-origin: #0b1626;
 }
