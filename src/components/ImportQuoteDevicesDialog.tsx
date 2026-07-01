@@ -57,6 +57,7 @@ const STATUS_CLASSES: Record<LibraryMatchStatus, string> = {
 };
 
 const MAX_PAID_RESEARCH_SELECTION = 5;
+const LATEST_JETBUILT_PROJECT_LIMIT = 25;
 const AI_RESEARCH_MODEL_STORAGE_KEY = "tateside.ai.researchModel";
 const AI_ESCALATION_MODEL_STORAGE_KEY = "tateside.ai.escalationModel";
 
@@ -303,15 +304,20 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     }
   };
 
-  const handleLoadLatestJetbuiltProjects = async () => {
+  const loadLatestJetbuiltProjects = async (options: { showEmptyToast?: boolean } = {}) => {
     setLatestJetbuiltLoading(true);
     setError(null);
     try {
       await refreshJetbuiltStatus();
-      const projects = await listLatestJetbuiltProjects(25);
+      const status = await fetchJetbuiltIndexStatus().catch(() => null);
+      let projects = await listLatestJetbuiltProjects(LATEST_JETBUILT_PROJECT_LIMIT);
+      if (projects.length === 0 && (status?.projectCount ?? 0) > 0) {
+        projects = await searchJetbuiltProjects("P");
+      }
       setLatestJetbuiltProjects(projects);
-      if (projects.length === 0) {
-        addToast("No cached Jetbuilt projects are available yet.", "info");
+      if (projects.length === 0 && options.showEmptyToast) {
+        const detail = status?.lastError ? ` Last Jetbuilt sync error: ${status.lastError}` : "";
+        addToast(`No Jetbuilt projects are available yet.${detail}`, "info");
       }
     } catch (err) {
       const message = err instanceof TatesideApiError ? err.message : err instanceof Error ? err.message : "Latest Jetbuilt projects could not be loaded";
@@ -320,6 +326,10 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     } finally {
       setLatestJetbuiltLoading(false);
     }
+  };
+
+  const handleLoadLatestJetbuiltProjects = () => {
+    void loadLatestJetbuiltProjects({ showEmptyToast: true });
   };
 
   const handleSearchJetbuilt = async () => {
@@ -706,6 +716,10 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
         if (!cancelled) setJetbuiltStatus(null);
       });
 
+    if (latestJetbuiltProjects.length === 0) {
+      void loadLatestJetbuiltProjects();
+    }
+
     void fetchAiProviderSettings()
       .then((settings) => {
         if (cancelled) return;
@@ -750,7 +764,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   {showOutcomeReview
                     ? "Review exactly how this import was resolved before the future Start Schematic hand-off."
                     : reviewStep === "import"
-                      ? "Import directly from a Jetbuilt project first, then fall back to quote PDF upload only when needed."
+                      ? "Import directly from Jetbuilt by searching projects, browsing latest projects, or browsing by client."
                       : "Step through the imported project inventory before researching or creating missing devices."}
                 </p>
               </div>
@@ -801,7 +815,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
               <div>
                 <div className="text-xs font-medium text-[var(--color-text-heading)]">Import from Jetbuilt Project</div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                  Preferred route. Search by P number, project name, or Jetbuilt project id.
+                  Search by P number, project name, or Jetbuilt project id.
                 </div>
               </div>
 
@@ -944,10 +958,16 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                     disabled={latestJetbuiltLoading}
                     className="px-4 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   >
-                    {latestJetbuiltLoading ? "Loading..." : "Load Latest"}
+                    {latestJetbuiltLoading ? "Loading..." : latestJetbuiltProjects.length > 0 ? "Refresh Latest" : "Load Latest"}
                   </button>
                 </div>
               </div>
+
+              {latestJetbuiltLoading && latestJetbuiltProjects.length === 0 && (
+                <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  Loading latest Jetbuilt projects...
+                </div>
+              )}
 
               {latestJetbuiltProjects.length > 0 && (
                 <div className="rounded border overflow-hidden" style={{ borderColor: "var(--color-border)" }}>

@@ -558,6 +558,11 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
       : query
         ? searchJetbuiltProjects(query)
         : [];
+    const status = getJetbuiltIndexStatus();
+    if (latest && projects.length === 0 && status.lastError) {
+      sendJson(ctx.res, 502, { error: `Jetbuilt project index could not be refreshed: ${status.lastError}` }, corsHeaders);
+      return;
+    }
     sendJson(ctx.res, 200, { projects }, corsHeaders);
     return;
   }
