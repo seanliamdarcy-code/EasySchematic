@@ -112,6 +112,19 @@ function compact(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function compactNamedValue(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value !== "object") return compact(value);
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["name", "room_name", "system_name", "title", "label", "description"]) {
+    const text = compact(record[key]);
+    if (text && text !== "[object Object]") return text;
+  }
+
+  return "";
+}
+
 function normalizeText(value: unknown): string {
   return compact(value).toLowerCase();
 }
@@ -665,8 +678,8 @@ export function extractItemsToDevices(items: JetbuiltRawItem[]): ExtractedQuoteD
         });
         const description = compact(item.short_description ?? item.description ?? item.product_name) || null;
         const quantity = sanitizeQuantity(item.quantity);
-        const room = compact(item.room_name ?? item.room);
-        const system = compact(item.system_name ?? item.system);
+        const room = compactNamedValue(item.room_name ?? item.room);
+        const system = compactNamedValue(item.system_name ?? item.system);
         const sourceItemId = compact(item.id ?? item.item_id) || null;
         const sourceLineText = [
           manufacturer,

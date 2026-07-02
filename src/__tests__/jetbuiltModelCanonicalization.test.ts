@@ -52,4 +52,24 @@ describe("Jetbuilt model canonicalization", () => {
       ["Spa", 4],
     ]);
   });
+
+  it("extracts room and system labels from Jetbuilt object values", () => {
+    const devices = extractItemsToDevices([
+      {
+        id: "item-1",
+        manufacturer_name: "QSC",
+        model: "Core Nano",
+        short_description: "Audio DSP processor",
+        quantity: 1,
+        room: { id: 123, name: "Rack Room" },
+        system: { id: 456, name: "Background Music" },
+      },
+    ]);
+
+    expect(devices).toHaveLength(1);
+    expect(devices[0].roomName).toBe("Rack Room");
+    expect(devices[0].systemName).toBe("Background Music");
+    expect(devices[0].sourceLineText).toContain("Room: Rack Room");
+    expect(devices[0].sourceLineText).not.toContain("[object Object]");
+  });
 });
