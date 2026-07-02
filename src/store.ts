@@ -309,6 +309,7 @@ interface SchematicState {
 
   // Actions
   addDevice: (template: DeviceTemplate, position: { x: number; y: number }) => void;
+  addDevicesToCurrentSchematic: (templates: DeviceTemplate[], options?: { start?: { x: number; y: number } }) => void;
   addProjectDevices: (templates: DeviceTemplate[], options?: { start?: { x: number; y: number }; sourceName?: string }) => void;
   removeSelected: () => void;
   deleteNode: (nodeId: string) => void;
@@ -1774,6 +1775,37 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     const newNode = createDeviceNodeFromTemplate(template, position, preset);
 
     set({ nodes: renumberNodes([...get().nodes, newNode]) });
+    get().saveToLocalStorage();
+  },
+
+  addDevicesToCurrentSchematic: (templates, options = {}) => {
+    if (templates.length === 0) return;
+    const state = get();
+    pushUndo({ nodes: state.nodes, edges: state.edges });
+
+    const existingBounds = state.nodes.length > 0 ? getNodeBounds(state.nodes) : null;
+    const start = options.start ?? (existingBounds
+      ? { x: Math.ceil((existingBounds.maxX + 120) / GRID_SIZE) * GRID_SIZE, y: Math.floor(existingBounds.minY / GRID_SIZE) * GRID_SIZE }
+      : { x: 80, y: 80 });
+    const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(templates.length))));
+    const xGap = 260;
+    const yGap = 180;
+    const newNodes = templates.map((template, index) => {
+      const preset = template.id ? state.templatePresets[template.id] : undefined;
+      const position = {
+        x: start.x + (index % columns) * xGap,
+        y: start.y + Math.floor(index / columns) * yGap,
+      };
+      return createDeviceNodeFromTemplate(template, position, preset);
+    });
+
+    set({
+      nodes: renumberNodes([
+        ...state.nodes.map((n) => (n.selected ? { ...n, selected: false } : n)),
+        ...newNodes.map((n) => ({ ...n, selected: true })),
+      ]),
+      loadSeq: state.loadSeq + 1,
+    });
     get().saveToLocalStorage();
   },
 

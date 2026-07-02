@@ -240,6 +240,7 @@ function applyConnectorTypeRemaps(
 
 export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }: Props) {
   const importCustomTemplates = useSchematicStore((s) => s.importCustomTemplates);
+  const addDevicesToCurrentSchematic = useSchematicStore((s) => s.addDevicesToCurrentSchematic);
   const addToast = useSchematicStore((s) => s.addToast);
   const addCustomConnectorTypes = useSchematicStore((s) => s.addCustomConnectorTypes);
 
@@ -419,6 +420,15 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
     if (selectedTemplates.length === 0) return;
     importCustomTemplates(selectedTemplates.map((pt) => pt.template));
     addToast(`Added ${selectedTemplates.length} template${selectedTemplates.length === 1 ? "" : "s"} locally`, "success");
+    close();
+  };
+
+  const handleOpenInCurrentSchematic = () => {
+    if (selectedTemplates.length === 0) return;
+    const templates = selectedTemplates.map((pt) => pt.template);
+    importCustomTemplates(templates);
+    addDevicesToCurrentSchematic(templates);
+    addToast(`Opened ${templates.length} new device${templates.length === 1 ? "" : "s"} in the current schematic`, "success");
     close();
   };
 
@@ -707,6 +717,14 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
             title="Adds only to this browser's local custom device library"
           >
             Add Locally Only
+          </button>
+          <button
+            onClick={handleOpenInCurrentSchematic}
+            disabled={selectedTemplates.length === 0 || savingShared}
+            className="px-3 py-1.5 rounded border border-blue-300 bg-blue-50 text-blue-700 text-xs hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            title="Adds locally, then places the selected devices onto the current schematic"
+          >
+            Open in Current Schematic
           </button>
           <button
             onClick={handleAddToTatesideLibrary}
