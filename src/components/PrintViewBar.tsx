@@ -89,7 +89,7 @@ function PrintViewBar() {
       <label className="flex items-center gap-1.5 text-xs text-gray-600">
         Paper
         <select
-          className="text-xs bg-white border border-gray-300 rounded px-1.5 py-0.5 text-gray-800"
+          className="print-view-select text-xs bg-white border border-gray-300 rounded px-1.5 py-0.5 text-gray-800"
           value={printPaperId}
           onChange={(e) => setPrintPaperId(e.target.value)}
         >
@@ -278,7 +278,7 @@ function PrintViewBar() {
             {/* Show on page */}
             <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Show On</div>
             <select
-              className="text-xs bg-white border border-gray-300 rounded px-1.5 py-0.5 text-gray-800 w-full mb-2"
+              className="print-view-select text-xs bg-white border border-gray-300 rounded px-1.5 py-0.5 text-gray-800 w-full mb-2"
               value={colorKeyPage}
               onChange={(e) => setColorKeyPage(e.target.value as "first" | "last" | "all")}
             >

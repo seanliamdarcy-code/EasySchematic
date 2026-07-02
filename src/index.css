@@ -46,6 +46,18 @@ html, body, #root {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
+/* Native Windows select popups can inherit dark-mode text colors while still
+   rendering a light menu surface. Keep print-view dropdown items on a fixed
+   light palette so paper sizes remain readable when the list opens. */
+.print-view-select {
+  color-scheme: light;
+}
+
+.print-view-select option,
+.print-view-select optgroup {
+  color: #1f2937;
+  background-color: #ffffff;
+}
 
 /* TateSide bold navy app skin */
 .dark body {
