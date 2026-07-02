@@ -468,33 +468,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     }
   };
 
-  const handleManualStrongerRetry = async (item: QuoteImportDraftReview) => {
-    setResearching(true);
-    setResearchProgress({ current: 1, total: 1, label: `Retrying ${item.extractedDevice.model}` });
-    setError(null);
-    try {
-      const response = await researchQuoteDevices(extraction?.fileName ?? importSourceLabel ?? "Jetbuilt import", [item.extractedDevice], {
-        forceEscalation: true,
-        researchModel: selectedResearchModel || undefined,
-        escalationModel: selectedEscalationModel || undefined,
-      });
-      const replacement = response.results[0];
-      if (!replacement) return;
-      setResearchResults((current) => current.map((entry) => (
-        keyForExtractedDevice(entry.extractedDevice) === keyForExtractedDevice(item.extractedDevice) ? replacement : entry
-      )));
-      if (replacement.reviewStatus === "draft_ready") {
-        setSelectedDraftKeys((current) => new Set([...current, keyForExtractedDevice(replacement.extractedDevice)]));
-      }
-      addToast(`Retried ${item.extractedDevice.model} with the stronger research model`, "success");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Retry failed");
-    } finally {
-      setResearching(false);
-      setResearchProgress(null);
-    }
-  };
-
   const handleSaveSelectedToLibrary = async () => {
     if (selectedDraftTemplates.length === 0 || !extraction) return;
     setSaving(true);
@@ -1183,7 +1156,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                         key: keyForExtractedDevice(item.extractedDevice),
                         template: item.template,
                       } : null)}
-                      onRetryStronger={() => handleManualStrongerRetry(item)}
                     />
                   )) : <EmptyState text="No saveable drafts are ready yet." />}
                 </SectionCard>
@@ -1201,7 +1173,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                         key: keyForExtractedDevice(item.extractedDevice),
                         template: item.template!,
                       }) : undefined}
-                      onRetryStronger={item.metadata?.escalationOccurred ? undefined : () => handleManualStrongerRetry(item)}
                     />
                   )) : <EmptyState text="No missing devices are waiting for manual review." />}
                 </SectionCard>
@@ -1702,7 +1673,6 @@ function DraftReviewRow({
   onToggleSelected,
   onToggleIgnored,
   onEdit,
-  onRetryStronger,
 }: {
   item: QuoteImportDraftReview;
   selected: boolean;
@@ -1710,7 +1680,6 @@ function DraftReviewRow({
   onToggleSelected?: () => void;
   onToggleIgnored: () => void;
   onEdit?: () => void;
-  onRetryStronger?: () => void;
 }) {
   const template = item.template;
   const metadata = item.metadata;
@@ -1798,14 +1767,6 @@ function DraftReviewRow({
                 className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-white text-[11px] hover:bg-[var(--color-surface-hover)] cursor-pointer"
               >
                 Edit Draft
-              </button>
-            )}
-            {onRetryStronger && (
-              <button
-                onClick={onRetryStronger}
-                className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-white text-[11px] hover:bg-[var(--color-surface-hover)] cursor-pointer"
-              >
-                Verify with stronger AI (paid)
               </button>
             )}
             <button
