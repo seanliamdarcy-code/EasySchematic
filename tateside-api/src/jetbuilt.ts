@@ -60,6 +60,8 @@ interface JetbuiltRawClient {
 }
 
 interface JetbuiltRawItem {
+  id?: unknown;
+  item_id?: unknown;
   manufacturer_name?: unknown;
   manufacturer?: unknown;
   model?: unknown;
@@ -616,7 +618,10 @@ export function canonicalizeJetbuiltModel(
 function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
   const merged = new Map<string, ExtractedQuoteDevice>();
   for (const device of devices) {
-    const key = device.normalizedLookupKey || normalizeToken(device.sourceLineText || device.description || device.model) || `device-${merged.size + 1}`;
+    const roomKey = normalizeToken(device.roomName);
+    const systemKey = normalizeToken(device.systemName);
+    const deviceKey = device.normalizedLookupKey || normalizeToken(device.sourceLineText || device.description || device.model) || `device-${merged.size + 1}`;
+    const key = `${roomKey || "no-room"}::${systemKey || "no-system"}::${deviceKey}`;
     const existing = merged.get(key);
     if (!existing) {
       merged.set(key, { ...device });
@@ -628,23 +633,28 @@ function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
       model: existing.model.length >= device.model.length ? existing.model : device.model,
       description: compact(existing.description).length >= compact(device.description).length ? existing.description : device.description,
       quantity: existing.quantity == null && device.quantity == null ? null : (existing.quantity ?? 0) + (device.quantity ?? 0),
+      roomName: existing.roomName ?? device.roomName,
+      systemName: existing.systemName ?? device.systemName,
+      sourceItemId: existing.sourceItemId ?? device.sourceItemId,
       sourceLineText: compact(existing.sourceLineText).length >= compact(device.sourceLineText).length ? existing.sourceLineText : device.sourceLineText,
       normalizedLookupKey: existing.normalizedLookupKey || device.normalizedLookupKey,
     });
   }
 
   return [...merged.values()].sort((a, b) => {
+    const roomCompare = (a.roomName ?? "").localeCompare(b.roomName ?? "");
+    if (roomCompare !== 0) return roomCompare;
     const makerCompare = (a.manufacturer ?? "").localeCompare(b.manufacturer ?? "");
     if (makerCompare !== 0) return makerCompare;
     return a.model.localeCompare(b.model);
   });
 }
 
-function extractItemsToDevices(items: JetbuiltRawItem[]): ExtractedQuoteDevice[] {
+export function extractItemsToDevices(items: JetbuiltRawItem[]): ExtractedQuoteDevice[] {
   return mergeDevices(
     items
       .filter(isSchematicRelevant)
-      .map((item) => {
+      .map((item): ExtractedQuoteDevice | null => {
         const manufacturer = compact(item.manufacturer_name ?? item.manufacturer) || null;
         const rawModel = compact(item.model ?? item.part_number ?? item.product_name);
         if (!rawModel) return null;
@@ -657,6 +667,7 @@ function extractItemsToDevices(items: JetbuiltRawItem[]): ExtractedQuoteDevice[]
         const quantity = sanitizeQuantity(item.quantity);
         const room = compact(item.room_name ?? item.room);
         const system = compact(item.system_name ?? item.system);
+        const sourceItemId = compact(item.id ?? item.item_id) || null;
         const sourceLineText = [
           manufacturer,
           model,
@@ -673,6 +684,9 @@ function extractItemsToDevices(items: JetbuiltRawItem[]): ExtractedQuoteDevice[]
           model,
           description,
           quantity,
+          roomName: room || null,
+          systemName: system || null,
+          sourceItemId,
           sourceLineText: sourceLineText || null,
           normalizedLookupKey: normalizedLookupKey(manufacturer, model),
         } satisfies ExtractedQuoteDevice;

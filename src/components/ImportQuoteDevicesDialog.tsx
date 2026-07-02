@@ -121,7 +121,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [showOutcomeReview, setShowOutcomeReview] = useState(false);
   const [editingDraft, setEditingDraft] = useState<EditingDraftState | null>(null);
 
-  const keyForExtractedDevice = (device: ExtractedQuoteDevice) => `${device.normalizedLookupKey || "device"}:${device.model}`;
+  const keyForExtractedDevice = (device: ExtractedQuoteDevice) => [
+    device.sourceItemId || "",
+    device.roomName || "",
+    device.systemName || "",
+    device.normalizedLookupKey || "device",
+    device.model,
+  ].join(":");
 
   const reset = () => {
     setImportSourceLabel(null);
@@ -262,6 +268,21 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     const libraryCount = alreadyInLibraryItems
       .reduce((sum, item) => sum + Math.max(1, item.quantity ?? 1), 0);
     return draftCount + libraryCount;
+  }, [alreadyInLibraryItems, locallyAddedDrafts, pendingReadyDrafts, savedDrafts]);
+  const roomSummaryItems = useMemo(() => {
+    const groups = new Map<string, { roomName: string; lineItems: number; deviceCount: number }>();
+    const addDevice = (device: ExtractedQuoteDevice) => {
+      const roomName = device.roomName?.trim() || "Unassigned";
+      const current = groups.get(roomName) ?? { roomName, lineItems: 0, deviceCount: 0 };
+      current.lineItems += 1;
+      current.deviceCount += Math.max(1, device.quantity ?? 1);
+      groups.set(roomName, current);
+    };
+    alreadyInLibraryItems.forEach(addDevice);
+    [...savedDrafts, ...locallyAddedDrafts, ...pendingReadyDrafts].forEach((item) => {
+      if (item.template && item.validation.ok) addDevice(item.extractedDevice);
+    });
+    return [...groups.values()].sort((a, b) => a.roomName.localeCompare(b.roomName));
   }, [alreadyInLibraryItems, locallyAddedDrafts, pendingReadyDrafts, savedDrafts]);
   const reviewStepTitle: Record<ImportReviewStep, string> = {
     import: "Start New Project",
@@ -643,6 +664,9 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
           description: item.description,
           quantity: item.quantity,
           sourceLineText: item.sourceLineText,
+          roomName: item.roomName,
+          systemName: item.systemName,
+          sourceItemId: item.sourceItemId,
           normalizedLookupKey: item.normalizedLookupKey,
         },
         template: copiedTemplate,
@@ -683,7 +707,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setError(null);
     try {
       const templatesById = alreadyInLibraryItems.length > 0 ? await ensureLibraryTemplatesLoaded() : {};
-      const projectTemplates: DeviceTemplate[] = [];
+      const projectPlacements: Parameters<typeof addProjectDevices>[0] = [];
 
       for (const item of alreadyInLibraryItems) {
         const key = keyForExtractedDevice(item);
@@ -691,24 +715,34 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
           item.exactMatch
           ?? (possibleMatchDecisions[key] === "use_library_match" ? item.possibleMatches[0] : null);
         const template = chosenMatch ? templatesById[chosenMatch.id] : null;
-        if (template) projectTemplates.push(...expandTemplateQuantity(template, item.quantity));
+        if (template) {
+          projectPlacements.push(...expandTemplateQuantity(template, item.quantity).map((expanded) => ({
+            template: expanded,
+            roomName: item.roomName,
+            systemName: item.systemName,
+          })));
+        }
       }
 
       for (const item of [...savedDrafts, ...locallyAddedDrafts, ...pendingReadyDrafts]) {
         if (item.template && item.validation.ok) {
-          projectTemplates.push(...expandTemplateQuantity(item.template, item.extractedDevice.quantity));
+          projectPlacements.push(...expandTemplateQuantity(item.template, item.extractedDevice.quantity).map((expanded) => ({
+            template: expanded,
+            roomName: item.extractedDevice.roomName,
+            systemName: item.extractedDevice.systemName,
+          })));
         }
       }
 
-      if (projectTemplates.length === 0) {
+      if (projectPlacements.length === 0) {
         setError("Resolve at least one imported device before starting the schematic.");
         return;
       }
 
-      addProjectDevices(projectTemplates, {
+      addProjectDevices(projectPlacements, {
         sourceName: importSourceLabel ?? extraction.fileName,
       });
-      addToast(`Started schematic with ${projectTemplates.length} project device${projectTemplates.length === 1 ? "" : "s"}`, "success");
+      addToast(`Started schematic with ${projectPlacements.length} project device${projectPlacements.length === 1 ? "" : "s"}`, "success");
       reset();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start schematic from this project");
@@ -813,6 +847,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                 ignoredDrafts={ignoredDrafts}
                 unresolvedItems={unresolvedOutcomeItems}
                 startableDeviceCount={resolvedProjectDeviceCount}
+                roomSummaryItems={roomSummaryItems}
               />
             ) : (
               <div className="space-y-4">
@@ -1382,6 +1417,7 @@ function OutcomeReviewPanel({
   importSourceLabel,
   extractedCount,
   startableDeviceCount,
+  roomSummaryItems,
   alreadyInLibraryItems,
   savedDrafts,
   locallyAddedDrafts,
@@ -1393,6 +1429,7 @@ function OutcomeReviewPanel({
   importSourceLabel: string | null;
   extractedCount: number;
   startableDeviceCount: number;
+  roomSummaryItems: Array<{ roomName: string; lineItems: number; deviceCount: number }>;
   alreadyInLibraryItems: QuoteImportResultItem[];
   savedDrafts: QuoteImportDraftReview[];
   locallyAddedDrafts: QuoteImportDraftReview[];
@@ -1431,6 +1468,24 @@ function OutcomeReviewPanel({
             ? "All devices are matched or drafted, but some ready drafts have not been added to a library yet."
             : "Some devices still need a decision, manual review, or an explicit ignore before this is a clean project inventory."}
       </div>
+
+      {roomSummaryItems.length > 0 && (
+        <div className="rounded border" style={{ borderColor: "var(--color-border)" }}>
+          <div className="px-3 py-2 border-b text-xs font-semibold text-[var(--color-text-heading)]" style={{ borderColor: "var(--color-border)" }}>
+            Rooms for schematic
+          </div>
+          <div className="divide-y" style={{ borderColor: "var(--color-border)" }}>
+            {roomSummaryItems.map((room) => (
+              <div key={room.roomName} className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="font-medium text-[var(--color-text-heading)]">{room.roomName}</span>
+                <span className="text-[11px] text-[var(--color-text-muted)]">
+                  {room.lineItems} line item{room.lineItems === 1 ? "" : "s"} · {room.deviceCount} placement{room.deviceCount === 1 ? "" : "s"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-2">
         <OutcomeReviewSection title="Already in TateSide library" description="Existing shared templates selected directly or accepted from a possible match." items={alreadyInLibraryItems} />
@@ -1496,6 +1551,12 @@ function OutcomeReviewItemRow({ item }: { item: OutcomeReviewItem }) {
         {typeof device.quantity === "number" && (
           <span className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">Qty {device.quantity}</span>
         )}
+        {device.roomName && (
+          <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">{device.roomName}</span>
+        )}
+        {device.systemName && (
+          <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-700">{device.systemName}</span>
+        )}
       </div>
       <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{detail}</div>
     </div>
@@ -1528,6 +1589,16 @@ function ExtractionRow({
             {typeof item.quantity === "number" && (
               <span className="text-[10px] rounded bg-[var(--color-bg)] px-2 py-0.5 border border-[var(--color-border)]">
                 Qty {item.quantity}
+              </span>
+            )}
+            {item.roomName && (
+              <span className="text-[10px] rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-blue-700">
+                Room: {item.roomName}
+              </span>
+            )}
+            {item.systemName && (
+              <span className="text-[10px] rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-700">
+                System: {item.systemName}
               </span>
             )}
             {selectedForResearch && (
@@ -1612,6 +1683,16 @@ function PossibleMatchRow({
         <span className={`px-2 py-0.5 rounded-full border text-[10px] ${STATUS_CLASSES[item.status]}`}>
           {STATUS_LABELS[item.status]}
         </span>
+        {item.roomName && (
+          <span className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-blue-700 text-[10px]">
+            Room: {item.roomName}
+          </span>
+        )}
+        {item.systemName && (
+          <span className="px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-slate-700 text-[10px]">
+            System: {item.systemName}
+          </span>
+        )}
       </div>
       <div className="text-[11px] text-[var(--color-text-muted)] space-y-0.5">
         {item.description && <div>{item.description}</div>}
@@ -1711,6 +1792,16 @@ function DraftReviewRow({
             {item.draftSource === "library_port_copy" && (
               <span className="px-2 py-0.5 rounded-full border border-violet-200 bg-violet-50 text-violet-700 text-[10px]">
                 Copied from library ports
+              </span>
+            )}
+            {item.extractedDevice.roomName && (
+              <span className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-blue-700 text-[10px]">
+                Room: {item.extractedDevice.roomName}
+              </span>
+            )}
+            {item.extractedDevice.systemName && (
+              <span className="px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-slate-700 text-[10px]">
+                System: {item.extractedDevice.systemName}
               </span>
             )}
           </div>

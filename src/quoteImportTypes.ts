@@ -30,6 +30,9 @@ export interface ExtractedQuoteDevice {
   model: string;
   description: string | null;
   quantity: number | null;
+  roomName?: string | null;
+  systemName?: string | null;
+  sourceItemId?: string | null;
   sourceLineText: string | null;
   normalizedLookupKey: string;
 }

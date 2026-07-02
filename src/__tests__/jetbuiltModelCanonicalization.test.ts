@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalizeJetbuiltModel } from "../../tateside-api/src/jetbuilt.ts";
+import { canonicalizeJetbuiltModel, extractItemsToDevices } from "../../tateside-api/src/jetbuilt.ts";
 
 describe("Jetbuilt model canonicalization", () => {
   it("strips bundle-style numeric SKU suffixes when the device family is present in the product text", () => {
@@ -16,5 +16,40 @@ describe("Jetbuilt model canonicalization", () => {
       productName: "VB-TVMount-01",
       shortDescription: "Yealink VB-TVMount-01",
     })).toBe("VB-TVMount-01");
+  });
+
+  it("preserves separate room placements for the same model", () => {
+    const devices = extractItemsToDevices([
+      {
+        id: "item-1",
+        manufacturer_name: "QSC",
+        model: "AD-C6T",
+        short_description: "Ceiling speaker",
+        quantity: 2,
+        room_name: "Gym",
+      },
+      {
+        id: "item-2",
+        manufacturer_name: "QSC",
+        model: "AD-C6T",
+        short_description: "Ceiling speaker",
+        quantity: 4,
+        room_name: "Spa",
+      },
+      {
+        id: "item-3",
+        manufacturer_name: "QSC",
+        model: "AD-C6T",
+        short_description: "Ceiling speaker",
+        quantity: 1,
+        room_name: "Gym",
+      },
+    ]);
+
+    expect(devices).toHaveLength(2);
+    expect(devices.map((device) => [device.roomName, device.quantity])).toEqual([
+      ["Gym", 3],
+      ["Spa", 4],
+    ]);
   });
 });

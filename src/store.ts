@@ -285,6 +285,12 @@ interface Clipboard {
   edges: ConnectionEdge[];
 }
 
+export interface ProjectDevicePlacement {
+  template: DeviceTemplate;
+  roomName?: string | null;
+  systemName?: string | null;
+}
+
 type TateSideSyncState = "idle" | "saving" | "saved" | "offline" | "error";
 
 interface SchematicState {
@@ -310,7 +316,7 @@ interface SchematicState {
   // Actions
   addDevice: (template: DeviceTemplate, position: { x: number; y: number }) => void;
   addDevicesToCurrentSchematic: (templates: DeviceTemplate[], options?: { start?: { x: number; y: number } }) => void;
-  addProjectDevices: (templates: DeviceTemplate[], options?: { start?: { x: number; y: number }; sourceName?: string }) => void;
+  addProjectDevices: (devices: Array<DeviceTemplate | ProjectDevicePlacement>, options?: { start?: { x: number; y: number }; sourceName?: string }) => void;
   removeSelected: () => void;
   deleteNode: (nodeId: string) => void;
   deleteNodeAndChildren: (nodeId: string) => void;
@@ -1809,23 +1815,84 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     get().saveToLocalStorage();
   },
 
-  addProjectDevices: (templates, options = {}) => {
-    if (templates.length === 0) return;
+  addProjectDevices: (devices, options = {}) => {
+    if (devices.length === 0) return;
     const state = get();
     undoStack.length = 0;
     redoStack.length = 0;
 
     const start = options.start ?? { x: 80, y: 80 };
-    const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(templates.length))));
+    const placements: ProjectDevicePlacement[] = devices.map((entry) => (
+      "template" in entry
+        ? entry
+        : { template: entry }
+    ));
+    const hasRooms = placements.some((placement) => !!placement.roomName?.trim());
     const xGap = 260;
     const yGap = 180;
-    const newNodes = templates.map((template, index) => {
-      const position = {
-        x: start.x + (index % columns) * xGap,
-        y: start.y + Math.floor(index / columns) * yGap,
-      };
-      return createDeviceNodeFromTemplate(template, position);
-    });
+    let newNodes: SchematicNode[];
+
+    if (hasRooms) {
+      const roomGroups = new Map<string, ProjectDevicePlacement[]>();
+      for (const placement of placements) {
+        const roomName = placement.roomName?.trim() || "Unassigned";
+        roomGroups.set(roomName, [...(roomGroups.get(roomName) ?? []), placement]);
+      }
+
+      const rooms: SchematicNode[] = [];
+      const devicesInRooms: SchematicNode[] = [];
+      let roomY = start.y;
+      for (const [roomName, roomPlacements] of roomGroups) {
+        const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(roomPlacements.length))));
+        const rows = Math.max(1, Math.ceil(roomPlacements.length / columns));
+        const roomNode: SchematicNode = {
+          id: nextRoomId(),
+          type: "room",
+          position: { x: start.x, y: roomY },
+          data: { label: roomName },
+          style: {
+            width: Math.max(400, 120 + columns * xGap),
+            height: Math.max(260, 120 + rows * yGap),
+          },
+          zIndex: -1,
+        };
+        rooms.push(roomNode);
+
+        roomPlacements.forEach((placement, index) => {
+          const node = createDeviceNodeFromTemplate(placement.template, {
+            x: 60 + (index % columns) * xGap,
+            y: 60 + Math.floor(index / columns) * yGap,
+          });
+          if (placement.systemName?.trim()) {
+            node.data = {
+              ...node.data,
+              auxiliaryData: [
+                ...(node.data.auxiliaryData ?? []),
+                { text: `System: ${placement.systemName.trim()}`, position: "footer" as const },
+              ],
+            };
+          }
+          devicesInRooms.push({
+            ...node,
+            parentId: roomNode.id,
+            selected: true,
+          });
+        });
+
+        roomY += ((roomNode.style as Record<string, number>).height ?? 300) + 60;
+      }
+
+      newNodes = [...rooms, ...devicesInRooms];
+    } else {
+      const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(placements.length))));
+      newNodes = placements.map((placement, index) => {
+        const position = {
+          x: start.x + (index % columns) * xGap,
+          y: start.y + Math.floor(index / columns) * yGap,
+        };
+        return createDeviceNodeFromTemplate(placement.template, position);
+      });
+    }
 
     set({
       nodes: renumberNodes([
