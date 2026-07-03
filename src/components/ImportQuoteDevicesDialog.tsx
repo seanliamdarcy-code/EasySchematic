@@ -60,6 +60,7 @@ const MAX_PAID_RESEARCH_SELECTION = 5;
 const LATEST_JETBUILT_PROJECT_LIMIT = 50;
 const AI_RESEARCH_MODEL_STORAGE_KEY = "tateside.ai.researchModel";
 const AI_ESCALATION_MODEL_STORAGE_KEY = "tateside.ai.escalationModel";
+const UNASSIGNED_ROOM_LABEL = "Unassigned";
 
 function readStoredModelChoice(key: string): string {
   try {
@@ -128,6 +129,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     device.normalizedLookupKey || "device",
     device.model,
   ].join(":");
+
+  const roomLabelForDevice = (device: ExtractedQuoteDevice) => device.roomName?.trim() || UNASSIGNED_ROOM_LABEL;
 
   const reset = () => {
     setImportSourceLabel(null);
@@ -272,7 +275,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const roomSummaryItems = useMemo(() => {
     const groups = new Map<string, { roomName: string; lineItems: number; deviceCount: number }>();
     const addDevice = (device: ExtractedQuoteDevice) => {
-      const roomName = device.roomName?.trim() || "Unassigned";
+      const roomName = roomLabelForDevice(device);
       const current = groups.get(roomName) ?? { roomName, lineItems: 0, deviceCount: 0 };
       current.lineItems += 1;
       current.deviceCount += Math.max(1, device.quantity ?? 1);
@@ -702,47 +705,63 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     }
   };
 
-  const handleStartSchematic = async () => {
+  const buildProjectPlacements = async (roomName?: string): Promise<Parameters<typeof addProjectDevices>[0]> => {
+    const templatesById = alreadyInLibraryItems.length > 0 ? await ensureLibraryTemplatesLoaded() : {};
+    const projectPlacements: Parameters<typeof addProjectDevices>[0] = [];
+    const includeDevice = (device: ExtractedQuoteDevice) => !roomName || roomLabelForDevice(device) === roomName;
+
+    for (const item of alreadyInLibraryItems) {
+      if (!includeDevice(item)) continue;
+      const key = keyForExtractedDevice(item);
+      const chosenMatch =
+        item.exactMatch
+        ?? (possibleMatchDecisions[key] === "use_library_match" ? item.possibleMatches[0] : null);
+      const template = chosenMatch ? templatesById[chosenMatch.id] : null;
+      if (template) {
+        projectPlacements.push(...expandTemplateQuantity(template, item.quantity).map((expanded) => ({
+          template: expanded,
+          roomName: item.roomName,
+          systemName: item.systemName,
+        })));
+      }
+    }
+
+    for (const item of [...savedDrafts, ...locallyAddedDrafts, ...pendingReadyDrafts]) {
+      if (!item.template || !item.validation.ok || !includeDevice(item.extractedDevice)) continue;
+      projectPlacements.push(...expandTemplateQuantity(item.template, item.extractedDevice.quantity).map((expanded) => ({
+        template: expanded,
+        roomName: item.extractedDevice.roomName,
+        systemName: item.extractedDevice.systemName,
+      })));
+    }
+
+    return projectPlacements;
+  };
+
+  const handleStartSchematic = async (roomName?: string) => {
     if (!extraction) return;
     setError(null);
     try {
-      const templatesById = alreadyInLibraryItems.length > 0 ? await ensureLibraryTemplatesLoaded() : {};
-      const projectPlacements: Parameters<typeof addProjectDevices>[0] = [];
-
-      for (const item of alreadyInLibraryItems) {
-        const key = keyForExtractedDevice(item);
-        const chosenMatch =
-          item.exactMatch
-          ?? (possibleMatchDecisions[key] === "use_library_match" ? item.possibleMatches[0] : null);
-        const template = chosenMatch ? templatesById[chosenMatch.id] : null;
-        if (template) {
-          projectPlacements.push(...expandTemplateQuantity(template, item.quantity).map((expanded) => ({
-            template: expanded,
-            roomName: item.roomName,
-            systemName: item.systemName,
-          })));
-        }
-      }
-
-      for (const item of [...savedDrafts, ...locallyAddedDrafts, ...pendingReadyDrafts]) {
-        if (item.template && item.validation.ok) {
-          projectPlacements.push(...expandTemplateQuantity(item.template, item.extractedDevice.quantity).map((expanded) => ({
-            template: expanded,
-            roomName: item.extractedDevice.roomName,
-            systemName: item.extractedDevice.systemName,
-          })));
-        }
-      }
+      const projectPlacements = await buildProjectPlacements(roomName);
 
       if (projectPlacements.length === 0) {
-        setError("Resolve at least one imported device before starting the schematic.");
+        setError(roomName
+          ? `Resolve at least one imported device in ${roomName} before starting that room schematic.`
+          : "Resolve at least one imported device before starting the schematic.");
         return;
       }
 
       addProjectDevices(projectPlacements, {
-        sourceName: importSourceLabel ?? extraction.fileName,
+        sourceName: roomName
+          ? `${importSourceLabel ?? extraction.fileName} - ${roomName}`
+          : importSourceLabel ?? extraction.fileName,
       });
-      addToast(`Started schematic with ${projectPlacements.length} project device${projectPlacements.length === 1 ? "" : "s"}`, "success");
+      addToast(
+        roomName
+          ? `Started ${roomName} schematic with ${projectPlacements.length} device${projectPlacements.length === 1 ? "" : "s"}`
+          : `Started schematic with ${projectPlacements.length} project device${projectPlacements.length === 1 ? "" : "s"}`,
+        "success",
+      );
       reset();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start schematic from this project");
@@ -848,6 +867,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                 unresolvedItems={unresolvedOutcomeItems}
                 startableDeviceCount={resolvedProjectDeviceCount}
                 roomSummaryItems={roomSummaryItems}
+                onStartRoomSchematic={(roomName) => void handleStartSchematic(roomName)}
               />
             ) : (
               <div className="space-y-4">
@@ -1227,7 +1247,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   ← Back to resolution
                 </button>
                 <button
-                  onClick={handleStartSchematic}
+                  onClick={() => void handleStartSchematic()}
                   disabled={resolvedProjectDeviceCount === 0 || saving || researching}
                   className="px-3 py-1.5 rounded bg-blue-500 text-white text-xs hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
@@ -1418,6 +1438,7 @@ function OutcomeReviewPanel({
   extractedCount,
   startableDeviceCount,
   roomSummaryItems,
+  onStartRoomSchematic,
   alreadyInLibraryItems,
   savedDrafts,
   locallyAddedDrafts,
@@ -1430,6 +1451,7 @@ function OutcomeReviewPanel({
   extractedCount: number;
   startableDeviceCount: number;
   roomSummaryItems: Array<{ roomName: string; lineItems: number; deviceCount: number }>;
+  onStartRoomSchematic: (roomName: string) => void;
   alreadyInLibraryItems: QuoteImportResultItem[];
   savedDrafts: QuoteImportDraftReview[];
   locallyAddedDrafts: QuoteImportDraftReview[];
@@ -1478,9 +1500,18 @@ function OutcomeReviewPanel({
             {roomSummaryItems.map((room) => (
               <div key={room.roomName} className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <span className="font-medium text-[var(--color-text-heading)]">{room.roomName}</span>
-                <span className="text-[11px] text-[var(--color-text-muted)]">
-                  {room.lineItems} line item{room.lineItems === 1 ? "" : "s"} · {room.deviceCount} placement{room.deviceCount === 1 ? "" : "s"}
-                </span>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <span className="text-[11px] text-[var(--color-text-muted)]">
+                    {room.lineItems} line item{room.lineItems === 1 ? "" : "s"} · {room.deviceCount} placement{room.deviceCount === 1 ? "" : "s"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onStartRoomSchematic(room.roomName)}
+                    className="px-2.5 py-1 rounded border border-blue-300 bg-blue-50 text-[11px] text-blue-700 hover:bg-blue-100 cursor-pointer"
+                  >
+                    Start schematic from room
+                  </button>
+                </div>
               </div>
             ))}
           </div>
