@@ -262,9 +262,19 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     [allReadyDrafts, selectedRoomScope],
   );
 
+  const savedDrafts = useMemo(
+    () => readyDrafts.filter((item) => savedDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [readyDrafts, savedDraftKeys],
+  );
+
   const allSavedDrafts = useMemo(
     () => allReadyDrafts.filter((item) => savedDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
     [allReadyDrafts, savedDraftKeys],
+  );
+
+  const locallyAddedDrafts = useMemo(
+    () => readyDrafts.filter((item) => locallyAddedDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [readyDrafts, locallyAddedDraftKeys],
   );
 
   const allLocallyAddedDrafts = useMemo(
@@ -298,10 +308,23 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     [researchResults, ignoredDraftKeys],
   );
 
+  const ignoredDrafts = useMemo(
+    () => scopedResearchResults.filter((item) => ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [scopedResearchResults, ignoredDraftKeys],
+  );
+
   const allIgnoredDrafts = useMemo(
     () => researchResults.filter((item) => ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
     [researchResults, ignoredDraftKeys],
   );
+
+  const unresolvedOutcomeItems = useMemo(() => {
+    const byKey = new Map<string, QuoteImportResultItem>();
+    [...unresolvedPossibleMatches, ...unresolvedMissingDevices].forEach((item) => {
+      byKey.set(keyForExtractedDevice(item), item);
+    });
+    return [...byKey.values()];
+  }, [unresolvedPossibleMatches, unresolvedMissingDevices]);
 
   const allUnresolvedOutcomeItems = useMemo(() => {
     const byKey = new Map<string, QuoteImportResultItem>();
@@ -332,6 +355,14 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   );
 
   const hasImportedDevices = !!extraction;
+  const resolvedProjectDeviceCount = useMemo(() => {
+    const draftCount = [...savedDrafts, ...locallyAddedDrafts, ...pendingReadyDrafts]
+      .filter((item) => item.template && item.validation.ok)
+      .reduce((sum, item) => sum + Math.max(1, item.extractedDevice.quantity ?? 1), 0);
+    const libraryCount = alreadyInLibraryItems
+      .reduce((sum, item) => sum + Math.max(1, item.quantity ?? 1), 0);
+    return draftCount + libraryCount;
+  }, [alreadyInLibraryItems, locallyAddedDrafts, pendingReadyDrafts, savedDrafts]);
   const allResolvedProjectDeviceCount = useMemo(() => {
     const draftCount = [...allSavedDrafts, ...allLocallyAddedDrafts, ...allPendingReadyDrafts]
       .filter((item) => item.template && item.validation.ok)
@@ -344,6 +375,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     const groups = new Map<string, { roomName: string; lineItems: number; deviceCount: number }>();
     const addDevice = (device: ExtractedQuoteDevice) => {
       const roomName = roomLabelForDevice(device);
+      if (selectedRoomScope && roomName !== selectedRoomScope) return;
       const current = groups.get(roomName) ?? { roomName, lineItems: 0, deviceCount: 0 };
       current.lineItems += 1;
       current.deviceCount += Math.max(1, device.quantity ?? 1);
@@ -354,7 +386,9 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       if (item.template && item.validation.ok) addDevice(item.extractedDevice);
     });
     return [...groups.values()].sort((a, b) => a.roomName.localeCompare(b.roomName));
-  }, [allAlreadyInLibraryItems, allLocallyAddedDrafts, allPendingReadyDrafts, allSavedDrafts]);
+  }, [allAlreadyInLibraryItems, allLocallyAddedDrafts, allPendingReadyDrafts, allSavedDrafts, selectedRoomScope]);
+  const reviewExtractedCount = selectedRoomScope ? scopedExtractionResults.length : extraction?.extractedCount ?? 0;
+  const reviewResolvedDeviceCount = selectedRoomScope ? resolvedProjectDeviceCount : allResolvedProjectDeviceCount;
   const reviewStepTitle: Record<ImportReviewStep, string> = {
     import: "Start New Project",
     already: "Already In Library",
@@ -925,16 +959,16 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {showOutcomeReview ? (
               <OutcomeReviewPanel
-                importSourceLabel={importSourceLabel}
-                extractedCount={extraction?.extractedCount ?? 0}
-                alreadyInLibraryItems={allAlreadyInLibraryItems}
-                savedDrafts={allSavedDrafts}
-                locallyAddedDrafts={allLocallyAddedDrafts}
-                pendingReadyDrafts={allPendingReadyDrafts}
-                manualReviewItems={allManualReviewItems}
-                ignoredDrafts={allIgnoredDrafts}
-                unresolvedItems={allUnresolvedOutcomeItems}
-                startableDeviceCount={allResolvedProjectDeviceCount}
+                importSourceLabel={selectedRoomScope ? `${importSourceLabel ?? "Imported device inventory"} - ${selectedRoomScope}` : importSourceLabel}
+                extractedCount={reviewExtractedCount}
+                alreadyInLibraryItems={selectedRoomScope ? alreadyInLibraryItems : allAlreadyInLibraryItems}
+                savedDrafts={selectedRoomScope ? savedDrafts : allSavedDrafts}
+                locallyAddedDrafts={selectedRoomScope ? locallyAddedDrafts : allLocallyAddedDrafts}
+                pendingReadyDrafts={selectedRoomScope ? pendingReadyDrafts : allPendingReadyDrafts}
+                manualReviewItems={selectedRoomScope ? manualReviewItems : allManualReviewItems}
+                ignoredDrafts={selectedRoomScope ? ignoredDrafts : allIgnoredDrafts}
+                unresolvedItems={selectedRoomScope ? unresolvedOutcomeItems : allUnresolvedOutcomeItems}
+                startableDeviceCount={reviewResolvedDeviceCount}
                 roomSummaryItems={roomSummaryItems}
                 onStartRoomSchematic={(roomName) => void handleStartSchematic(roomName)}
               />
@@ -1323,11 +1357,11 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   ← Back to resolution
                 </button>
                 <button
-                  onClick={() => void handleStartSchematic()}
-                  disabled={allResolvedProjectDeviceCount === 0 || saving || researching}
+                  onClick={() => void handleStartSchematic(selectedRoomScope ?? undefined)}
+                  disabled={reviewResolvedDeviceCount === 0 || saving || researching}
                   className="px-3 py-1.5 rounded bg-blue-500 text-white text-xs hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  Start Schematic
+                  {selectedRoomScope ? "Start Room Schematic" : "Start Schematic"}
                 </button>
               </>
             ) : (
