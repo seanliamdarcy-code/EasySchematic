@@ -119,6 +119,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [savedDraftKeys, setSavedDraftKeys] = useState<Set<string>>(new Set());
   const [locallyAddedDraftKeys, setLocallyAddedDraftKeys] = useState<Set<string>>(new Set());
   const [reviewStep, setReviewStep] = useState<ImportReviewStep>("import");
+  const [selectedRoomScope, setSelectedRoomScope] = useState<string | null>(null);
   const [showOutcomeReview, setShowOutcomeReview] = useState(false);
   const [editingDraft, setEditingDraft] = useState<EditingDraftState | null>(null);
 
@@ -159,17 +160,51 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setSavedDraftKeys(new Set());
     setLocallyAddedDraftKeys(new Set());
     setReviewStep("import");
+    setSelectedRoomScope(null);
     setShowOutcomeReview(false);
     setEditingDraft(null);
     onClose();
   };
 
+  const roomScopeOptions = useMemo(() => {
+    const groups = new Map<string, { roomName: string; lineItems: number; deviceCount: number }>();
+    for (const item of extraction?.results ?? []) {
+      const roomName = roomLabelForDevice(item);
+      const current = groups.get(roomName) ?? { roomName, lineItems: 0, deviceCount: 0 };
+      current.lineItems += 1;
+      current.deviceCount += Math.max(1, item.quantity ?? 1);
+      groups.set(roomName, current);
+    }
+    return [...groups.values()].sort((a, b) => a.roomName.localeCompare(b.roomName));
+  }, [extraction]);
+
+  const isInSelectedScope = (device: ExtractedQuoteDevice) => !selectedRoomScope || roomLabelForDevice(device) === selectedRoomScope;
+
+  const scopedExtractionResults = useMemo(
+    () => (extraction?.results ?? []).filter((item) => isInSelectedScope(item)),
+    [extraction, selectedRoomScope],
+  );
+
   const unresolvedPossibleMatches = useMemo(
+    () => scopedExtractionResults.filter((item) => item.status === "possible_match" && !possibleMatchDecisions[keyForExtractedDevice(item)]),
+    [scopedExtractionResults, possibleMatchDecisions],
+  );
+
+  const allUnresolvedPossibleMatches = useMemo(
     () => (extraction?.results ?? []).filter((item) => item.status === "possible_match" && !possibleMatchDecisions[keyForExtractedDevice(item)]),
     [extraction, possibleMatchDecisions],
   );
 
   const missingDevices = useMemo(() => {
+    return scopedExtractionResults.filter((item) => {
+      const key = keyForExtractedDevice(item);
+      if (item.status === "missing") return true;
+      if (item.status === "possible_match") return possibleMatchDecisions[key] === "research_missing";
+      return false;
+    });
+  }, [scopedExtractionResults, possibleMatchDecisions]);
+
+  const allMissingDevices = useMemo(() => {
     if (!extraction) return [];
     return extraction.results.filter((item) => {
       const key = keyForExtractedDevice(item);
@@ -189,12 +224,17 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     [missingDevices, researchResultKeys],
   );
 
+  const allUnresolvedMissingDevices = useMemo(
+    () => allMissingDevices.filter((item) => !researchResultKeys.has(keyForExtractedDevice(item))),
+    [allMissingDevices, researchResultKeys],
+  );
+
   const selectedResearchDevices = useMemo(
     () => unresolvedMissingDevices.filter((item) => selectedResearchKeys.has(keyForExtractedDevice(item))),
     [unresolvedMissingDevices, selectedResearchKeys],
   );
 
-  const alreadyInLibraryItems = useMemo(() => {
+  const allAlreadyInLibraryItems = useMemo(() => {
     if (!extraction) return [];
     return extraction.results.filter((item) => {
       const key = keyForExtractedDevice(item);
@@ -202,19 +242,34 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     });
   }, [extraction, possibleMatchDecisions]);
 
-  const readyDrafts = useMemo(
+  const alreadyInLibraryItems = useMemo(
+    () => allAlreadyInLibraryItems.filter((item) => isInSelectedScope(item)),
+    [allAlreadyInLibraryItems, selectedRoomScope],
+  );
+
+  const scopedResearchResults = useMemo(
+    () => researchResults.filter((item) => isInSelectedScope(item.extractedDevice)),
+    [researchResults, selectedRoomScope],
+  );
+
+  const allReadyDrafts = useMemo(
     () => researchResults.filter((item) => item.reviewStatus === "draft_ready" && item.template && !ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
     [researchResults, ignoredDraftKeys],
   );
 
-  const savedDrafts = useMemo(
-    () => readyDrafts.filter((item) => savedDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
-    [readyDrafts, savedDraftKeys],
+  const readyDrafts = useMemo(
+    () => allReadyDrafts.filter((item) => isInSelectedScope(item.extractedDevice)),
+    [allReadyDrafts, selectedRoomScope],
   );
 
-  const locallyAddedDrafts = useMemo(
-    () => readyDrafts.filter((item) => locallyAddedDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
-    [readyDrafts, locallyAddedDraftKeys],
+  const allSavedDrafts = useMemo(
+    () => allReadyDrafts.filter((item) => savedDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [allReadyDrafts, savedDraftKeys],
+  );
+
+  const allLocallyAddedDrafts = useMemo(
+    () => allReadyDrafts.filter((item) => locallyAddedDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [allReadyDrafts, locallyAddedDraftKeys],
   );
 
   const pendingReadyDrafts = useMemo(
@@ -225,23 +280,36 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     [readyDrafts, savedDraftKeys, locallyAddedDraftKeys],
   );
 
+  const allPendingReadyDrafts = useMemo(
+    () => allReadyDrafts.filter((item) => {
+      const key = keyForExtractedDevice(item.extractedDevice);
+      return !savedDraftKeys.has(key) && !locallyAddedDraftKeys.has(key);
+    }),
+    [allReadyDrafts, savedDraftKeys, locallyAddedDraftKeys],
+  );
+
   const manualReviewItems = useMemo(
+    () => scopedResearchResults.filter((item) => item.reviewStatus === "manual_review_required" && !ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [scopedResearchResults, ignoredDraftKeys],
+  );
+
+  const allManualReviewItems = useMemo(
     () => researchResults.filter((item) => item.reviewStatus === "manual_review_required" && !ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
     [researchResults, ignoredDraftKeys],
   );
 
-  const ignoredDrafts = useMemo(
+  const allIgnoredDrafts = useMemo(
     () => researchResults.filter((item) => ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
     [researchResults, ignoredDraftKeys],
   );
 
-  const unresolvedOutcomeItems = useMemo(() => {
+  const allUnresolvedOutcomeItems = useMemo(() => {
     const byKey = new Map<string, QuoteImportResultItem>();
-    [...unresolvedPossibleMatches, ...unresolvedMissingDevices].forEach((item) => {
+    [...allUnresolvedPossibleMatches, ...allUnresolvedMissingDevices].forEach((item) => {
       byKey.set(keyForExtractedDevice(item), item);
     });
     return [...byKey.values()];
-  }, [unresolvedPossibleMatches, unresolvedMissingDevices]);
+  }, [allUnresolvedPossibleMatches, allUnresolvedMissingDevices]);
 
   const selectedPendingDraftKeys = useMemo(
     () => pendingReadyDrafts
@@ -259,19 +327,19 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   );
 
   const possibleMatchItems = useMemo(
-    () => (extraction?.results ?? []).filter((item) => item.status === "possible_match"),
-    [extraction],
+    () => scopedExtractionResults.filter((item) => item.status === "possible_match"),
+    [scopedExtractionResults],
   );
 
   const hasImportedDevices = !!extraction;
-  const resolvedProjectDeviceCount = useMemo(() => {
-    const draftCount = [...savedDrafts, ...locallyAddedDrafts, ...pendingReadyDrafts]
+  const allResolvedProjectDeviceCount = useMemo(() => {
+    const draftCount = [...allSavedDrafts, ...allLocallyAddedDrafts, ...allPendingReadyDrafts]
       .filter((item) => item.template && item.validation.ok)
       .reduce((sum, item) => sum + Math.max(1, item.extractedDevice.quantity ?? 1), 0);
-    const libraryCount = alreadyInLibraryItems
+    const libraryCount = allAlreadyInLibraryItems
       .reduce((sum, item) => sum + Math.max(1, item.quantity ?? 1), 0);
     return draftCount + libraryCount;
-  }, [alreadyInLibraryItems, locallyAddedDrafts, pendingReadyDrafts, savedDrafts]);
+  }, [allAlreadyInLibraryItems, allLocallyAddedDrafts, allPendingReadyDrafts, allSavedDrafts]);
   const roomSummaryItems = useMemo(() => {
     const groups = new Map<string, { roomName: string; lineItems: number; deviceCount: number }>();
     const addDevice = (device: ExtractedQuoteDevice) => {
@@ -281,12 +349,12 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       current.deviceCount += Math.max(1, device.quantity ?? 1);
       groups.set(roomName, current);
     };
-    alreadyInLibraryItems.forEach(addDevice);
-    [...savedDrafts, ...locallyAddedDrafts, ...pendingReadyDrafts].forEach((item) => {
+    allAlreadyInLibraryItems.forEach(addDevice);
+    [...allSavedDrafts, ...allLocallyAddedDrafts, ...allPendingReadyDrafts].forEach((item) => {
       if (item.template && item.validation.ok) addDevice(item.extractedDevice);
     });
     return [...groups.values()].sort((a, b) => a.roomName.localeCompare(b.roomName));
-  }, [alreadyInLibraryItems, locallyAddedDrafts, pendingReadyDrafts, savedDrafts]);
+  }, [allAlreadyInLibraryItems, allLocallyAddedDrafts, allPendingReadyDrafts, allSavedDrafts]);
   const reviewStepTitle: Record<ImportReviewStep, string> = {
     import: "Start New Project",
     already: "Already In Library",
@@ -421,6 +489,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       setIgnoredDraftKeys(new Set());
       setSavedDraftKeys(new Set());
       setLocallyAddedDraftKeys(new Set());
+      setSelectedRoomScope(null);
       setReviewStep("already");
       setShowOutcomeReview(false);
       addToast(`Imported ${response.extractedCount} Jetbuilt device candidate${response.extractedCount === 1 ? "" : "s"}`, "success");
@@ -706,11 +775,11 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   };
 
   const buildProjectPlacements = async (roomName?: string): Promise<Parameters<typeof addProjectDevices>[0]> => {
-    const templatesById = alreadyInLibraryItems.length > 0 ? await ensureLibraryTemplatesLoaded() : {};
+    const templatesById = allAlreadyInLibraryItems.length > 0 ? await ensureLibraryTemplatesLoaded() : {};
     const projectPlacements: Parameters<typeof addProjectDevices>[0] = [];
     const includeDevice = (device: ExtractedQuoteDevice) => !roomName || roomLabelForDevice(device) === roomName;
 
-    for (const item of alreadyInLibraryItems) {
+    for (const item of allAlreadyInLibraryItems) {
       if (!includeDevice(item)) continue;
       const key = keyForExtractedDevice(item);
       const chosenMatch =
@@ -726,7 +795,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       }
     }
 
-    for (const item of [...savedDrafts, ...locallyAddedDrafts, ...pendingReadyDrafts]) {
+    for (const item of [...allSavedDrafts, ...allLocallyAddedDrafts, ...allPendingReadyDrafts]) {
       if (!item.template || !item.validation.ok || !includeDevice(item.extractedDevice)) continue;
       projectPlacements.push(...expandTemplateQuantity(item.template, item.extractedDevice.quantity).map((expanded) => ({
         template: expanded,
@@ -858,14 +927,14 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
               <OutcomeReviewPanel
                 importSourceLabel={importSourceLabel}
                 extractedCount={extraction?.extractedCount ?? 0}
-                alreadyInLibraryItems={alreadyInLibraryItems}
-                savedDrafts={savedDrafts}
-                locallyAddedDrafts={locallyAddedDrafts}
-                pendingReadyDrafts={pendingReadyDrafts}
-                manualReviewItems={manualReviewItems}
-                ignoredDrafts={ignoredDrafts}
-                unresolvedItems={unresolvedOutcomeItems}
-                startableDeviceCount={resolvedProjectDeviceCount}
+                alreadyInLibraryItems={allAlreadyInLibraryItems}
+                savedDrafts={allSavedDrafts}
+                locallyAddedDrafts={allLocallyAddedDrafts}
+                pendingReadyDrafts={allPendingReadyDrafts}
+                manualReviewItems={allManualReviewItems}
+                ignoredDrafts={allIgnoredDrafts}
+                unresolvedItems={allUnresolvedOutcomeItems}
+                startableDeviceCount={allResolvedProjectDeviceCount}
                 roomSummaryItems={roomSummaryItems}
                 onStartRoomSchematic={(roomName) => void handleStartSchematic(roomName)}
               />
@@ -890,6 +959,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   ))}
                 </div>
               </div>
+            )}
+            {hasImportedDevices && roomScopeOptions.length > 0 && (
+              <RoomScopeSelector
+                rooms={roomScopeOptions}
+                selectedRoom={selectedRoomScope}
+                onSelectRoom={setSelectedRoomScope}
+              />
             )}
             {reviewStep === "import" && (
               <>
@@ -1248,7 +1324,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                 </button>
                 <button
                   onClick={() => void handleStartSchematic()}
-                  disabled={resolvedProjectDeviceCount === 0 || saving || researching}
+                  disabled={allResolvedProjectDeviceCount === 0 || saving || researching}
                   className="px-3 py-1.5 rounded bg-blue-500 text-white text-xs hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   Start Schematic
@@ -1429,6 +1505,66 @@ function SummaryCard({
     <div className={`rounded border px-3 py-2 ${toneClass}`}>
       <div className="text-[10px] uppercase tracking-wide opacity-70">{label}</div>
       <div className="text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function RoomScopeSelector({
+  rooms,
+  selectedRoom,
+  onSelectRoom,
+}: {
+  rooms: Array<{ roomName: string; lineItems: number; deviceCount: number }>;
+  selectedRoom: string | null;
+  onSelectRoom: (roomName: string | null) => void;
+}) {
+  return (
+    <div className="rounded border bg-[var(--color-bg)] px-3 py-2 space-y-2" style={{ borderColor: "var(--color-border)" }}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold text-[var(--color-text-heading)]">Review scope</div>
+          <div className="text-[11px] text-[var(--color-text-muted)]">
+            Choose a room to review and build only that room, or keep the whole Jetbuilt project selected.
+          </div>
+        </div>
+        {selectedRoom && (
+          <button
+            type="button"
+            onClick={() => onSelectRoom(null)}
+            className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-white text-[11px] text-[var(--color-text-heading)] hover:bg-[var(--color-surface-hover)] cursor-pointer"
+          >
+            Clear room
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          onClick={() => onSelectRoom(null)}
+          className={`px-2.5 py-1 rounded border text-[11px] cursor-pointer ${
+            selectedRoom === null
+              ? "border-blue-300 bg-blue-50 text-blue-800"
+              : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)]"
+          }`}
+        >
+          Whole project
+        </button>
+        {rooms.map((room) => (
+          <button
+            key={room.roomName}
+            type="button"
+            onClick={() => onSelectRoom(room.roomName)}
+            className={`px-2.5 py-1 rounded border text-[11px] cursor-pointer ${
+              selectedRoom === room.roomName
+                ? "border-blue-300 bg-blue-50 text-blue-800"
+                : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)]"
+            }`}
+            title={`${room.lineItems} line item${room.lineItems === 1 ? "" : "s"} · ${room.deviceCount} placement${room.deviceCount === 1 ? "" : "s"}`}
+          >
+            {room.roomName}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
