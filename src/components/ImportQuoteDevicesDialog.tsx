@@ -27,6 +27,8 @@ import {
   TatesideApiError,
 } from "../tatesideApi";
 import { validateTemplate } from "../import/validate";
+import { scoreTemplate } from "../templateSearch";
+import { compareTemplatesByModel } from "../templateOrdering";
 import ManageTatesideTemplateDialog from "./ManageTatesideTemplateDialog";
 
 interface Props {
@@ -104,6 +106,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [selectedResearchModel, setSelectedResearchModel] = useState(() => readStoredModelChoice(AI_RESEARCH_MODEL_STORAGE_KEY));
   const [selectedEscalationModel, setSelectedEscalationModel] = useState(() => readStoredModelChoice(AI_ESCALATION_MODEL_STORAGE_KEY));
+  const [libraryTemplates, setLibraryTemplates] = useState<DeviceTemplate[]>([]);
   const [libraryTemplatesById, setLibraryTemplatesById] = useState<Record<string, DeviceTemplate>>({});
   const [researching, setResearching] = useState(false);
   const [researchProgress, setResearchProgress] = useState<{ current: number; total: number; label: string } | null>(null);
@@ -122,6 +125,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [selectedRoomScope, setSelectedRoomScope] = useState<string | null>(null);
   const [showOutcomeReview, setShowOutcomeReview] = useState(false);
   const [editingDraft, setEditingDraft] = useState<EditingDraftState | null>(null);
+  const [activeTemplateSearchKey, setActiveTemplateSearchKey] = useState<string | null>(null);
+  const [templateSearchQuery, setTemplateSearchQuery] = useState("");
 
   const keyForExtractedDevice = (device: ExtractedQuoteDevice) => [
     device.sourceItemId || "",
@@ -145,6 +150,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setJetbuiltStatus(null);
     setAiSettings(null);
     setAiSettingsOpen(false);
+    setLibraryTemplates([]);
     setLibraryTemplatesById({});
     setResearching(false);
     setResearchProgress(null);
@@ -163,6 +169,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setSelectedRoomScope(null);
     setShowOutcomeReview(false);
     setEditingDraft(null);
+    setActiveTemplateSearchKey(null);
+    setTemplateSearchQuery("");
     onClose();
   };
 
@@ -349,6 +357,23 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     [pendingReadyDrafts, selectedDraftKeys],
   );
 
+  const activeTemplateSearchItem = useMemo(
+    () => unresolvedMissingDevices.find((item) => keyForExtractedDevice(item) === activeTemplateSearchKey) ?? null,
+    [activeTemplateSearchKey, unresolvedMissingDevices],
+  );
+
+  const activeTemplateSearchResults = useMemo(() => {
+    if (!activeTemplateSearchItem) return [];
+    const query = templateSearchQuery.trim() || [activeTemplateSearchItem.manufacturer, activeTemplateSearchItem.model].filter(Boolean).join(" ");
+    if (!query) return [];
+    return libraryTemplates
+      .map((template) => ({ template, score: scoreTemplate(template, query) }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score || compareTemplatesByModel(a.template, b.template))
+      .slice(0, 8)
+      .map((entry) => entry.template);
+  }, [activeTemplateSearchItem, libraryTemplates, templateSearchQuery]);
+
   const possibleMatchItems = useMemo(
     () => scopedExtractionResults.filter((item) => item.status === "possible_match"),
     [scopedExtractionResults],
@@ -484,6 +509,92 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
   const handleLoadMoreLatestJetbuiltProjects = () => {
     void loadLatestJetbuiltProjects({ append: true });
+  };
+
+  const createDraftReview = (
+    item: QuoteImportResultItem,
+    template: DeviceTemplate,
+    draftSource: QuoteImportDraftReview["draftSource"],
+  ): QuoteImportDraftReview => {
+    const validation = validateTemplate(template);
+    return {
+      extractedDevice: {
+        manufacturer: item.manufacturer,
+        model: item.model,
+        description: item.description,
+        quantity: item.quantity,
+        sourceLineText: item.sourceLineText,
+        roomName: item.roomName,
+        systemName: item.systemName,
+        sourceItemId: item.sourceItemId,
+        normalizedLookupKey: item.normalizedLookupKey,
+      },
+      template,
+      metadata: null,
+      draftSource,
+      validation,
+      reviewStatus: validation.ok ? "draft_ready" : "manual_review_required",
+      error: null,
+      portSummary: template.ports.length > 0
+        ? template.ports.slice(0, 8).map((port) => `${port.label} - ${port.signalType} ${port.direction}`)
+        : ["No ports added yet"],
+    };
+  };
+
+  const upsertDraftReview = (review: QuoteImportDraftReview, options?: { openEditor?: boolean }) => {
+    const draftKey = keyForExtractedDevice(review.extractedDevice);
+    setResearchResults((current) => {
+      const remaining = current.filter((entry) => keyForExtractedDevice(entry.extractedDevice) !== draftKey);
+      return [...remaining, review];
+    });
+    setSelectedResearchKeys((current) => {
+      const next = new Set(current);
+      next.delete(draftKey);
+      return next;
+    });
+    if (review.validation.ok) {
+      setSelectedDraftKeys((current) => new Set([...current, draftKey]));
+    }
+    if (options?.openEditor && review.template) {
+      setEditingDraft({
+        key: draftKey,
+        template: review.template,
+      });
+    }
+  };
+
+  const buildDraftFromLibraryTemplate = (
+    item: QuoteImportResultItem,
+    sourceTemplate: DeviceTemplate,
+    draftSource: "library_port_copy" | "library_template_copy",
+  ): QuoteImportDraftReview => {
+    const copiedTemplate: DeviceTemplate = {
+      ...sourceTemplate,
+      id: undefined,
+      version: undefined,
+      label: [item.manufacturer ?? sourceTemplate.manufacturer, item.model].filter(Boolean).join(" "),
+      shortName: item.model,
+      manufacturer: item.manufacturer ?? sourceTemplate.manufacturer,
+      modelNumber: item.model,
+      ports: sourceTemplate.ports.map((port, index) => ({
+        ...port,
+        id: `port-copy-${index + 1}`,
+      })),
+    };
+    return createDraftReview(item, copiedTemplate, draftSource);
+  };
+
+  const buildBlankDraft = (item: QuoteImportResultItem): QuoteImportDraftReview => {
+    const blankTemplate: DeviceTemplate = {
+      label: [item.manufacturer, item.model].filter(Boolean).join(" ") || item.model,
+      shortName: item.model,
+      manufacturer: item.manufacturer ?? undefined,
+      modelNumber: item.model,
+      deviceType: "custom",
+      category: "Other",
+      ports: [],
+    };
+    return createDraftReview(item, blankTemplate, "manual_blank");
   };
 
   const handleSearchJetbuilt = async () => {
@@ -706,11 +817,24 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
   const handleDraftEdited = (updatedTemplate: DeviceTemplate) => {
     if (!editingDraft) return;
+    const validation = validateTemplate(updatedTemplate);
     setResearchResults((current) => current.map((item) => (
       keyForExtractedDevice(item.extractedDevice) === editingDraft.key
-        ? { ...item, template: updatedTemplate }
+        ? {
+          ...item,
+          template: updatedTemplate,
+          validation,
+          reviewStatus: validation.ok ? "draft_ready" : "manual_review_required",
+          portSummary: updatedTemplate.ports.length > 0
+            ? updatedTemplate.ports.slice(0, 8).map((port) => `${port.label} - ${port.signalType} ${port.direction}`)
+            : ["No ports added yet"],
+        }
         : item
     )));
+    setSavedDraftKeys((current) => new Set([...current, editingDraft.key]));
+    if (validation.ok) {
+      setSelectedDraftKeys((current) => new Set([...current, editingDraft.key]));
+    }
     setEditingDraft(null);
   };
 
@@ -728,6 +852,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const ensureLibraryTemplatesLoaded = async (): Promise<Record<string, DeviceTemplate>> => {
     if (Object.keys(libraryTemplatesById).length > 0) return libraryTemplatesById;
     const templates = await fetchTatesideDeviceTemplates();
+    setLibraryTemplates(templates);
     const byId = Object.fromEntries(
       templates
         .filter((template): template is DeviceTemplate & { id: string } => typeof template.id === "string" && template.id.length > 0)
@@ -750,53 +875,10 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
         throw new Error("The selected TateSide library device could not be loaded");
       }
 
-      const copiedTemplate: DeviceTemplate = {
-        ...sourceTemplate,
-        label: [item.manufacturer ?? sourceTemplate.manufacturer, item.model].filter(Boolean).join(" "),
-        shortName: item.model,
-        manufacturer: item.manufacturer ?? sourceTemplate.manufacturer,
-        modelNumber: item.model,
-        ports: sourceTemplate.ports.map((port, index) => ({
-          ...port,
-          id: `port-copy-${index + 1}`,
-        })),
-      };
-      const validation = validateTemplate(copiedTemplate);
-      const draftKey = keyForExtractedDevice(item);
-      const review: QuoteImportDraftReview = {
-        extractedDevice: {
-          manufacturer: item.manufacturer,
-          model: item.model,
-          description: item.description,
-          quantity: item.quantity,
-          sourceLineText: item.sourceLineText,
-          roomName: item.roomName,
-          systemName: item.systemName,
-          sourceItemId: item.sourceItemId,
-          normalizedLookupKey: item.normalizedLookupKey,
-        },
-        template: copiedTemplate,
-        metadata: null,
-        draftSource: "library_port_copy",
-        validation,
-        reviewStatus: validation.ok ? "draft_ready" : "manual_review_required",
-        error: null,
-        portSummary: copiedTemplate.ports.slice(0, 8).map((port) => `${port.label} - ${port.signalType} ${port.direction}`),
-      };
-
-      setResearchResults((current) => {
-        const remaining = current.filter((entry) => keyForExtractedDevice(entry.extractedDevice) !== draftKey);
-        return [...remaining, review];
-      });
-      setSelectedResearchKeys((current) => {
-        const next = new Set(current);
-        next.delete(draftKey);
-        return next;
-      });
-      if (validation.ok) {
-        setSelectedDraftKeys((current) => new Set([...current, draftKey]));
-      }
+      const review = buildDraftFromLibraryTemplate(item, sourceTemplate, "library_port_copy");
+      upsertDraftReview(review);
       if (decision) {
+        const draftKey = keyForExtractedDevice(item);
         setPossibleMatchDecisions((current) => ({ ...current, [draftKey]: decision }));
         if (decision === "use_match_as_template") {
           setPossibleMatchTemplateIds((current) => ({ ...current, [draftKey]: candidate.id }));
@@ -869,6 +951,41 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start schematic from this project");
     }
+  };
+
+  const handleCreateDraftFromScratch = (item: QuoteImportResultItem) => {
+    setError(null);
+    setActiveTemplateSearchKey(null);
+    setTemplateSearchQuery("");
+    const review = buildBlankDraft(item);
+    upsertDraftReview(review, { openEditor: true });
+    addToast(`Started a blank draft for ${item.model}`, "success");
+  };
+
+  const handleToggleTemplateSearch = async (item: QuoteImportResultItem) => {
+    setError(null);
+    const itemKey = keyForExtractedDevice(item);
+    if (activeTemplateSearchKey === itemKey) {
+      setActiveTemplateSearchKey(null);
+      setTemplateSearchQuery("");
+      return;
+    }
+    try {
+      await ensureLibraryTemplatesLoaded();
+      setActiveTemplateSearchKey(itemKey);
+      setTemplateSearchQuery([item.manufacturer, item.model].filter(Boolean).join(" "));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load TateSide library devices");
+    }
+  };
+
+  const handleUseSearchedLibraryTemplate = (item: QuoteImportResultItem, sourceTemplate: DeviceTemplate) => {
+    setError(null);
+    const review = buildDraftFromLibraryTemplate(item, sourceTemplate, "library_template_copy");
+    upsertDraftReview(review);
+    setActiveTemplateSearchKey(null);
+    setTemplateSearchQuery("");
+    addToast(`Created a draft for ${item.model} from ${sourceTemplate.label}`, "success");
   };
 
   useEffect(() => {
@@ -1275,6 +1392,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                       selectedForResearch={isResearchSelected(item)}
                       onToggleResearchSelection={() => toggleResearchSelection(item)}
                       onCopyPortsFromCandidate={(candidate) => void handleCopyPortsFromLibraryCandidate(item, candidate)}
+                      onCreateFromScratch={() => handleCreateDraftFromScratch(item)}
+                      onToggleTemplateSearch={() => void handleToggleTemplateSearch(item)}
+                      templateSearchOpen={activeTemplateSearchKey === keyForExtractedDevice(item)}
+                      templateSearchQuery={activeTemplateSearchKey === keyForExtractedDevice(item) ? templateSearchQuery : ""}
+                      onTemplateSearchQueryChange={setTemplateSearchQuery}
+                      templateSearchResults={activeTemplateSearchKey === keyForExtractedDevice(item) ? activeTemplateSearchResults : []}
+                      onUseLibraryTemplate={(template) => handleUseSearchedLibraryTemplate(item, template)}
                     />
                   )) : (
                     <EmptyState text="No devices are queued for research." />
@@ -1740,9 +1864,13 @@ function OutcomeReviewItemRow({ item }: { item: OutcomeReviewItem }) {
   const detail = "extractedDevice" in item
     ? item.draftSource === "library_port_copy"
       ? "Ports copied from a TateSide library device"
-      : item.reviewStatus === "manual_review_required"
-        ? "Manual review required"
-        : "Generated device draft"
+      : item.draftSource === "library_template_copy"
+        ? "Draft created from a TateSide library template"
+        : item.draftSource === "manual_blank"
+          ? "Created from scratch for manual completion"
+          : item.reviewStatus === "manual_review_required"
+            ? "Manual review required"
+            : "Generated device draft"
     : device.description || device.sourceLineText || "No additional quote detail captured.";
 
   return (
@@ -1769,11 +1897,25 @@ function ExtractionRow({
   selectedForResearch = false,
   onToggleResearchSelection,
   onCopyPortsFromCandidate,
+  onCreateFromScratch,
+  onToggleTemplateSearch,
+  templateSearchOpen = false,
+  templateSearchQuery = "",
+  onTemplateSearchQueryChange,
+  templateSearchResults = [],
+  onUseLibraryTemplate,
 }: {
   item: QuoteImportResultItem;
   selectedForResearch?: boolean;
   onToggleResearchSelection?: () => void;
   onCopyPortsFromCandidate?: (candidate: QuoteImportCandidateMatch) => void;
+  onCreateFromScratch?: () => void;
+  onToggleTemplateSearch?: () => void;
+  templateSearchOpen?: boolean;
+  templateSearchQuery?: string;
+  onTemplateSearchQueryChange?: (value: string) => void;
+  templateSearchResults?: DeviceTemplate[];
+  onUseLibraryTemplate?: (template: DeviceTemplate) => void;
 }) {
   const portReuseCandidates = item.portReuseCandidates ?? [];
   return (
@@ -1842,6 +1984,62 @@ function ExtractionRow({
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+          {(onCreateFromScratch || onToggleTemplateSearch) && (
+            <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {onCreateFromScratch && (
+                  <button
+                    onClick={onCreateFromScratch}
+                    className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-white text-[11px] hover:bg-[var(--color-surface-hover)] cursor-pointer"
+                  >
+                    Create from scratch
+                  </button>
+                )}
+                {onToggleTemplateSearch && (
+                  <button
+                    onClick={onToggleTemplateSearch}
+                    className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-white text-[11px] hover:bg-[var(--color-surface-hover)] cursor-pointer"
+                  >
+                    {templateSearchOpen ? "Hide template search" : "Use another library template"}
+                  </button>
+                )}
+              </div>
+              {templateSearchOpen && onTemplateSearchQueryChange && onUseLibraryTemplate && (
+                <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2">
+                  <input
+                    type="text"
+                    value={templateSearchQuery}
+                    onChange={(e) => onTemplateSearchQueryChange(e.target.value)}
+                    placeholder="Search TateSide library devices..."
+                    className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2.5 py-1.5 text-[11px] text-[var(--color-text-heading)] outline-none focus:border-blue-500"
+                  />
+                  <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+                    {templateSearchResults.length > 0 ? templateSearchResults.map((template) => (
+                      <div key={template.id ?? `${template.label}-${template.modelNumber ?? ""}`} className="rounded border border-blue-200 bg-blue-50 px-2.5 py-2 text-[11px] text-blue-800">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-medium">{template.label}</div>
+                            <div>{[template.manufacturer, template.modelNumber].filter(Boolean).join(" ")}</div>
+                            <div className="opacity-80">{template.deviceType} · {template.ports.length} ports</div>
+                          </div>
+                          <button
+                            onClick={() => onUseLibraryTemplate(template)}
+                            className="shrink-0 px-2.5 py-1 rounded border border-blue-300 bg-white text-[11px] hover:bg-blue-100 cursor-pointer"
+                          >
+                            Use template
+                          </button>
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="text-[11px] text-[var(--color-text-muted)]">
+                        No TateSide library devices match that search yet.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
