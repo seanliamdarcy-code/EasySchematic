@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSchematicStore } from "../store";
 import type { DeviceTemplate } from "../types";
 import type {
@@ -8,7 +8,9 @@ import type {
   JetbuiltIndexStatus,
   JetbuiltProjectSearchResult,
   LibraryMatchStatus,
+  ProductBundleComponent,
   QuoteImportDraftReview,
+  QuoteImportBundleGroup,
   QuoteImportExtractionResponse,
   QuoteImportResultItem,
 } from "../quoteImportTypes";
@@ -18,7 +20,9 @@ import {
   importDevicesFromJetbuiltProject,
   importDevicesFromQuote,
   listJetbuiltProjectsForClient,
+  previewProductBundleDefinition,
   researchQuoteDevices,
+  saveProductBundleDefinition,
   saveTatesideDeviceTemplates,
   searchJetbuiltClients,
   searchJetbuiltProjects,
@@ -89,7 +93,26 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [showOutcomeReview, setShowOutcomeReview] = useState(false);
   const [editingDraft, setEditingDraft] = useState<EditingDraftState | null>(null);
 
-  const keyForExtractedDevice = (device: ExtractedQuoteDevice) => `${device.normalizedLookupKey || "device"}:${device.model}`;
+  const keyForExtractedDevice = (device: ExtractedQuoteDevice) => (
+    device.importItemId || `${device.normalizedLookupKey || "device"}:${device.model}`
+  );
+
+  const bundleGroups = useMemo(() => extraction?.bundleGroups ?? [], [extraction]);
+  const bundleGroupsById = useMemo(
+    () => new Map(bundleGroups.map((group) => [group.id, group])),
+    [bundleGroups],
+  );
+  const activeImportResults = useMemo(
+    () => (extraction?.results ?? []).filter((item) => {
+      if (!item.bundleGroupId) return true;
+      return bundleGroupsById.get(item.bundleGroupId)?.accepted === true;
+    }),
+    [extraction, bundleGroupsById],
+  );
+  const standaloneResults = useMemo(
+    () => activeImportResults.filter((item) => !item.bundleGroupId),
+    [activeImportResults],
+  );
 
   const reset = () => {
     setSelectedFile(null);
@@ -124,19 +147,19 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   };
 
   const unresolvedPossibleMatches = useMemo(
-    () => (extraction?.results ?? []).filter((item) => item.status === "possible_match" && !possibleMatchDecisions[keyForExtractedDevice(item)]),
-    [extraction, possibleMatchDecisions],
+    () => activeImportResults.filter((item) => item.status === "possible_match" && !possibleMatchDecisions[keyForExtractedDevice(item)]),
+    [activeImportResults, possibleMatchDecisions],
   );
 
   const missingDevices = useMemo(() => {
     if (!extraction) return [];
-    return extraction.results.filter((item) => {
+    return activeImportResults.filter((item) => {
       const key = keyForExtractedDevice(item);
       if (item.status === "missing") return true;
       if (item.status === "possible_match") return possibleMatchDecisions[key] === "research_missing";
       return false;
     });
-  }, [extraction, possibleMatchDecisions]);
+  }, [extraction, activeImportResults, possibleMatchDecisions]);
 
   const researchResultKeys = useMemo(
     () => new Set(researchResults.map((item) => keyForExtractedDevice(item.extractedDevice))),
@@ -155,11 +178,24 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
   const alreadyInLibraryItems = useMemo(() => {
     if (!extraction) return [];
-    return extraction.results.filter((item) => {
+    return activeImportResults.filter((item) => {
       const key = keyForExtractedDevice(item);
       return item.status === "already_in_library" || possibleMatchDecisions[key] === "use_library_match";
     });
-  }, [extraction, possibleMatchDecisions]);
+  }, [extraction, activeImportResults, possibleMatchDecisions]);
+
+  const standaloneAlreadyInLibraryItems = useMemo(
+    () => alreadyInLibraryItems.filter((item) => !item.bundleGroupId),
+    [alreadyInLibraryItems],
+  );
+  const standalonePossibleMatches = useMemo(
+    () => standaloneResults.filter((item) => item.status === "possible_match"),
+    [standaloneResults],
+  );
+  const standaloneUnresolvedMissingDevices = useMemo(
+    () => unresolvedMissingDevices.filter((item) => !item.bundleGroupId),
+    [unresolvedMissingDevices],
+  );
 
   const readyDrafts = useMemo(
     () => researchResults.filter((item) => item.reviewStatus === "draft_ready" && item.template && !ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
@@ -348,6 +384,82 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       setError(message);
     } finally {
       setJetbuiltImporting(false);
+    }
+  };
+
+  const handleUseBundleComponents = async (
+    group: QuoteImportBundleGroup,
+    components: ProductBundleComponent[],
+    rememberForFuture: boolean,
+  ) => {
+    if (!extraction) return;
+    const validComponents = components
+      .map((component) => ({
+        manufacturer: component.manufacturer.trim() || group.manufacturer || "",
+        model: component.model.trim(),
+        quantityPerBundle: Math.max(1, Math.round(Number(component.quantityPerBundle) || 1)),
+        schematicRelevant: component.schematicRelevant === true,
+      }))
+      .filter((component) => component.manufacturer && component.model && component.schematicRelevant);
+    if (validComponents.length === 0) {
+      setError("Add at least one physical, schematic-facing bundle component before using this mapping.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const savedBundle = rememberForFuture
+        ? await saveProductBundleDefinition({
+          id: group.bundleId ?? "",
+          manufacturer: group.manufacturer ?? validComponents[0]!.manufacturer,
+          sku: group.commercialSku,
+          label: group.label || `${group.manufacturer ?? ""} ${group.commercialSku} bundle`.trim(),
+          source: "manual",
+          components: validComponents,
+        })
+        : null;
+      const preview = await previewProductBundleDefinition({
+        group: {
+          ...group,
+          resolution: "manual",
+          accepted: true,
+          bundleId: savedBundle?.id ?? group.bundleId,
+          warnings: [],
+        },
+        components: validComponents,
+      });
+
+      setExtraction((current) => {
+        if (!current) return current;
+        const updatedGroup: QuoteImportBundleGroup = {
+          ...group,
+          resolution: "manual",
+          accepted: true,
+          bundleId: savedBundle?.id ?? group.bundleId,
+          warnings: [],
+          components: preview.components,
+        };
+        const results = [
+          ...current.results.filter((item) => item.bundleGroupId !== group.id),
+          ...preview.components,
+        ];
+        return {
+          ...current,
+          extractedCount: results.length,
+          results,
+          bundleGroups: (current.bundleGroups ?? []).map((entry) => entry.id === group.id ? updatedGroup : entry),
+        };
+      });
+      if (rememberForFuture) {
+        addToast(`Saved ${group.commercialSku} as a reusable TateSide bundle mapping`, "success");
+      } else {
+        addToast(`Applied ${validComponents.length} approved component${validComponents.length === 1 ? "" : "s"} from ${group.commercialSku}`, "success");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not apply the bundle component mapping");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -880,7 +992,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                   <SummaryCard label="Extracted devices" value={String(extraction.extractedCount)} tone="default" />
                   <SummaryCard label="Already in library" value={String(alreadyInLibraryItems.length)} tone="success" />
-                  <SummaryCard label="Possible matches" value={String((extraction.results ?? []).filter((item) => item.status === "possible_match").length)} tone="warning" />
+                  <SummaryCard label="Possible matches" value={String(activeImportResults.filter((item) => item.status === "possible_match").length)} tone="warning" />
                   <SummaryCard label="Missing devices" value={String(unresolvedMissingDevices.length)} tone="danger" />
                 </div>
 
@@ -900,16 +1012,56 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   </div>
                 )}
 
-                <SectionCard title="Already In Library" count={alreadyInLibraryItems.length}>
-                  {alreadyInLibraryItems.length > 0 ? alreadyInLibraryItems.map((item) => (
+                {bundleGroups.length > 0 && (
+                  <SectionCard title="Bundle Imports" count={bundleGroups.length}>
+                    {bundleGroups.map((group) => (
+                      <BundleImportCard
+                        key={group.id}
+                        group={group}
+                        saving={saving}
+                        onUseComponents={(components, rememberForFuture) => void handleUseBundleComponents(group, components, rememberForFuture)}
+                      >
+                        {group.components.length > 0 ? group.components.map((item) => {
+                          if (!group.accepted) {
+                            return <BundleComponentPreviewRow key={keyForExtractedDevice(item)} item={item} />;
+                          }
+                          if (item.status === "possible_match") {
+                            return (
+                              <PossibleMatchRow
+                                key={keyForExtractedDevice(item)}
+                                item={item}
+                                decision={possibleMatchDecisions[keyForExtractedDevice(item)]}
+                                onUseLibraryMatch={() => setPossibleDecision(item, "use_library_match")}
+                                onResearchMissing={() => setPossibleDecision(item, "research_missing")}
+                              />
+                            );
+                          }
+                          return (
+                            <ExtractionRow
+                              key={keyForExtractedDevice(item)}
+                              item={item}
+                              selectedForResearch={item.status === "missing" && isResearchSelected(item)}
+                              onToggleResearchSelection={item.status === "missing" ? () => toggleResearchSelection(item) : undefined}
+                              onCopyPortsFromCandidate={(candidate) => void handleCopyPortsFromLibraryCandidate(item, candidate)}
+                            />
+                          );
+                        }) : (
+                          <EmptyState text="No physical components have been approved for this procurement line yet." />
+                        )}
+                      </BundleImportCard>
+                    ))}
+                  </SectionCard>
+                )}
+
+                <SectionCard title="Already In Library" count={standaloneAlreadyInLibraryItems.length}>
+                  {standaloneAlreadyInLibraryItems.length > 0 ? standaloneAlreadyInLibraryItems.map((item) => (
                     <ExtractionRow key={keyForExtractedDevice(item)} item={item} />
                   )) : <EmptyState text="No extracted devices are confirmed as already in the TateSide library yet." />}
                 </SectionCard>
 
-                <SectionCard title="Possible Matches" count={(extraction.results ?? []).filter((item) => item.status === "possible_match").length}>
-                  {(extraction.results ?? []).filter((item) => item.status === "possible_match").length > 0 ? (
-                    extraction.results
-                      .filter((item) => item.status === "possible_match")
+                <SectionCard title="Possible Matches" count={standalonePossibleMatches.length}>
+                  {standalonePossibleMatches.length > 0 ? (
+                    standalonePossibleMatches
                       .map((item) => (
                         <PossibleMatchRow
                           key={keyForExtractedDevice(item)}
@@ -924,7 +1076,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   )}
                 </SectionCard>
 
-                <SectionCard title="Missing Devices" count={unresolvedMissingDevices.length} action={(<div className="flex items-center gap-2">
+                <SectionCard title="Missing Devices" count={standaloneUnresolvedMissingDevices.length} action={(<div className="flex items-center gap-2">
                   <button
                     onClick={handleResearchMissing}
                     disabled={selectedResearchDevices.length === 0 || researching || unresolvedPossibleMatches.length > 0}
@@ -947,7 +1099,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                       {researchProgress.label}
                     </div>
                   )}
-                  {unresolvedMissingDevices.length > 0 ? unresolvedMissingDevices.map((item) => (
+                  {standaloneUnresolvedMissingDevices.length > 0 ? standaloneUnresolvedMissingDevices.map((item) => (
                     <ExtractionRow
                       key={keyForExtractedDevice(item)}
                       item={item}
@@ -1222,7 +1374,7 @@ function OutcomeReviewSection({
 
 function outcomeReviewItemKey(item: OutcomeReviewItem): string {
   const device = "extractedDevice" in item ? item.extractedDevice : item;
-  return `${device.normalizedLookupKey || "device"}:${device.model}`;
+  return device.importItemId || `${device.normalizedLookupKey || "device"}:${device.model}`;
 }
 
 function OutcomeReviewItemRow({ item }: { item: OutcomeReviewItem }) {
@@ -1250,6 +1402,127 @@ function OutcomeReviewItemRow({ item }: { item: OutcomeReviewItem }) {
       </div>
       <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{detail}</div>
     </div>
+  );
+}
+
+function bundleComponentsFromGroup(group: QuoteImportBundleGroup): ProductBundleComponent[] {
+  if (group.components.length > 0) {
+    return group.components.map((item) => ({
+      manufacturer: item.manufacturer ?? group.manufacturer ?? "",
+      model: item.model,
+      quantityPerBundle: item.componentQuantityPerBundle ?? 1,
+      schematicRelevant: true,
+    }));
+  }
+  return [{
+    manufacturer: group.manufacturer ?? "",
+    model: "",
+    quantityPerBundle: 1,
+    schematicRelevant: true,
+  }];
+}
+
+function BundleComponentPreviewRow({ item }: { item: QuoteImportResultItem }) {
+  return (
+    <div className="px-3 py-2 border-b text-xs bg-amber-50/50" style={{ borderColor: "var(--color-border)" }}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-[var(--color-text-heading)]">{[item.manufacturer, item.model].filter(Boolean).join(" ")}</span>
+        {typeof item.quantity === "number" && <span className="rounded border border-amber-200 bg-white px-1.5 py-0.5 text-[10px] text-amber-800">Qty {item.quantity}</span>}
+        <span className={`rounded border px-1.5 py-0.5 text-[10px] ${STATUS_CLASSES[item.status]}`}>{STATUS_LABELS[item.status]}</span>
+      </div>
+      <div className="mt-1 text-[11px] text-amber-800">Proposed component — approve or edit this bundle mapping before researching or saving it.</div>
+    </div>
+  );
+}
+
+function BundleImportCard({
+  group,
+  saving,
+  onUseComponents,
+  children,
+}: {
+  group: QuoteImportBundleGroup;
+  saving: boolean;
+  onUseComponents: (components: ProductBundleComponent[], rememberForFuture: boolean) => void;
+  children: ReactNode;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [drafts, setDrafts] = useState<ProductBundleComponent[]>(() => bundleComponentsFromGroup(group));
+  const beginEditing = () => {
+    setDrafts(bundleComponentsFromGroup(group));
+    setEditing(true);
+  };
+  const updateDraft = (index: number, patch: Partial<ProductBundleComponent>) => {
+    setDrafts((current) => current.map((draft, draftIndex) => draftIndex === index ? { ...draft, ...patch } : draft));
+  };
+  const validDrafts = drafts.filter((draft) => draft.manufacturer.trim() && draft.model.trim() && draft.schematicRelevant);
+  const hasContents = group.components.length > 0;
+  const unresolved = !group.accepted;
+  const tone = group.resolution === "known_catalogue"
+    ? "border-blue-200 bg-blue-50"
+    : unresolved
+      ? "border-amber-200 bg-amber-50"
+      : "border-emerald-200 bg-emerald-50";
+
+  return (
+    <details className={`rounded border ${tone}`} open={group.resolution === "known_catalogue"}>
+      <summary className="cursor-pointer list-none px-3 py-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-[var(--color-text-heading)]">{[group.manufacturer, group.commercialSku].filter(Boolean).join(" ")}</span>
+          <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[10px] text-blue-700">Bundle · Qty {group.quantity ?? 1}</span>
+          <span className="rounded-full border border-[var(--color-border)] bg-white px-2 py-0.5 text-[10px] text-[var(--color-text-muted)]">
+            {group.resolution === "known_catalogue" ? "Catalogue mapping" : group.resolution === "suggested" ? "Needs review" : group.resolution === "manual" ? "Manual mapping" : "Possible bundle"}
+          </span>
+        </div>
+        <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{group.label}</div>
+      </summary>
+      <div className="border-t" style={{ borderColor: "var(--color-border)" }}>
+        <div className="px-3 py-2 text-[11px] text-[var(--color-text-muted)] space-y-1">
+          {group.description && <div>{group.description}</div>}
+          <div>Jetbuilt SKU: <span className="font-mono">{group.commercialSku}</span></div>
+          {(group.room || group.system) && <div>{[group.room ? `Room: ${group.room}` : "", group.system ? `System: ${group.system}` : ""].filter(Boolean).join(" | ")}</div>}
+          {group.sourceLineText && <div>Quote text: {group.sourceLineText}</div>}
+        </div>
+        {group.warnings.length > 0 && (
+          <div className="mx-3 mb-2 rounded border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800">
+            {group.warnings.map((warning) => <div key={warning}>{warning}</div>)}
+          </div>
+        )}
+        <div className="px-3 pb-2 flex flex-wrap gap-2">
+          {!editing && group.resolution === "suggested" && hasContents && !group.accepted && (
+            <button onClick={() => onUseComponents(bundleComponentsFromGroup(group), false)} disabled={saving} className="px-2.5 py-1 rounded bg-blue-500 text-white text-[11px] hover:bg-blue-600 disabled:opacity-40 cursor-pointer">Use suggested components</button>
+          )}
+          {!editing && !group.bundleId && hasContents && group.accepted && (
+            <button onClick={() => onUseComponents(bundleComponentsFromGroup(group), true)} disabled={saving} className="px-2.5 py-1 rounded border border-blue-300 bg-white text-[11px] text-blue-800 hover:bg-blue-50 disabled:opacity-40 cursor-pointer">Remember this bundle definition</button>
+          )}
+          {!editing && <button onClick={beginEditing} disabled={saving} className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-white text-[11px] hover:bg-[var(--color-surface-hover)] disabled:opacity-40 cursor-pointer">Edit components</button>}
+          {unresolved && !editing && <button disabled title="Deliberate paid bundle research is not implemented in this patch." className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[11px] text-[var(--color-text-muted)] cursor-not-allowed">Research bundle contents — coming next</button>}
+        </div>
+        {editing && (
+          <div className="mx-3 mb-3 rounded border border-[var(--color-border)] bg-white p-2.5 space-y-2">
+            <div className="text-[11px] font-medium text-[var(--color-text-heading)]">Physical components used for this import</div>
+            {drafts.map((draft, index) => (
+              <div key={`${index}-${draft.model}`} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_70px_auto] gap-2 items-center">
+                <input value={draft.manufacturer} onChange={(event) => updateDraft(index, { manufacturer: event.target.value })} placeholder="Manufacturer" className="min-w-0 rounded border border-[var(--color-border)] px-2 py-1 text-xs" />
+                <input value={draft.model} onChange={(event) => updateDraft(index, { model: event.target.value })} placeholder="Model" className="min-w-0 rounded border border-[var(--color-border)] px-2 py-1 text-xs" />
+                <input type="number" min="1" value={draft.quantityPerBundle} onChange={(event) => updateDraft(index, { quantityPerBundle: Number(event.target.value) || 1 })} title="Quantity per bundle" className="rounded border border-[var(--color-border)] px-2 py-1 text-xs" />
+                <button onClick={() => setDrafts((current) => current.filter((_, draftIndex) => draftIndex !== index))} className="text-[11px] text-red-700 hover:underline cursor-pointer">Remove</button>
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => setDrafts((current) => [...current, { manufacturer: group.manufacturer ?? "", model: "", quantityPerBundle: 1, schematicRelevant: true }])} className="px-2.5 py-1 rounded border border-[var(--color-border)] bg-white text-[11px] hover:bg-[var(--color-surface-hover)] cursor-pointer">Add component</button>
+              <button onClick={() => onUseComponents(validDrafts, false)} disabled={validDrafts.length === 0 || saving} className="px-2.5 py-1 rounded bg-blue-500 text-white text-[11px] hover:bg-blue-600 disabled:opacity-40 cursor-pointer">Use components for this import</button>
+              <button onClick={() => onUseComponents(validDrafts, true)} disabled={validDrafts.length === 0 || saving} className="px-2.5 py-1 rounded border border-blue-300 bg-white text-[11px] text-blue-800 hover:bg-blue-50 disabled:opacity-40 cursor-pointer">Use and remember mapping</button>
+              <button onClick={() => setEditing(false)} disabled={saving} className="px-2.5 py-1 text-[11px] text-[var(--color-text-muted)] hover:underline cursor-pointer">Cancel</button>
+            </div>
+          </div>
+        )}
+        <div className="border-t" style={{ borderColor: "var(--color-border)" }}>
+          <div className="px-3 py-2 text-[11px] font-medium text-[var(--color-text-heading)]">Package contents used for schematic</div>
+          {children}
+        </div>
+      </div>
+    </details>
   );
 }
 

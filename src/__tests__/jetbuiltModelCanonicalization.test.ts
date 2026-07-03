@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { openDatabase, runMigrations } from "../../tateside-api/src/db.ts";
 import { saveTemplates } from "../../tateside-api/src/deviceStore.ts";
-import { canonicalizeJetbuiltModel, extractItemsToDevices } from "../../tateside-api/src/jetbuilt.ts";
+import { canonicalizeJetbuiltModel, extractItemsToDevices, extractJetbuiltImportData, previewProductBundleComponents } from "../../tateside-api/src/jetbuilt.ts";
 import { inspectQuoteDevicesAgainstLibrary } from "../../tateside-api/src/quoteImport.ts";
 import { saveProductBundle } from "../../tateside-api/src/productBundleStore.ts";
 import type { DeviceTemplate } from "../types";
@@ -177,5 +177,92 @@ describe("Jetbuilt bundle expansion", () => {
     }]);
 
     expect(devices.map((device) => device.model)).toEqual(["DSP1"]);
+  });
+
+  it("keeps identical bundle children separate when their procurement parents are in different rooms", () => {
+    const db = createDb();
+    const extracted = extractJetbuiltImportData(db, [
+      {
+        manufacturer_name: "Yealink",
+        part_number: "A50-031",
+        short_description: "Yealink A50 A50-031 Meeting Bar and CTP25 tablet",
+        quantity: 1,
+        room_name: "Meeting Room 1",
+        system_name: "AV",
+        product_id: 1,
+      },
+      {
+        manufacturer_name: "Yealink",
+        part_number: "A50-031",
+        short_description: "Yealink A50 A50-031 Meeting Bar and CTP25 tablet",
+        quantity: 1,
+        room_name: "Meeting Room 2",
+        system_name: "AV",
+        product_id: 1,
+      },
+    ]);
+
+    expect(extracted.bundleGroups).toHaveLength(2);
+    expect(extracted.devices).toHaveLength(4);
+    expect(new Set(extracted.devices.map((device) => device.importItemId)).size).toBe(4);
+    expect(extracted.bundleGroups.map((group) => group.room)).toEqual(["Meeting Room 1", "Meeting Room 2"]);
+  });
+
+  it("keeps an unknown likely commercial SKU in an explicit review state instead of canonicalizing it", () => {
+    const db = createDb();
+    const extracted = extractJetbuiltImportData(db, [{
+      manufacturer_name: "Yealink",
+      part_number: "A40-031",
+      short_description: "Yealink A40-031 package",
+      quantity: 1,
+      product_id: 1,
+    }]);
+
+    expect(extracted.devices).toHaveLength(0);
+    expect(extracted.bundleGroups).toHaveLength(1);
+    expect(extracted.bundleGroups[0]).toMatchObject({
+      commercialSku: "A40-031",
+      resolution: "unresolved",
+      accepted: false,
+    });
+  });
+
+  it("creates a reviewable suggestion only from explicitly named source models", () => {
+    const db = createDb();
+    const extracted = extractJetbuiltImportData(db, [{
+      manufacturer_name: "Yealink",
+      part_number: "A40-031",
+      short_description: "Yealink A40 A40-031 Meeting Bar with CTP25 tablet",
+      quantity: 1,
+      product_id: 1,
+    }]);
+
+    expect(extracted.bundleGroups[0]).toMatchObject({ resolution: "suggested", accepted: false });
+    expect(extracted.devices.map((device) => device.model)).toEqual(["A40", "CTP25"]);
+  });
+
+  it("previews manually approved components through normal library matching without creating the bundle parent", () => {
+    const db = createDb();
+    saveTemplates(db, { templates: [template("A40")], source: "test" });
+    const [group] = extractJetbuiltImportData(db, [{
+      manufacturer_name: "Yealink",
+      part_number: "A40-031",
+      short_description: "Yealink A40-031 package",
+      quantity: 1,
+      product_id: 1,
+    }]).bundleGroups;
+    expect(group).toBeDefined();
+
+    const preview = previewProductBundleComponents(db, {
+      group: group!,
+      components: [
+        { manufacturer: "Yealink", model: "A40", quantityPerBundle: 1, schematicRelevant: true },
+        { manufacturer: "Yealink", model: "CTP25", quantityPerBundle: 1, schematicRelevant: true },
+      ],
+    });
+
+    expect(preview.map((item) => item.model)).toEqual(["A40", "CTP25"]);
+    expect(preview.map((item) => item.status)).toEqual(["already_in_library", "missing"]);
+    expect(preview.some((item) => item.model === "A40-031")).toBe(false);
   });
 });

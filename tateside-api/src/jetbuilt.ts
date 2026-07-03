@@ -6,7 +6,11 @@ import type {
   JetbuiltClientSearchResult,
   JetbuiltIndexStatus,
   JetbuiltProjectSearchResult,
+  ProductBundleComponent,
+  ProductBundlePreviewRequest,
+  QuoteImportBundleGroup,
   QuoteImportExtractionResponse,
+  QuoteImportResultItem,
 } from "../../src/quoteImportTypes.js";
 import { inspectQuoteDevicesAgainstLibrary, normalizedLookupKey } from "./quoteImport.js";
 import { resolveProductBundle } from "./productBundleStore.js";
@@ -590,7 +594,13 @@ export function canonicalizeJetbuiltModel(
 function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
   const merged = new Map<string, ExtractedQuoteDevice>();
   for (const device of devices) {
-    const key = device.normalizedLookupKey || normalizeToken(device.sourceLineText || device.description || device.model) || `device-${merged.size + 1}`;
+    // Jetbuilt bundle children must remain tied to the procurement line that
+    // produced them. Merging by manufacturer/model here would collapse two
+    // rooms into one anonymous quantity and lose the parent traceability.
+    const key = device.importItemId
+      || device.normalizedLookupKey
+      || normalizeToken(device.sourceLineText || device.description || device.model)
+      || `device-${merged.size + 1}`;
     const existing = merged.get(key);
     if (!existing) {
       merged.set(key, { ...device });
@@ -613,6 +623,8 @@ function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
       componentQuantityPerBundle: existing.componentQuantityPerBundle ?? device.componentQuantityPerBundle,
       room: existing.room ?? device.room,
       system: existing.system ?? device.system,
+      importItemId: existing.importItemId ?? device.importItemId,
+      bundleGroupId: existing.bundleGroupId ?? device.bundleGroupId,
     });
   }
 
@@ -623,10 +635,63 @@ function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
   });
 }
 
-export function extractItemsToDevices(db: DatabaseSync, items: JetbuiltRawItem[]): ExtractedQuoteDevice[] {
-  return mergeDevices(
-    items
-      .flatMap((item): ExtractedQuoteDevice[] => {
+interface JetbuiltExtractionData {
+  devices: ExtractedQuoteDevice[];
+  bundleGroups: QuoteImportBundleGroup[];
+}
+
+function isLikelyCommercialBundleSku(rawModel: string): boolean {
+  return /^([A-Z]+[0-9]+[A-Z0-9]*)-(\d{3,})$/i.test(compact(rawModel));
+}
+
+function explicitSuggestedBundleModels(rawModel: string, text: string): string[] {
+  const source = compact(text);
+  if (!source) return [];
+  const normalizedRaw = normalizeToken(rawModel);
+  const tokens = source.match(/\b[A-Za-z]{1,10}\d+[A-Za-z0-9-]*\b/g) ?? [];
+  const unique = new Map<string, string>();
+  for (const token of tokens) {
+    const candidate = compact(token);
+    const normalized = normalizeToken(candidate);
+    if (!normalized || normalized === normalizedRaw) continue;
+    if (!source.toLowerCase().includes(candidate.toLowerCase())) continue;
+    unique.set(normalized, candidate);
+  }
+  return [...unique.values()];
+}
+
+function createBundleComponents(
+  group: Omit<QuoteImportBundleGroup, "components">,
+  components: ProductBundleComponent[],
+  origin: "known_catalogue" | "suggested" | "manual",
+): ExtractedQuoteDevice[] {
+  const bundleQuantity = group.quantity ?? 1;
+  return components
+    .filter((component) => component.schematicRelevant)
+    .map((component, index) => ({
+      manufacturer: compact(component.manufacturer) || group.manufacturer,
+      model: compact(component.model),
+      description: group.description,
+      quantity: bundleQuantity * Math.max(1, Math.round(Number(component.quantityPerBundle) || 1)),
+      sourceLineText: group.sourceLineText,
+      normalizedLookupKey: normalizedLookupKey(component.manufacturer || group.manufacturer, component.model),
+      commercialSku: group.commercialSku,
+      sourceKind: "bundle_component",
+      bundleOrigin: origin,
+      bundleId: group.bundleId,
+      bundleLabel: group.label,
+      bundleQuantity,
+      componentQuantityPerBundle: Math.max(1, Math.round(Number(component.quantityPerBundle) || 1)),
+      room: group.room,
+      system: group.system,
+      importItemId: `${group.id}:component:${index + 1}`,
+      bundleGroupId: group.id,
+    } satisfies ExtractedQuoteDevice));
+}
+
+export function extractJetbuiltImportData(db: DatabaseSync, items: JetbuiltRawItem[]): JetbuiltExtractionData {
+  const bundleGroups: QuoteImportBundleGroup[] = [];
+  const devices = items.flatMap((item, itemIndex): ExtractedQuoteDevice[] => {
         const manufacturer = compact(item.manufacturer_name ?? item.manufacturer) || null;
         const rawModel = compact(item.model ?? item.part_number ?? item.product_name);
         if (!rawModel) return [];
@@ -646,27 +711,64 @@ export function extractItemsToDevices(db: DatabaseSync, items: JetbuiltRawItem[]
           .filter(Boolean)
           .join(" ")
           .trim();
+        const groupId = `jetbuilt-bundle-${itemIndex + 1}`;
         if (bundle) {
-          const bundleQuantity = quantity ?? 1;
-          return bundle.components
-            .filter((component) => component.schematicRelevant)
-            .map((component) => ({
-              manufacturer: component.manufacturer,
-              model: component.model,
-              description,
-              quantity: bundleQuantity * component.quantityPerBundle,
-              sourceLineText: sourceLineText || null,
-              normalizedLookupKey: normalizedLookupKey(component.manufacturer, component.model),
-              commercialSku: rawModel,
-              sourceKind: "bundle_component",
-              bundleOrigin: "known_catalogue",
-              bundleId: bundle.id,
-              bundleLabel: bundle.label,
-              bundleQuantity,
-              componentQuantityPerBundle: component.quantityPerBundle,
-              room: room || null,
-              system: system || null,
-            } satisfies ExtractedQuoteDevice));
+          const group: QuoteImportBundleGroup = {
+            id: groupId,
+            manufacturer,
+            commercialSku: rawModel,
+            label: bundle.label,
+            description,
+            sourceLineText: sourceLineText || null,
+            quantity,
+            room: room || null,
+            system: system || null,
+            resolution: "known_catalogue",
+            accepted: true,
+            bundleId: bundle.id,
+            warnings: [],
+            components: [],
+          };
+          bundleGroups.push(group);
+          return createBundleComponents(group, bundle.components, "known_catalogue");
+        }
+
+        if (isLikelyCommercialBundleSku(rawModel)) {
+          const explicitModels = explicitSuggestedBundleModels(rawModel, [
+            item.short_description,
+            item.description,
+            item.product_name,
+          ].filter(Boolean).join(" "));
+          const suggestedComponents = explicitModels.length >= 2
+            ? explicitModels.map((model) => ({
+              manufacturer: manufacturer ?? "Unknown manufacturer",
+              model,
+              quantityPerBundle: 1,
+              schematicRelevant: true,
+            }))
+            : [];
+          const group: QuoteImportBundleGroup = {
+            id: groupId,
+            manufacturer,
+            commercialSku: rawModel,
+            label: `${manufacturer ? `${manufacturer} ` : ""}${rawModel} commercial bundle`,
+            description,
+            sourceLineText: sourceLineText || null,
+            quantity,
+            room: room || null,
+            system: system || null,
+            resolution: suggestedComponents.length > 0 ? "suggested" : "unresolved",
+            accepted: false,
+            bundleId: null,
+            warnings: suggestedComponents.length > 0
+              ? ["Suggested from models explicitly named in the Jetbuilt source text. Review before using these components."]
+              : ["Possible commercial bundle SKU. No component list was inferred because the source text did not explicitly name enough physical models."],
+            components: [],
+          };
+          bundleGroups.push(group);
+          return suggestedComponents.length > 0
+            ? createBundleComponents(group, suggestedComponents, "suggested")
+            : [];
         }
 
         if (!isSchematicRelevant(item)) return [];
@@ -693,9 +795,44 @@ export function extractItemsToDevices(db: DatabaseSync, items: JetbuiltRawItem[]
           componentQuantityPerBundle: null,
           room: room || null,
           system: system || null,
+          importItemId: `jetbuilt-line-${itemIndex + 1}`,
+          bundleGroupId: null,
         } satisfies ExtractedQuoteDevice];
-      })
-  );
+      });
+
+  return {
+    devices: mergeDevices(devices),
+    bundleGroups,
+  };
+}
+
+export function extractItemsToDevices(db: DatabaseSync, items: JetbuiltRawItem[]): ExtractedQuoteDevice[] {
+  return extractJetbuiltImportData(db, items).devices;
+}
+
+export function previewProductBundleComponents(
+  db: DatabaseSync,
+  request: ProductBundlePreviewRequest,
+): QuoteImportResultItem[] {
+  const group = request.group;
+  if (!group || !compact(group.id) || !compact(group.commercialSku)) {
+    throw new Error("Bundle procurement line is required");
+  }
+  const components = request.components
+    .map((component) => ({
+      manufacturer: compact(component.manufacturer) || group.manufacturer || "",
+      model: compact(component.model),
+      quantityPerBundle: Math.max(1, Math.round(Number(component.quantityPerBundle) || 1)),
+      schematicRelevant: component.schematicRelevant === true,
+    }))
+    .filter((component) => component.manufacturer && component.model && component.schematicRelevant);
+  if (components.length === 0) throw new Error("At least one schematic-facing bundle component is required");
+  const preparedGroup: Omit<QuoteImportBundleGroup, "components"> = {
+    ...group,
+    resolution: "manual",
+    accepted: true,
+  };
+  return inspectQuoteDevicesAgainstLibrary(db, createBundleComponents(preparedGroup, components, "manual"));
 }
 
 export async function importJetbuiltProject(
@@ -706,8 +843,13 @@ export async function importJetbuiltProject(
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
   const project = await requestJson<JetbuiltRawProject>(`${baseUrl}/projects/${encodeURIComponent(projectId)}`, options).catch(() => null);
   const items = await fetchPagedCollection(`${baseUrl}/projects/${encodeURIComponent(projectId)}/items`, options);
-  const devices = extractItemsToDevices(db, items as JetbuiltRawItem[]);
+  const extracted = extractJetbuiltImportData(db, items as JetbuiltRawItem[]);
+  const devices = extracted.devices;
   const results = inspectQuoteDevicesAgainstLibrary(db, devices);
+  const bundleGroups = extracted.bundleGroups.map((group) => ({
+    ...group,
+    components: results.filter((result) => result.bundleGroupId === group.id),
+  }));
   const summary = project ? toProjectSearchResult(project) : null;
 
   return {
@@ -717,6 +859,7 @@ export async function importJetbuiltProject(
     extractionModel: "jetbuilt-project-api",
     extractionReasoningEffort: "low",
     results,
+    bundleGroups,
     warnings: [
       "Imported directly from Jetbuilt project data without PDF scanning.",
       "Project/client search is powered by the cached Jetbuilt index and refreshes hourly.",

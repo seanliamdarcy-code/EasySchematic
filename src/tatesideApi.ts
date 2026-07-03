@@ -5,6 +5,8 @@ import type {
   JetbuiltIndexStatus,
   JetbuiltProjectSearchResult,
   ProductBundleDefinition,
+  ProductBundlePreviewRequest,
+  ProductBundlePreviewResponse,
   QuoteImportResearchJobResponse,
   QuoteImportExtractionResponse,
   QuoteImportResearchResponse,
@@ -372,6 +374,13 @@ export async function saveProductBundleDefinition(bundle: ProductBundleDefinitio
     body: bundle,
   });
   return response.bundle;
+}
+
+export async function previewProductBundleDefinition(request: ProductBundlePreviewRequest): Promise<ProductBundlePreviewResponse> {
+  return requestJson<ProductBundlePreviewResponse>("/product-bundles/preview", {
+    method: "POST",
+    body: request,
+  });
 }
 
 export async function resolveProductBundleDefinition(manufacturer: string, sku: string): Promise<ProductBundleDefinition | null> {

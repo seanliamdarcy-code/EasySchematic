@@ -20,6 +20,10 @@ export interface ExtractedQuoteDevice {
   componentQuantityPerBundle?: number | null;
   room?: string | null;
   system?: string | null;
+  /** Stable identity for a single procurement/import line. Never use this for template identity. */
+  importItemId?: string | null;
+  /** Links a schematic-facing child to its procurement bundle parent. */
+  bundleGroupId?: string | null;
 }
 
 export interface QuoteImportCandidateMatch {
@@ -38,6 +42,38 @@ export interface QuoteImportResultItem extends ExtractedQuoteDevice {
   portReuseCandidates: QuoteImportCandidateMatch[];
 }
 
+export type BundleResolutionState = "known_catalogue" | "suggested" | "unresolved" | "manual";
+
+/**
+ * A commercial/procurement parent from Jetbuilt. It is deliberately not a
+ * DeviceTemplate: only its child components are allowed into the library.
+ */
+export interface QuoteImportBundleGroup {
+  id: string;
+  manufacturer: string | null;
+  commercialSku: string;
+  label: string;
+  description: string | null;
+  sourceLineText: string | null;
+  quantity: number | null;
+  room: string | null;
+  system: string | null;
+  resolution: BundleResolutionState;
+  accepted: boolean;
+  bundleId: string | null;
+  warnings: string[];
+  components: QuoteImportResultItem[];
+}
+
+export interface ProductBundlePreviewRequest {
+  group: Omit<QuoteImportBundleGroup, "components">;
+  components: ProductBundleComponent[];
+}
+
+export interface ProductBundlePreviewResponse {
+  components: QuoteImportResultItem[];
+}
+
 export interface QuoteImportExtractionResponse {
   fileName: string;
   fileType: string;
@@ -45,6 +81,7 @@ export interface QuoteImportExtractionResponse {
   extractionModel: string;
   extractionReasoningEffort: QuoteImportReasoningEffort;
   results: QuoteImportResultItem[];
+  bundleGroups?: QuoteImportBundleGroup[];
   warnings: string[];
 }
 

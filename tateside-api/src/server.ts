@@ -4,7 +4,7 @@ import { URL } from "node:url";
 import { getConfig } from "./config.js";
 import { openDatabase, runMigrations } from "./db.js";
 import { bulkDeleteTemplates, bulkEditTemplates, deleteTemplate, listCurrentTemplates, saveTemplates, updateTemplate } from "./deviceStore.js";
-import type { ExtractedQuoteDevice, ProductBundleDefinition, QuoteImportResearchJobResponse, QuoteImportResearchResponse } from "../../src/quoteImportTypes.js";
+import type { ExtractedQuoteDevice, ProductBundleDefinition, ProductBundlePreviewRequest, QuoteImportResearchJobResponse, QuoteImportResearchResponse } from "../../src/quoteImportTypes.js";
 import { listProductBundles, resolveProductBundle, saveProductBundle } from "./productBundleStore.js";
 import {
   ensureJetbuiltIndexReady,
@@ -12,6 +12,7 @@ import {
   importJetbuiltProject,
   initializeJetbuiltIndex,
   listJetbuiltProjectsForClient,
+  previewProductBundleComponents,
   searchJetbuiltClients,
   searchJetbuiltProjects,
 } from "./jetbuilt.js";
@@ -357,6 +358,16 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     if (!body) throw new RequestError(400, "Bundle definition is required");
     const bundle = saveProductBundle(db, body);
     sendJson(ctx.res, 201, { bundle }, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "POST" && path === "/api/tateside/product-bundles/preview") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    const body = await readJson(ctx.req) as ProductBundlePreviewRequest | null;
+    if (!body) throw new RequestError(400, "Bundle preview request is required");
+    sendJson(ctx.res, 200, { components: previewProductBundleComponents(db, body) }, corsHeaders);
     return;
   }
 
