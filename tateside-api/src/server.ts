@@ -4,7 +4,8 @@ import { URL } from "node:url";
 import { getConfig } from "./config.js";
 import { openDatabase, runMigrations } from "./db.js";
 import { bulkDeleteTemplates, bulkEditTemplates, deleteTemplate, listCurrentTemplates, saveTemplates, updateTemplate } from "./deviceStore.js";
-import type { ExtractedQuoteDevice, QuoteImportResearchJobResponse, QuoteImportResearchResponse } from "../../src/quoteImportTypes.js";
+import type { ExtractedQuoteDevice, ProductBundleDefinition, QuoteImportResearchJobResponse, QuoteImportResearchResponse } from "../../src/quoteImportTypes.js";
+import { listProductBundles, resolveProductBundle, saveProductBundle } from "./productBundleStore.js";
 import {
   ensureJetbuiltIndexReady,
   getJetbuiltIndexStatus,
@@ -337,6 +338,35 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     const email = requireIdentity(ctx, config.requireAccessIdentity);
     if (email === undefined) return;
     sendJson(ctx.res, 200, listCurrentTemplates(db), corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/product-bundles") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    sendJson(ctx.res, 200, { bundles: listProductBundles(db) }, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "POST" && path === "/api/tateside/product-bundles") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    const body = await readJson(ctx.req) as ProductBundleDefinition | null;
+    if (!body) throw new RequestError(400, "Bundle definition is required");
+    const bundle = saveProductBundle(db, body);
+    sendJson(ctx.res, 201, { bundle }, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/product-bundles/resolve") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    const manufacturer = ctx.url.searchParams.get("manufacturer");
+    const sku = ctx.url.searchParams.get("sku");
+    sendJson(ctx.res, 200, { bundle: resolveProductBundle(db, manufacturer, sku) }, corsHeaders);
     return;
   }
 

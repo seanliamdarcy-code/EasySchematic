@@ -11,6 +11,15 @@ export interface ExtractedQuoteDevice {
   quantity: number | null;
   sourceLineText: string | null;
   normalizedLookupKey: string;
+  commercialSku?: string | null;
+  sourceKind?: "standalone" | "bundle_component";
+  bundleOrigin?: "known_catalogue" | "suggested" | "manual" | null;
+  bundleId?: string | null;
+  bundleLabel?: string | null;
+  bundleQuantity?: number | null;
+  componentQuantityPerBundle?: number | null;
+  room?: string | null;
+  system?: string | null;
 }
 
 export interface QuoteImportCandidateMatch {
@@ -37,6 +46,25 @@ export interface QuoteImportExtractionResponse {
   extractionReasoningEffort: QuoteImportReasoningEffort;
   results: QuoteImportResultItem[];
   warnings: string[];
+}
+
+export interface ProductBundleComponent {
+  manufacturer: string;
+  model: string;
+  quantityPerBundle: number;
+  schematicRelevant: boolean;
+}
+
+export interface ProductBundleDefinition {
+  id: string;
+  manufacturer: string;
+  sku: string;
+  label: string;
+  aliases?: string[];
+  source: "manual" | "ai_reviewed" | "manufacturer";
+  components: ProductBundleComponent[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface QuoteImportDraftValidation {

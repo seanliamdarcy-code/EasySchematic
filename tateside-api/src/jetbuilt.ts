@@ -9,6 +9,7 @@ import type {
   QuoteImportExtractionResponse,
 } from "../../src/quoteImportTypes.js";
 import { inspectQuoteDevicesAgainstLibrary, normalizedLookupKey } from "./quoteImport.js";
+import { resolveProductBundle } from "./productBundleStore.js";
 
 const DEFAULT_BASE_URL = "https://app.jetbuilt.com/api";
 const DEFAULT_HEADERS = {
@@ -58,7 +59,7 @@ interface JetbuiltRawClient {
   primary_contact_last_name?: unknown;
 }
 
-interface JetbuiltRawItem {
+export interface JetbuiltRawItem {
   manufacturer_name?: unknown;
   manufacturer?: unknown;
   model?: unknown;
@@ -603,6 +604,15 @@ function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
       quantity: existing.quantity == null && device.quantity == null ? null : (existing.quantity ?? 0) + (device.quantity ?? 0),
       sourceLineText: compact(existing.sourceLineText).length >= compact(device.sourceLineText).length ? existing.sourceLineText : device.sourceLineText,
       normalizedLookupKey: existing.normalizedLookupKey || device.normalizedLookupKey,
+      commercialSku: existing.commercialSku ?? device.commercialSku,
+      sourceKind: existing.sourceKind ?? device.sourceKind,
+      bundleOrigin: existing.bundleOrigin ?? device.bundleOrigin,
+      bundleId: existing.bundleId ?? device.bundleId,
+      bundleLabel: existing.bundleLabel ?? device.bundleLabel,
+      bundleQuantity: existing.bundleQuantity ?? device.bundleQuantity,
+      componentQuantityPerBundle: existing.componentQuantityPerBundle ?? device.componentQuantityPerBundle,
+      room: existing.room ?? device.room,
+      system: existing.system ?? device.system,
     });
   }
 
@@ -613,44 +623,78 @@ function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
   });
 }
 
-function extractItemsToDevices(items: JetbuiltRawItem[]): ExtractedQuoteDevice[] {
+export function extractItemsToDevices(db: DatabaseSync, items: JetbuiltRawItem[]): ExtractedQuoteDevice[] {
   return mergeDevices(
     items
-      .filter(isSchematicRelevant)
-      .map((item) => {
+      .flatMap((item): ExtractedQuoteDevice[] => {
         const manufacturer = compact(item.manufacturer_name ?? item.manufacturer) || null;
         const rawModel = compact(item.model ?? item.part_number ?? item.product_name);
-        if (!rawModel) return null;
-        const model = canonicalizeJetbuiltModel(rawModel, {
-          description: compact(item.description),
-          productName: compact(item.product_name),
-          shortDescription: compact(item.short_description),
-        });
+        if (!rawModel) return [];
         const description = compact(item.short_description ?? item.description ?? item.product_name) || null;
         const quantity = sanitizeQuantity(item.quantity);
         const room = compact(item.room_name ?? item.room);
         const system = compact(item.system_name ?? item.system);
+        const bundle = resolveProductBundle(db, manufacturer, rawModel);
         const sourceLineText = [
           manufacturer,
-          model,
+          rawModel,
           description,
-          rawModel !== model ? `Jetbuilt SKU: ${rawModel}` : "",
+          `Jetbuilt SKU: ${rawModel}`,
           room ? `Room: ${room}` : "",
           system ? `System: ${system}` : "",
         ]
           .filter(Boolean)
           .join(" ")
           .trim();
-        return {
+        if (bundle) {
+          const bundleQuantity = quantity ?? 1;
+          return bundle.components
+            .filter((component) => component.schematicRelevant)
+            .map((component) => ({
+              manufacturer: component.manufacturer,
+              model: component.model,
+              description,
+              quantity: bundleQuantity * component.quantityPerBundle,
+              sourceLineText: sourceLineText || null,
+              normalizedLookupKey: normalizedLookupKey(component.manufacturer, component.model),
+              commercialSku: rawModel,
+              sourceKind: "bundle_component",
+              bundleOrigin: "known_catalogue",
+              bundleId: bundle.id,
+              bundleLabel: bundle.label,
+              bundleQuantity,
+              componentQuantityPerBundle: component.quantityPerBundle,
+              room: room || null,
+              system: system || null,
+            } satisfies ExtractedQuoteDevice));
+        }
+
+        if (!isSchematicRelevant(item)) return [];
+
+        const model = canonicalizeJetbuiltModel(rawModel, {
+          description: compact(item.description),
+          productName: compact(item.product_name),
+          shortDescription: compact(item.short_description),
+        });
+
+        return [{
           manufacturer,
           model,
           description,
           quantity,
           sourceLineText: sourceLineText || null,
           normalizedLookupKey: normalizedLookupKey(manufacturer, model),
-        } satisfies ExtractedQuoteDevice;
+          commercialSku: rawModel,
+          sourceKind: "standalone",
+          bundleOrigin: null,
+          bundleId: null,
+          bundleLabel: null,
+          bundleQuantity: null,
+          componentQuantityPerBundle: null,
+          room: room || null,
+          system: system || null,
+        } satisfies ExtractedQuoteDevice];
       })
-      .filter((item): item is ExtractedQuoteDevice => item !== null),
   );
 }
 
@@ -662,7 +706,7 @@ export async function importJetbuiltProject(
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
   const project = await requestJson<JetbuiltRawProject>(`${baseUrl}/projects/${encodeURIComponent(projectId)}`, options).catch(() => null);
   const items = await fetchPagedCollection(`${baseUrl}/projects/${encodeURIComponent(projectId)}/items`, options);
-  const devices = extractItemsToDevices(items as JetbuiltRawItem[]);
+  const devices = extractItemsToDevices(db, items as JetbuiltRawItem[]);
   const results = inspectQuoteDevicesAgainstLibrary(db, devices);
   const summary = project ? toProjectSearchResult(project) : null;
 

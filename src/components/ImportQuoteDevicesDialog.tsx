@@ -581,14 +581,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
       const validation = validateTemplate(copiedTemplate);
       const draftKey = keyForExtractedDevice(item);
       const review: QuoteImportDraftReview = {
-        extractedDevice: {
-          manufacturer: item.manufacturer,
-          model: item.model,
-          description: item.description,
-          quantity: item.quantity,
-          sourceLineText: item.sourceLineText,
-          normalizedLookupKey: item.normalizedLookupKey,
-        },
+        extractedDevice: { ...item },
         template: copiedTemplate,
         metadata: null,
         draftSource: "library_port_copy",
@@ -1249,6 +1242,11 @@ function OutcomeReviewItemRow({ item }: { item: OutcomeReviewItem }) {
         {typeof device.quantity === "number" && (
           <span className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">Qty {device.quantity}</span>
         )}
+        {device.sourceKind === "bundle_component" && device.commercialSku && (
+          <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">
+            Bundle SKU {device.commercialSku}
+          </span>
+        )}
       </div>
       <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{detail}</div>
     </div>
@@ -1283,6 +1281,11 @@ function ExtractionRow({
                 Qty {item.quantity}
               </span>
             )}
+            {item.sourceKind === "bundle_component" && item.commercialSku && (
+              <span className="px-2 py-0.5 rounded-full border text-[10px] border-blue-200 bg-blue-50 text-blue-700">
+                Expanded from bundle SKU {item.commercialSku}
+              </span>
+            )}
             {selectedForResearch && (
               <span className="px-2 py-0.5 rounded-full border text-[10px] border-blue-200 bg-blue-50 text-blue-700">
                 Selected for paid AI research
@@ -1291,6 +1294,16 @@ function ExtractionRow({
           </div>
           <div className="text-[11px] text-[var(--color-text-muted)] space-y-0.5">
             {item.description && <div>{item.description}</div>}
+            {item.sourceKind === "bundle_component" && (
+              <div>
+                Bundle: {item.bundleLabel ?? item.commercialSku}
+                {typeof item.bundleQuantity === "number" ? ` · bundle qty ${item.bundleQuantity}` : ""}
+                {typeof item.componentQuantityPerBundle === "number" ? ` · component qty ${item.componentQuantityPerBundle}` : ""}
+              </div>
+            )}
+            {(item.room || item.system) && (
+              <div>{[item.room ? `Room: ${item.room}` : "", item.system ? `System: ${item.system}` : ""].filter(Boolean).join(" | ")}</div>
+            )}
             {item.sourceLineText && <div>Quote text: {item.sourceLineText}</div>}
             <div>Lookup key: <span className="font-mono">{item.normalizedLookupKey || "(none)"}</span></div>
           </div>
@@ -1364,6 +1377,9 @@ function PossibleMatchRow({
       </div>
       <div className="text-[11px] text-[var(--color-text-muted)] space-y-0.5">
         {item.description && <div>{item.description}</div>}
+        {item.sourceKind === "bundle_component" && item.commercialSku && (
+          <div>Expanded from bundle SKU {item.commercialSku}</div>
+        )}
         {item.sourceLineText && <div>Quote text: {item.sourceLineText}</div>}
       </div>
       <div className="mt-2 space-y-1">

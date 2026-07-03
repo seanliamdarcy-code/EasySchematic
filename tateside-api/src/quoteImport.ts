@@ -102,6 +102,15 @@ function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
           ? existing.sourceLineText
           : device.sourceLineText,
       normalizedLookupKey: existing.normalizedLookupKey || device.normalizedLookupKey,
+      commercialSku: existing.commercialSku ?? device.commercialSku,
+      sourceKind: existing.sourceKind ?? device.sourceKind,
+      bundleOrigin: existing.bundleOrigin ?? device.bundleOrigin,
+      bundleId: existing.bundleId ?? device.bundleId,
+      bundleLabel: existing.bundleLabel ?? device.bundleLabel,
+      bundleQuantity: existing.bundleQuantity ?? device.bundleQuantity,
+      componentQuantityPerBundle: existing.componentQuantityPerBundle ?? device.componentQuantityPerBundle,
+      room: existing.room ?? device.room,
+      system: existing.system ?? device.system,
     });
   }
 
@@ -156,6 +165,7 @@ function findPossibleMatches(device: ExtractedQuoteDevice, context: MatchContext
   const candidates = new Map<string, QuoteImportCandidateMatch>();
   const modelKey = normalizeToken(device.model);
   const manufacturerKey = normalizeToken(device.manufacturer);
+  const commercialSkuKey = device.sourceKind === "bundle_component" ? normalizeToken(device.commercialSku) : "";
 
   for (const template of context.byModel.get(modelKey) ?? []) {
     addCandidate(candidates, template, "Same model text as a library device");
@@ -167,6 +177,7 @@ function findPossibleMatches(device: ExtractedQuoteDevice, context: MatchContext
     const templateLabel = normalizeToken(template.label);
 
     if (manufacturerKey && templateMaker && manufacturerKey !== templateMaker) continue;
+    if (commercialSkuKey && templateModel === commercialSkuKey) continue;
 
     if (modelKey && templateModel && (templateModel.includes(modelKey) || modelKey.includes(templateModel))) {
       addCandidate(candidates, template, "Manufacturer matches and model text is very similar");
@@ -210,6 +221,8 @@ function portReuseScore(device: ExtractedQuoteDevice, template: DeviceTemplate):
 
   const deviceModel = normalizeToken(device.model);
   const templateModel = normalizeToken(template.modelNumber || template.label);
+  const commercialSkuKey = device.sourceKind === "bundle_component" ? normalizeToken(device.commercialSku) : "";
+  if (commercialSkuKey && templateModel === commercialSkuKey) return 0;
   const prefix = commonPrefixLength(deviceModel, templateModel);
   const deviceTokens = new Set([
     ...tokenizeText(device.model),
