@@ -73,7 +73,7 @@ export interface QuoteImportDraftReview {
   extractedDevice: ExtractedQuoteDevice;
   template: DeviceTemplate | null;
   metadata: AiDeviceGenerationMetadata | null;
-  draftSource: "ai_research" | "library_port_copy";
+  draftSource: "ai_research" | "library_port_copy" | "library_template_copy" | "manual_blank";
   validation: QuoteImportDraftValidation;
   reviewStatus: "draft_ready" | "manual_review_required";
   error: string | null;
