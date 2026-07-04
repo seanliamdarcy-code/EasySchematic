@@ -29,6 +29,7 @@ import {
   TatesideApiError,
 } from "../tatesideApi";
 import { validateTemplate } from "../import/validate";
+import { buildQuoteImportSchematic } from "../import/quoteSchematic";
 import ManageTatesideTemplateDialog from "./ManageTatesideTemplateDialog";
 
 interface Props {
@@ -62,6 +63,7 @@ const MAX_PAID_RESEARCH_SELECTION = 5;
 export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChanged }: Props) {
   const addToast = useSchematicStore((s) => s.addToast);
   const importCustomTemplates = useSchematicStore((s) => s.importCustomTemplates);
+  const newSchematic = useSchematicStore((s) => s.newSchematic);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -721,6 +723,22 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     }
   };
 
+  const handleStartSchematic = async () => {
+    if (!extraction || activeImportResults.length === 0) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const templatesById = await ensureLibraryTemplatesLoaded();
+      newSchematic(buildQuoteImportSchematic(importSourceLabel ?? extraction.fileName, activeImportResults, templatesById));
+      addToast(`Started schematic from ${activeImportResults.length} imported device${activeImportResults.length === 1 ? "" : "s"}`, "success");
+      reset();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start a schematic from this import");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -1197,6 +1215,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
               </>
             ) : (
               <>
+                <button
+                  onClick={() => void handleStartSchematic()}
+                  disabled={!extraction || activeImportResults.length === 0 || researching || saving}
+                  className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Start schematic
+                </button>
                 <button
                   onClick={() => setShowOutcomeReview(true)}
                   disabled={!extraction || researching || saving}
