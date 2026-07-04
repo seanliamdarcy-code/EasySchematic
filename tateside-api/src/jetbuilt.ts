@@ -114,6 +114,22 @@ function compact(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function compactJetbuiltLabel(value: unknown): string {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    return compact(
+      record.name
+        ?? record.room_name
+        ?? record.system_name
+        ?? record.label
+        ?? record.title
+        ?? record.description
+        ?? record.id,
+    );
+  }
+  return compact(value);
+}
+
 function normalizeText(value: unknown): string {
   return compact(value).toLowerCase();
 }
@@ -697,8 +713,8 @@ export function extractJetbuiltImportData(db: DatabaseSync, items: JetbuiltRawIt
         if (!rawModel) return [];
         const description = compact(item.short_description ?? item.description ?? item.product_name) || null;
         const quantity = sanitizeQuantity(item.quantity);
-        const room = compact(item.room_name ?? item.room);
-        const system = compact(item.system_name ?? item.system);
+        const room = compactJetbuiltLabel(item.room_name ?? item.room);
+        const system = compactJetbuiltLabel(item.system_name ?? item.system);
         const bundle = resolveProductBundle(db, manufacturer, rawModel);
         const sourceLineText = [
           manufacturer,

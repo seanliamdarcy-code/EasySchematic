@@ -78,6 +78,21 @@ describe("Jetbuilt bundle expansion", () => {
     expect(devices.every((device) => device.room === "Meeting Room 1" && device.system === "AV")).toBe(true);
   });
 
+  it("resolves Yealink A40-031 into schematic-facing A40 and CTP25 children", () => {
+    const db = createDb();
+    const devices = extractItemsToDevices(db, [{
+      manufacturer_name: "Yealink",
+      part_number: "A40-031",
+      short_description: "Yealink A40 A40-031 Meeting Bar and CTP25 tablet",
+      quantity: 1,
+      product_id: 1,
+    }]);
+
+    expect(devices.map((device) => device.model)).toEqual(["A40", "CTP25"]);
+    expect(devices.every((device) => device.sourceKind === "bundle_component")).toBe(true);
+    expect(devices.every((device) => device.commercialSku === "A40-031")).toBe(true);
+  });
+
   it("does not pass the commercial parent SKU into library matching", () => {
     const db = createDb();
     saveTemplates(db, {
@@ -233,12 +248,29 @@ describe("Jetbuilt bundle expansion", () => {
     expect(extracted.bundleGroups.map((group) => group.room)).toEqual(["Meeting Room 1", "Meeting Room 2"]);
   });
 
+  it("reads Jetbuilt object-shaped room and system labels", () => {
+    const db = createDb();
+    const extracted = extractJetbuiltImportData(db, [{
+      manufacturer_name: "Yealink",
+      part_number: "A50-031",
+      short_description: "Yealink A50 A50-031 Meeting Bar and CTP25 tablet",
+      quantity: 1,
+      room: { name: "Training Room" },
+      system: { name: "Video" },
+      product_id: 1,
+    }]);
+
+    expect(extracted.bundleGroups[0]?.room).toBe("Training Room");
+    expect(extracted.bundleGroups[0]?.system).toBe("Video");
+    expect(extracted.devices.every((device) => device.room === "Training Room" && device.system === "Video")).toBe(true);
+  });
+
   it("keeps an unknown likely commercial SKU in an explicit review state instead of canonicalizing it", () => {
     const db = createDb();
     const extracted = extractJetbuiltImportData(db, [{
       manufacturer_name: "Yealink",
-      part_number: "A40-031",
-      short_description: "Yealink A40-031 package",
+      part_number: "A30-031",
+      short_description: "Yealink A30-031 package",
       quantity: 1,
       product_id: 1,
     }]);
@@ -246,7 +278,7 @@ describe("Jetbuilt bundle expansion", () => {
     expect(extracted.devices).toHaveLength(0);
     expect(extracted.bundleGroups).toHaveLength(1);
     expect(extracted.bundleGroups[0]).toMatchObject({
-      commercialSku: "A40-031",
+      commercialSku: "A30-031",
       resolution: "unresolved",
       accepted: false,
     });
@@ -256,14 +288,14 @@ describe("Jetbuilt bundle expansion", () => {
     const db = createDb();
     const extracted = extractJetbuiltImportData(db, [{
       manufacturer_name: "Yealink",
-      part_number: "A40-031",
-      short_description: "Yealink A40 A40-031 Meeting Bar with CTP25 tablet",
+      part_number: "A30-031",
+      short_description: "Yealink A30 A30-031 Meeting Bar with CTP25 tablet",
       quantity: 1,
       product_id: 1,
     }]);
 
     expect(extracted.bundleGroups[0]).toMatchObject({ resolution: "suggested", accepted: false });
-    expect(extracted.devices.map((device) => device.model)).toEqual(["A40", "CTP25"]);
+    expect(extracted.devices.map((device) => device.model)).toEqual(["A30", "CTP25"]);
   });
 
   it("previews manually approved components through normal library matching without creating the bundle parent", () => {
