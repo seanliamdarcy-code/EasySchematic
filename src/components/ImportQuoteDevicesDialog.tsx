@@ -64,6 +64,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const addToast = useSchematicStore((s) => s.addToast);
   const importCustomTemplates = useSchematicStore((s) => s.importCustomTemplates);
   const newSchematic = useSchematicStore((s) => s.newSchematic);
+  const setSchematicName = useSchematicStore((s) => s.setSchematicName);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -725,11 +726,22 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
   const handleStartSchematic = async () => {
     if (!extraction || activeImportResults.length === 0) return;
+    if (unresolvedPossibleMatches.length > 0) {
+      setError("Review each possible match before starting a schematic.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       const templatesById = await ensureLibraryTemplatesLoaded();
-      newSchematic(buildQuoteImportSchematic(importSourceLabel ?? extraction.fileName, activeImportResults, templatesById));
+      const schematicName = importSourceLabel ?? extraction.fileName;
+      const schematicItems = activeImportResults.map((item) => {
+        const key = keyForExtractedDevice(item);
+        const selectedMatch = possibleMatchDecisions[key] === "use_library_match" ? item.possibleMatches[0] : null;
+        return selectedMatch ? { ...item, status: "already_in_library" as const, exactMatch: selectedMatch } : item;
+      });
+      newSchematic(buildQuoteImportSchematic(schematicName, schematicItems, templatesById));
+      setSchematicName(schematicName);
       addToast(`Started schematic from ${activeImportResults.length} imported device${activeImportResults.length === 1 ? "" : "s"}`, "success");
       reset();
     } catch (err) {
@@ -1217,7 +1229,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
               <>
                 <button
                   onClick={() => void handleStartSchematic()}
-                  disabled={!extraction || activeImportResults.length === 0 || researching || saving}
+                  disabled={!extraction || activeImportResults.length === 0 || unresolvedPossibleMatches.length > 0 || researching || saving}
                   className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   Start schematic
