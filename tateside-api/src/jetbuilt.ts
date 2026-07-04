@@ -594,11 +594,11 @@ export function canonicalizeJetbuiltModel(
 function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
   const merged = new Map<string, ExtractedQuoteDevice>();
   for (const device of devices) {
-    // Jetbuilt bundle children must remain tied to the procurement line that
-    // produced them. Merging by manufacturer/model here would collapse two
-    // rooms into one anonymous quantity and lose the parent traceability.
-    const key = device.importItemId
-      || device.normalizedLookupKey
+    // Bundle children must stay tied to their procurement parent. Standalone
+    // products still merge by model so repeated Jetbuilt rows combine quantity.
+    const key = device.sourceKind === "bundle_component" && device.importItemId
+      ? device.importItemId
+      : device.normalizedLookupKey
       || normalizeToken(device.sourceLineText || device.description || device.model)
       || `device-${merged.size + 1}`;
     const existing = merged.get(key);

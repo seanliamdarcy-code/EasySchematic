@@ -127,6 +127,31 @@ describe("Jetbuilt bundle expansion", () => {
     expect(devices[0]?.sourceKind).toBe("standalone");
   });
 
+  it("merges repeated standalone Jetbuilt products and combines quantity", () => {
+    const db = createDb();
+    const devices = extractItemsToDevices(db, [
+      {
+        manufacturer_name: "Yealink",
+        model: "A50",
+        short_description: "Yealink MeetingBar A50",
+        quantity: 1,
+        product_id: 1,
+      },
+      {
+        manufacturer_name: "Yealink",
+        model: "A50",
+        short_description: "Yealink MeetingBar A50",
+        quantity: 2,
+        product_id: 1,
+      },
+    ]);
+
+    expect(devices).toHaveLength(1);
+    expect(devices[0]?.model).toBe("A50");
+    expect(devices[0]?.quantity).toBe(3);
+    expect(devices[0]?.sourceKind).toBe("standalone");
+  });
+
   it("persists a saved bundle mapping and reuses it on the next import", () => {
     const db = createDb();
     saveProductBundle(db, {
