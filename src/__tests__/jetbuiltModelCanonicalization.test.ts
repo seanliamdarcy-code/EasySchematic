@@ -93,6 +93,34 @@ describe("Jetbuilt bundle expansion", () => {
     expect(devices.every((device) => device.commercialSku === "A40-031")).toBe(true);
   });
 
+  it("resolves Neat commercial bundles into bar and pad children", () => {
+    const db = createDb();
+    const devices = extractItemsToDevices(db, [
+      {
+        manufacturer_name: "Neat",
+        part_number: "NEATBAR2BUNUK",
+        short_description: "Neat Bar 2 with Neat Pad Controller",
+        quantity: 1,
+        product_id: 1,
+      },
+      {
+        manufacturer_name: "Neat",
+        part_number: "NEATBARPRO-PAD-BUNDLE",
+        short_description: "Neat Bar Pro Bundle With Neat Pad Controller",
+        quantity: 1,
+        product_id: 2,
+      },
+    ]);
+
+    expect(devices.map((device) => device.model)).toEqual([
+      "Neat Bar 2",
+      "Neat Bar Pro",
+      "Neat Pad",
+      "Neat Pad",
+    ]);
+    expect(devices.every((device) => device.sourceKind === "bundle_component")).toBe(true);
+  });
+
   it("does not pass the commercial parent SKU into library matching", () => {
     const db = createDb();
     saveTemplates(db, {
