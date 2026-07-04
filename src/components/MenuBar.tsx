@@ -597,7 +597,7 @@ export default function MenuBar() {
 
   const menus: Record<string, MenuEntry[]> = {
     File: [
-      { type: "item", label: "New Project", onClick: handleNew },
+      { type: "item", label: "New", onClick: handleNew },
       { type: "separator" },
       { type: "item", label: "Save", shortcut: "Ctrl+S", onClick: handleSave },
       { type: "item", label: "Save As...", shortcut: "Ctrl+Shift+S", onClick: handleSaveAs },
@@ -784,15 +784,6 @@ export default function MenuBar() {
             </span>
           </div>
           <div className="w-px h-5 bg-[var(--color-border)]" />
-          <button
-            onClick={handleNew}
-            title="Start a new project"
-            className="ml-1 flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 hover:text-blue-800 transition-colors cursor-pointer"
-          >
-            <span className="text-sm leading-none">+</span>
-            New Project
-          </button>
-          <div className="w-px h-5 bg-[var(--color-border)] mx-1" />
           {menuNames.map((name) => (
             <div key={name} className="relative">
               <button
