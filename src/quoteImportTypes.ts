@@ -35,6 +35,19 @@ export interface ExtractedQuoteDevice {
   sourceItemId?: string | null;
   sourceLineText: string | null;
   normalizedLookupKey: string;
+  commercialSku?: string | null;
+  sourceKind?: "standalone" | "bundle_component";
+  bundleOrigin?: "known_catalogue" | "suggested" | "manual" | null;
+  bundleId?: string | null;
+  bundleLabel?: string | null;
+  bundleQuantity?: number | null;
+  componentQuantityPerBundle?: number | null;
+  room?: string | null;
+  system?: string | null;
+  /** Stable identity for a single procurement/import line. Never use this for template identity. */
+  importItemId?: string | null;
+  /** Links a schematic-facing child to its procurement bundle parent. */
+  bundleGroupId?: string | null;
 }
 
 export interface QuoteImportCandidateMatch {
@@ -53,6 +66,38 @@ export interface QuoteImportResultItem extends ExtractedQuoteDevice {
   portReuseCandidates: QuoteImportCandidateMatch[];
 }
 
+export type BundleResolutionState = "known_catalogue" | "suggested" | "unresolved" | "manual";
+
+/**
+ * A commercial/procurement parent from Jetbuilt. It is deliberately not a
+ * DeviceTemplate: only its child components are allowed into the library.
+ */
+export interface QuoteImportBundleGroup {
+  id: string;
+  manufacturer: string | null;
+  commercialSku: string;
+  label: string;
+  description: string | null;
+  sourceLineText: string | null;
+  quantity: number | null;
+  room: string | null;
+  system: string | null;
+  resolution: BundleResolutionState;
+  accepted: boolean;
+  bundleId: string | null;
+  warnings: string[];
+  components: QuoteImportResultItem[];
+}
+
+export interface ProductBundlePreviewRequest {
+  group: Omit<QuoteImportBundleGroup, "components">;
+  components: ProductBundleComponent[];
+}
+
+export interface ProductBundlePreviewResponse {
+  components: QuoteImportResultItem[];
+}
+
 export interface QuoteImportExtractionResponse {
   fileName: string;
   fileType: string;
@@ -60,7 +105,27 @@ export interface QuoteImportExtractionResponse {
   extractionModel: string;
   extractionReasoningEffort: QuoteImportReasoningEffort;
   results: QuoteImportResultItem[];
+  bundleGroups?: QuoteImportBundleGroup[];
   warnings: string[];
+}
+
+export interface ProductBundleComponent {
+  manufacturer: string;
+  model: string;
+  quantityPerBundle: number;
+  schematicRelevant: boolean;
+}
+
+export interface ProductBundleDefinition {
+  id: string;
+  manufacturer: string;
+  sku: string;
+  label: string;
+  aliases?: string[];
+  source: "manual" | "ai_reviewed" | "manufacturer";
+  components: ProductBundleComponent[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface QuoteImportDraftValidation {

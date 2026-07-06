@@ -1,8 +1,14 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const localApiEnvPath = path.join(projectRoot, "tateside-api", ".env.local");
+if (existsSync(localApiEnvPath)) {
+  process.loadEnvFile(localApiEnvPath);
+}
+
 const npmCliPath = process.env.npm_execpath;
 const configuredApiTarget = process.env.TATESIDE_DEV_API_TARGET
   ? new URL(process.env.TATESIDE_DEV_API_TARGET)
