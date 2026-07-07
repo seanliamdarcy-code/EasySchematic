@@ -13,6 +13,19 @@ const speakerTemplate: DeviceTemplate = {
   ],
 };
 
+const bodypackTemplate: DeviceTemplate = {
+  id: "sennheiser-sl-bodypack",
+  deviceType: "wireless-transmitter",
+  label: "SL Bodypack DW Wireless Transmitter",
+  manufacturer: "Sennheiser",
+  modelNumber: "SL Bodypack DW",
+  searchTerms: ["Sennheiser", "SpeechLine", "SL Bodypack DW", "bodypack transmitter"],
+  ports: [
+    { id: "audio-in", label: "Analog Audio", signalType: "analog-audio", direction: "input" },
+    { id: "power-in", label: "Power", signalType: "power", direction: "input" },
+  ],
+};
+
 const displayTemplate: DeviceTemplate = {
   id: "display",
   deviceType: "display",
@@ -38,5 +51,13 @@ describe("scoreTemplate", () => {
 
   it("supports useful prefixes for real words", () => {
     expect(scoreTemplate(speakerTemplate, "speak")).toBeGreaterThan(0);
+  });
+
+  it("does not match bose against bodypack results", () => {
+    expect(scoreTemplate(bodypackTemplate, "bose")).toBe(0);
+  });
+
+  it("still matches bodypack for the shorter bo prefix", () => {
+    expect(scoreTemplate(bodypackTemplate, "bo")).toBeGreaterThan(0);
   });
 });

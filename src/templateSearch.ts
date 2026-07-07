@@ -59,6 +59,24 @@ export function scoreTemplate(template: DeviceTemplate, query: string): number {
     if (includesAtWordBoundary(label, phrase) || (shortName && includesAtWordBoundary(shortName, phrase))) return 220;
     if (searchTerms.some((t) => t === phrase || includesAtWordBoundary(t, phrase))) return 180;
     if (modelNumber === phrase || includesAtWordBoundary(modelNumber, phrase)) return 150;
+
+    // For single-word queries of 3+ letters, require an actual field hit on the full word.
+    // This prevents a shorter in-flight prefix such as "bo" from keeping "bodypack" results
+    // visible after the user has already typed "bose".
+    if (words.length === 1 && phrase.length >= 3) {
+      const fullWordMatches =
+        scoreTextField(label, phrase, { exact: 1, prefix: 1, contains: 1 }) > 0
+        || scoreTextField(shortName, phrase, { exact: 1, prefix: 1, contains: 1 }) > 0
+        || scoreTextField(deviceType, phrase, { exact: 1, prefix: 1 }) > 0
+        || searchTerms.some((t) => scoreTextField(t, phrase, { exact: 1, prefix: 1, contains: 1 }) > 0)
+        || scoreTextField(manufacturer, phrase, { exact: 1, prefix: 1, contains: 1 }) > 0
+        || scoreTextField(modelNumber, phrase, { exact: 1, prefix: 1, contains: 1 }) > 0
+        || signalLabels.some((s) => scoreTextField(s, phrase, { exact: 1, prefix: 1 }) > 0)
+        || signalTypes.some((s) => scoreTextField(s, phrase, { exact: 1, prefix: 1 }) > 0)
+        || portLabels.some((p) => scoreTextField(p, phrase, { exact: 1, prefix: 1 }) > 0);
+
+      if (!fullWordMatches) return 0;
+    }
   }
 
   // Score each word, then combine
