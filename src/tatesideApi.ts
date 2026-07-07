@@ -6,6 +6,9 @@ import type {
   JetbuiltIndexStatus,
   JetbuiltProjectSearchResult,
   JetbuiltSearchResponse,
+  ProductBundleDefinition,
+  ProductBundlePreviewRequest,
+  ProductBundlePreviewResponse,
   QuoteImportResearchJobResponse,
   QuoteImportExtractionResponse,
   QuoteImportResearchResponse,
@@ -354,6 +357,32 @@ export async function importDevicesFromJetbuiltProject(projectId: string): Promi
     method: "POST",
     body: { projectId },
   });
+}
+
+export async function listProductBundles(): Promise<ProductBundleDefinition[]> {
+  const response = await requestJson<{ bundles: ProductBundleDefinition[] }>("/product-bundles");
+  return response.bundles;
+}
+
+export async function saveProductBundleDefinition(bundle: ProductBundleDefinition): Promise<ProductBundleDefinition> {
+  const response = await requestJson<{ bundle: ProductBundleDefinition }>("/product-bundles", {
+    method: "POST",
+    body: bundle,
+  });
+  return response.bundle;
+}
+
+export async function previewProductBundleDefinition(request: ProductBundlePreviewRequest): Promise<ProductBundlePreviewResponse> {
+  return requestJson<ProductBundlePreviewResponse>("/product-bundles/preview", {
+    method: "POST",
+    body: request,
+  });
+}
+
+export async function resolveProductBundleDefinition(manufacturer: string, sku: string): Promise<ProductBundleDefinition | null> {
+  const query = new URLSearchParams({ manufacturer, sku });
+  const response = await requestJson<{ bundle: ProductBundleDefinition | null }>(`/product-bundles/resolve?${query.toString()}`);
+  return response.bundle;
 }
 
 export async function researchQuoteDevices(
