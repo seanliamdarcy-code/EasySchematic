@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scoreTemplate } from "../templateSearch";
+import { scoreDeviceLibraryTemplate, scoreTemplate } from "../templateSearch";
 import type { DeviceTemplate } from "../types";
 
 const speakerTemplate: DeviceTemplate = {
@@ -59,5 +59,13 @@ describe("scoreTemplate", () => {
 
   it("still matches bodypack for the shorter bo prefix", () => {
     expect(scoreTemplate(bodypackTemplate, "bo")).toBeGreaterThan(0);
+  });
+
+  it("keeps the device library stricter for bose vs bodypack", () => {
+    expect(scoreDeviceLibraryTemplate(bodypackTemplate, "bose")).toBe(0);
+  });
+
+  it("still lets the device library use exact curated aliases like screen", () => {
+    expect(scoreDeviceLibraryTemplate(displayTemplate, "screen")).toBeGreaterThan(0);
   });
 });
