@@ -91,6 +91,16 @@ function slug(value: string): string {
   return value
     .trim()
     .toLowerCase()
+    .replace(/\+/g, " plus ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function legacySlug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
@@ -100,6 +110,25 @@ function templateUniqueKey(template: Omit<DeviceTemplate, "id" | "version">): st
   const maker = template.manufacturer?.trim() || "generic";
   const model = template.modelNumber?.trim() || template.label;
   return [maker, model, template.deviceType].map(slug).filter(Boolean).join(":");
+}
+
+function legacyTemplateUniqueKey(template: Omit<DeviceTemplate, "id" | "version">): string {
+  const maker = template.manufacturer?.trim() || "generic";
+  const model = template.modelNumber?.trim() || template.label;
+  return [maker, model, template.deviceType].map(legacySlug).filter(Boolean).join(":");
+}
+
+function sameTemplateIdentity(
+  template: Omit<DeviceTemplate, "id" | "version">,
+  row: Pick<DeviceRow, "manufacturer" | "model_number" | "label" | "device_type">,
+): boolean {
+  const rowModel = row.model_number?.trim() || row.label.trim();
+  const templateModel = template.modelNumber?.trim() || template.label.trim();
+  return (
+    (template.manufacturer?.trim() || "generic").toLowerCase() === (row.manufacturer?.trim() || "generic").toLowerCase()
+    && templateModel.toLowerCase() === rowModel.toLowerCase()
+    && template.deviceType.trim().toLowerCase() === row.device_type.trim().toLowerCase()
+  );
 }
 
 function makeDeviceId(template: Omit<DeviceTemplate, "id" | "version">): string {
@@ -226,6 +255,14 @@ function getDeviceRowByUniqueKey(db: DatabaseSync, uniqueKey: string): DeviceRow
     .get(uniqueKey) as DeviceRow | undefined;
 }
 
+function getDeviceRowsByUniqueKeys(db: DatabaseSync, uniqueKeys: string[]): DeviceRow[] {
+  const keys = [...new Set(uniqueKeys.filter(Boolean))];
+  if (keys.length === 0) return [];
+  return keys
+    .map((key) => getDeviceRowByUniqueKey(db, key))
+    .filter((row): row is DeviceRow => Boolean(row));
+}
+
 function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -287,8 +324,10 @@ function saveNormalizedTemplate(
   },
 ): DeviceTemplate {
   const uniqueKey = templateUniqueKey(template);
+  const legacyUniqueKey = legacyTemplateUniqueKey(template);
   const existing = options.deviceId ? getActiveDeviceRow(db, options.deviceId) : undefined;
-  const matchingRow = getDeviceRowByUniqueKey(db, uniqueKey);
+  const matchingRows = getDeviceRowsByUniqueKeys(db, [uniqueKey, legacyUniqueKey]);
+  const matchingRow = matchingRows.find((row) => row.unique_key === uniqueKey || sameTemplateIdentity(template, row));
 
   if (options.deviceId && !existing) {
     throw new Error("Template not found");

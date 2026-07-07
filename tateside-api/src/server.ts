@@ -168,6 +168,10 @@ function readPositiveSafeInteger(value: string | null, label: string): number {
   return parsed;
 }
 
+function isClientErrorMessage(message: string): boolean {
+  return /\b(invalid|required|large|duplicates?|maximum|must be|not found|select at least|choose at least|matches a previously deleted)\b/i.test(message);
+}
+
 async function readJsonObject(req: http.IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): Promise<Record<string, unknown>> {
   const body = await readJson(req, maxBytes);
   if (!isObject(body)) {
@@ -1005,7 +1009,7 @@ const server = http.createServer((req, res) => {
       return;
     }
     const message = err instanceof Error ? err.message : "Internal server error";
-    const status = message.includes("invalid") || message.includes("required") || message.includes("large") ? 400 : 500;
+    const status = isClientErrorMessage(message) ? 400 : 500;
     sendJson(res, status, { error: status === 400 ? message : "Internal server error" }, corsHeaders);
   });
 });
