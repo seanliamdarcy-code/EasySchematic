@@ -38,7 +38,7 @@ function netgearSwitch(modelNumber: string): Omit<DeviceTemplate, "id" | "versio
       {
         id: "port-1",
         label: "1",
-        signalType: "network",
+        signalType: "ethernet",
         connectorType: "rj45",
         direction: "bidirectional",
       },
@@ -79,7 +79,7 @@ describe("device library storage", () => {
     expect(poePlus).toBeDefined();
 
     db.prepare("UPDATE devices SET unique_key = ? WHERE id = ?")
-      .run("netgear:m4250-10g2xf-poe:network-switch", poePlus!.id);
+      .run("netgear:m4250-10g2xf-poe:network-switch", poePlus!.id!);
 
     const [poePlusPlus] = saveTemplates(db, {
       templates: [netgearSwitch("M4250-10G2XF-PoE++")],
