@@ -4,7 +4,7 @@ import { bulkDeleteTatesideDeviceTemplates, bulkEditTatesideDeviceTemplates, typ
 import { SIGNAL_LABELS } from "../types";
 import type { DeviceTemplate, CustomTemplateGroup, OwnedGearFile, OwnedGearItem, SchematicNode, DeviceData } from "../types";
 import { useSchematicStore, CATEGORY_ORDER_DEFAULT } from "../store";
-import { scoreTemplate } from "../templateSearch";
+import { scoreDeviceLibraryTemplate, scoreTemplate } from "../templateSearch";
 import { inventoryKeyFromDeviceData, inventoryKeyFromTemplate } from "../inventoryKey";
 import { compareTemplatesByModel } from "../templateOrdering";
 import { activeCategories, useEffectiveTaxonomy } from "../effectiveTaxonomy";
@@ -1747,7 +1747,7 @@ export default function DeviceLibrary() {
   const filteredCustom = useMemo(() => {
     let result = customTemplates;
     if (selectedSignalTypes.size > 0) result = result.filter(matchesSignalFilter);
-    if (query) result = result.filter((t) => scoreTemplate(t, query) > 0);
+    if (query) result = result.filter((t) => scoreDeviceLibraryTemplate(t, query) > 0);
     return result;
   }, [customTemplates, query, selectedSignalTypes, matchesSignalFilter]);
 
@@ -1758,7 +1758,7 @@ export default function DeviceLibrary() {
     if (selectedSignalTypes.size > 0) all = all.filter(matchesSignalFilter);
     const scored = all
       .map((t) => {
-        let score = scoreTemplate(t, query);
+        let score = scoreDeviceLibraryTemplate(t, query);
         // Boost favorites to the top of results
         if (score > 0 && favoriteSet.has(t.id ?? t.deviceType)) score += 200;
         return { template: t, score };

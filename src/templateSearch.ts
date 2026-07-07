@@ -125,3 +125,41 @@ export function scoreTemplate(template: DeviceTemplate, query: string): number {
 
   return totalScore;
 }
+
+/**
+ * Device-library search should be stricter than import/mapping flows.
+ * For a single 3+ character word, don't surface a result purely because the
+ * query appears somewhere inside a longer hidden alias phrase.
+ */
+export function scoreDeviceLibraryTemplate(template: DeviceTemplate, query: string): number {
+  const words = queryWords(query);
+  if (words.length === 0) return 0;
+
+  const phrase = words.join(" ");
+  if (words.length === 1 && phrase.length >= 3) {
+    const label = normalizeText(template.label);
+    const shortName = normalizeText(template.shortName ?? "");
+    const manufacturer = normalizeText(template.manufacturer ?? "");
+    const modelNumber = normalizeText(template.modelNumber ?? "");
+    const deviceType = normalizeText(template.deviceType);
+    const searchTerms = template.searchTerms?.map(normalizeText) ?? [];
+    const signalLabels = [...new Set(template.ports.map((p) => normalizeText(SIGNAL_LABELS[p.signalType] ?? p.signalType)))];
+    const signalTypes = [...new Set(template.ports.map((p) => normalizeText(p.signalType)))];
+    const portLabels = template.ports.map((p) => normalizeText(p.label));
+
+    const visibleFieldMatch =
+      scoreTextField(label, phrase, { exact: 1, prefix: 1, contains: 1 }) > 0
+      || scoreTextField(shortName, phrase, { exact: 1, prefix: 1, contains: 1 }) > 0
+      || scoreTextField(manufacturer, phrase, { exact: 1, prefix: 1, contains: 1 }) > 0
+      || scoreTextField(modelNumber, phrase, { exact: 1, prefix: 1, contains: 1 }) > 0
+      || scoreTextField(deviceType, phrase, { exact: 1, prefix: 1 }) > 0
+      || signalLabels.some((value) => scoreTextField(value, phrase, { exact: 1, prefix: 1 }) > 0)
+      || signalTypes.some((value) => scoreTextField(value, phrase, { exact: 1, prefix: 1 }) > 0)
+      || portLabels.some((value) => scoreTextField(value, phrase, { exact: 1, prefix: 1 }) > 0);
+
+    const exactAliasMatch = searchTerms.some((value) => value === phrase);
+    if (!visibleFieldMatch && !exactAliasMatch) return 0;
+  }
+
+  return scoreTemplate(template, query);
+}
