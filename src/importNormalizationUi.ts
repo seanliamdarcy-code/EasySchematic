@@ -6,6 +6,15 @@ export interface ImportNormalizationUiMode {
   message: string | null;
 }
 
+export function getDefaultImportNormalizationScope(
+  manufacturer: string | undefined,
+  modelNumber: string | undefined,
+): "model" | "manufacturer" | "global" {
+  if (modelNumber) return "model";
+  if (manufacturer) return "manufacturer";
+  return "global";
+}
+
 export function getImportNormalizationUiMode(
   featureEnabled: boolean,
   error: unknown,

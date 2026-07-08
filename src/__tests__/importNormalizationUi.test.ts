@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { TatesideApiError } from "../tatesideApi";
-import { getImportNormalizationUiMode } from "../importNormalizationUi";
+import {
+  getDefaultImportNormalizationScope,
+  getImportNormalizationUiMode,
+} from "../importNormalizationUi";
 
 describe("getImportNormalizationUiMode", () => {
   it("falls back to legacy controls on exact feature-flag mismatch", () => {
@@ -17,5 +20,11 @@ describe("getImportNormalizationUiMode", () => {
       useLegacyFallback: false,
       message: "Network timeout",
     });
+  });
+
+  it("defaults model-scoped review choices to model before manufacturer", () => {
+    expect(getDefaultImportNormalizationScope("AIDA", "HD-NDI-200")).toBe("model");
+    expect(getDefaultImportNormalizationScope("AIDA", undefined)).toBe("manufacturer");
+    expect(getDefaultImportNormalizationScope(undefined, undefined)).toBe("global");
   });
 });

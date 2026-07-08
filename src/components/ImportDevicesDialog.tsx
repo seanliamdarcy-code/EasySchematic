@@ -11,7 +11,7 @@ import type {
   ImportNormalizationScope,
   ImportNormalizationUnresolved,
 } from "../importNormalization";
-import { getImportNormalizationUiMode } from "../importNormalizationUi";
+import { getDefaultImportNormalizationScope, getImportNormalizationUiMode } from "../importNormalizationUi";
 import {
   createImportNormalizationRule,
   resolveImportNormalizationRequest,
@@ -475,7 +475,7 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
       ...current,
       [key]: {
         canonicalValue: current[key]?.canonicalValue ?? "",
-        scope: current[key]?.scope ?? (item.modelNumber ? "manufacturer" : item.manufacturer ? "manufacturer" : "global"),
+        scope: current[key]?.scope ?? getDefaultImportNormalizationScope(item.manufacturer, item.modelNumber),
         ...patch,
       },
     }));
@@ -815,7 +815,10 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
                   <div className="mt-2 space-y-2">
                     {sharedUnresolvedValues.map((item) => {
                       const key = unresolvedKey(item);
-                      const choice = ruleChoices[key] ?? { canonicalValue: "", scope: item.manufacturer ? "manufacturer" : "global" };
+                      const choice = ruleChoices[key] ?? {
+                        canonicalValue: "",
+                        scope: getDefaultImportNormalizationScope(item.manufacturer, item.modelNumber),
+                      };
                       const connectorSuggestions = item.fieldKind === "connectorType" ? getConnectorTypeSuggestions(item.rawValue) : [];
                       const signalSuggestions = item.fieldKind === "signalType" ? getSignalTypeSuggestions(item.rawValue) : [];
                       return (
