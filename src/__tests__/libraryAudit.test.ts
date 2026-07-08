@@ -242,6 +242,7 @@ describe("auditLibraryTemplates", () => {
       manufacturer: "Bose Professional",
       currentValue: "euroblock",
       issueCount: 1,
+      sampleTemplates: [expect.objectContaining({ templateId: "bose", issueCount: 1 })],
     });
     expect(report.templateSummaries).toHaveLength(1);
     expect(report.templateSummaries[0]).toMatchObject({

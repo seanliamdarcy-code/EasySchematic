@@ -545,6 +545,7 @@ function makeIssueGroups(
     suggestedAction: string;
     issueCount: number;
     templateIds: Set<string>;
+    templateIssueCounts: Map<string, number>;
     portIds: Set<string>;
     manufacturers: Set<string>;
   }>();
@@ -565,11 +566,13 @@ function makeIssueGroups(
       suggestedAction: suggestedAction(issue),
       issueCount: 0,
       templateIds: new Set<string>(),
+      templateIssueCounts: new Map<string, number>(),
       portIds: new Set<string>(),
       manufacturers: new Set<string>(),
     };
     group.issueCount += 1;
     group.templateIds.add(issue.templateId);
+    group.templateIssueCounts.set(issue.templateId, (group.templateIssueCounts.get(issue.templateId) ?? 0) + 1);
     group.manufacturers.add(issue.manufacturer || "Unknown");
     if (issue.portId || issue.portIndex != null) {
       group.portIds.add(`${issue.templateId}:${issue.portId ?? issue.portIndex}`);
@@ -591,6 +594,7 @@ function makeIssueGroups(
       sampleTemplates: [...group.templateIds]
         .map((id) => templatesById.get(id))
         .filter((template): template is LibraryAuditAffectedTemplate => template != null)
+        .map((template) => ({ ...template, issueCount: group.templateIssueCounts.get(template.templateId) ?? 0 }))
         .slice(0, 5),
     }))
     .sort((a, b) => b.issueCount - a.issueCount || a.code.localeCompare(b.code));
