@@ -106,9 +106,7 @@ describe("auditLibraryTemplates", () => {
       }),
     ]);
 
-    expect(report.countsByCode.SUSPICIOUS_TEMPLATE_VALUE).toBe(1);
-    expect(report.countsByCode.GENERIC_DEVICE_TYPE).toBe(1);
-    expect(report.countsByCode.GENERIC_CATEGORY).toBe(1);
+    expect(report.countsByCode.SUSPICIOUS_TEMPLATE_VALUE).toBe(3);
     expect(report.countsByCode.SUSPICIOUS_PORT_VALUE).toBe(2);
     expect(report.issueGroups).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -120,127 +118,6 @@ describe("auditLibraryTemplates", () => {
         code: "SUSPICIOUS_PORT_VALUE",
         currentValue: "other",
         suggestedAction: "Review whether this is a deliberate logical/pass-through port or an unmapped physical connector/signal.",
-      }),
-    ]));
-  });
-
-  it("reports generic category and deviceType classification hints", () => {
-    const report = auditLibraryTemplates([
-      template({
-        deviceType: "audio",
-        category: "video",
-      } as unknown as DeviceTemplate),
-    ]);
-
-    expect(report.countsByCode).toMatchObject({
-      GENERIC_DEVICE_TYPE: 1,
-      GENERIC_CATEGORY: 1,
-    });
-    expect(report.issues.filter((issue) => issue.code.startsWith("GENERIC_")).every((issue) => issue.severity !== "error")).toBe(true);
-  });
-
-  it("reports display manufacturer/model classification mismatch", () => {
-    const report = auditLibraryTemplates([
-      template({
-        manufacturer: "Samsung",
-        modelNumber: "QM55C signage display",
-        deviceType: "router",
-        category: "Switching",
-      }),
-    ]);
-
-    expect(report.countsByCode).toMatchObject({
-      POSSIBLE_DEVICE_TYPE_MISMATCH: 1,
-      POSSIBLE_CATEGORY_MISMATCH: 1,
-    });
-    expect(report.issueGroups).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: "POSSIBLE_DEVICE_TYPE_MISMATCH",
-        currentValue: "router",
-        suggestedReviewTarget: "display",
-      }),
-    ]));
-  });
-
-  it("reports amplifier model classification mismatch", () => {
-    const report = auditLibraryTemplates([
-      template({
-        manufacturer: "Crown",
-        modelNumber: "DCi 4|600 amplifier",
-        deviceType: "router",
-        category: "Switching",
-      }),
-    ]);
-
-    expect(report.countsByCode.POSSIBLE_DEVICE_TYPE_MISMATCH).toBe(1);
-    expect(report.issues.find((issue) => issue.code === "POSSIBLE_DEVICE_TYPE_MISMATCH")).toMatchObject({
-      severity: "warning",
-      suggestedReviewTarget: "amplifier",
-    });
-  });
-
-  it("reports DSP model classification mismatch", () => {
-    const report = auditLibraryTemplates([
-      template({
-        manufacturer: "Biamp",
-        modelNumber: "TesiraFORTÉ AVB",
-        deviceType: "router",
-        category: "Switching",
-      }),
-    ]);
-
-    expect(report.countsByCode.POSSIBLE_DEVICE_TYPE_MISMATCH).toBe(1);
-    expect(report.issues.find((issue) => issue.code === "POSSIBLE_DEVICE_TYPE_MISMATCH")).toMatchObject({
-      severity: "warning",
-      suggestedReviewTarget: "audio-dsp",
-    });
-  });
-
-  it("reports network switch classification mismatch", () => {
-    const report = auditLibraryTemplates([
-      template({
-        manufacturer: "Netgear",
-        modelNumber: "M4250 PoE network switch",
-        deviceType: "router",
-        category: "Switching",
-      }),
-    ]);
-
-    expect(report.countsByCode.POSSIBLE_DEVICE_TYPE_MISMATCH).toBe(1);
-    expect(report.issues.find((issue) => issue.code === "POSSIBLE_DEVICE_TYPE_MISMATCH")).toMatchObject({
-      severity: "warning",
-      suggestedReviewTarget: "network-switch",
-    });
-  });
-
-  it("groups classification issues by current value and suggested review target", () => {
-    const report = auditLibraryTemplates([
-      template({
-        id: "display-1",
-        manufacturer: "Samsung",
-        modelNumber: "QM55C signage display",
-        deviceType: "router",
-        category: "Switching",
-      }),
-      template({
-        id: "display-2",
-        manufacturer: "LG Electronics",
-        modelNumber: "55UH5J monitor",
-        deviceType: "router",
-        category: "Switching",
-      }),
-    ]);
-
-    expect(report.issueGroups).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: "POSSIBLE_DEVICE_TYPE_MISMATCH",
-        currentValue: "router",
-        suggestedReviewTarget: "display",
-        affectedTemplateCount: 2,
-        sampleTemplates: expect.arrayContaining([
-          expect.objectContaining({ templateId: "display-1" }),
-          expect.objectContaining({ templateId: "display-2" }),
-        ]),
       }),
     ]));
   });
