@@ -87,8 +87,46 @@ export interface LibraryAuditCompleteness {
   templatesMissingDeviceType: number;
 }
 
+export interface LibraryAuditFiltersApplied {
+  code?: string;
+  severity?: string;
+  manufacturer?: string;
+  currentValue?: string;
+  templateId?: string;
+}
+
+export interface LibraryAuditScope {
+  templatesScanned: number;
+  issuesBeforeFilters: number;
+  issuesAfterFilters: number;
+  issueFiltersApplied: boolean;
+}
+
+export interface LibraryAuditDrilldownPort {
+  templateId: string;
+  manufacturer: string | null;
+  modelNumber: string | null;
+  templateLabel: string | null;
+  portLabel: string | null;
+  portIndex?: number;
+  portId?: string;
+  issueCount: number;
+  codes: Array<{ code: LibraryAuditIssueCode; count: number }>;
+  currentValues: Array<{ value: unknown; count: number }>;
+}
+
+export interface LibraryAuditDrilldown {
+  affectedTemplates: LibraryAuditAffectedTemplate[];
+  affectedPorts: LibraryAuditDrilldownPort[];
+  messages: Array<{ message: string; count: number }>;
+  currentValues: Array<{ value: unknown; count: number }>;
+  suggestedActions: Array<{ suggestedAction: string; count: number }>;
+}
+
 export interface LibraryAuditReport {
   headline: LibraryAuditHeadline;
+  filtersApplied: LibraryAuditFiltersApplied;
+  scope: LibraryAuditScope;
   totalTemplatesScanned: number;
   totalIssues: number;
   countsBySeverity: Record<LibraryAuditSeverity, number>;
@@ -98,13 +136,16 @@ export interface LibraryAuditReport {
   issueGroups: LibraryAuditIssueGroup[];
   templateSummaries: LibraryAuditTemplateSummary[];
   completeness: LibraryAuditCompleteness;
+  drilldown: LibraryAuditDrilldown;
   issues: LibraryAuditIssue[];
 }
 
 export interface LibraryAuditOptions {
   manufacturer?: string;
-  severity?: LibraryAuditSeverity;
-  code?: LibraryAuditIssueCode;
+  severity?: string;
+  code?: string;
+  currentValue?: string;
+  templateId?: string;
 }
 
 const DIRECTIONS = new Set(["input", "output", "bidirectional", "passthrough"]);
@@ -172,6 +213,25 @@ function sortedCounts<T extends string>(record: Partial<Record<T, number>>): Arr
   return Object.entries(record)
     .map(([key, count]) => ({ key: key as T, count: Number(count) }))
     .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+function filterValue(value: unknown): string {
+  return text(value);
+}
+
+function filtersFromOptions(options: LibraryAuditOptions): LibraryAuditFiltersApplied {
+  const filters: LibraryAuditFiltersApplied = {};
+  const code = filterValue(options.code);
+  const severity = filterValue(options.severity);
+  const manufacturer = filterValue(options.manufacturer);
+  const currentValue = filterValue(options.currentValue);
+  const templateIdFilter = filterValue(options.templateId);
+  if (code) filters.code = code;
+  if (severity) filters.severity = severity;
+  if (manufacturer) filters.manufacturer = manufacturer;
+  if (currentValue) filters.currentValue = currentValue;
+  if (templateIdFilter) filters.templateId = templateIdFilter;
+  return filters;
 }
 
 function suggestedAction(issue: Pick<LibraryAuditIssue, "code" | "currentValue" | "suggestion">): string {
@@ -588,7 +648,92 @@ function makeTemplateSummaries(
     .sort((a, b) => b.totalIssues - a.totalIssues || (a.label ?? "").localeCompare(b.label ?? ""));
 }
 
-function makeReport(templates: DeviceTemplate[], issues: LibraryAuditIssue[]): LibraryAuditReport {
+function makeDrilldown(
+  issues: LibraryAuditIssue[],
+  affectedTemplates: LibraryAuditAffectedTemplate[],
+  templatesById: Map<string, LibraryAuditAffectedTemplate>,
+): LibraryAuditDrilldown {
+  const portGroups = new Map<string, {
+    templateId: string;
+    portLabel: string | null;
+    portIndex?: number;
+    portId?: string;
+    issueCount: number;
+    codes: Partial<Record<LibraryAuditIssueCode, number>>;
+    values: Record<string, { value: unknown; count: number }>;
+  }>();
+  const messages: Record<string, number> = {};
+  const actions: Record<string, number> = {};
+  const values: Record<string, { value: unknown; count: number }> = {};
+
+  for (const issue of issues) {
+    messages[issue.message] = (messages[issue.message] ?? 0) + 1;
+    const action = suggestedAction(issue);
+    actions[action] = (actions[action] ?? 0) + 1;
+    if (issue.currentValue != null && issue.currentValue !== "") {
+      const key = valueKey(issue.currentValue);
+      values[key] = values[key] ?? { value: issue.currentValue, count: 0 };
+      values[key].count += 1;
+    }
+
+    if (issue.portId == null && issue.portIndex == null) continue;
+    const key = `${issue.templateId}:${issue.portId ?? issue.portIndex}`;
+    const group = portGroups.get(key) ?? {
+      templateId: issue.templateId,
+      portLabel: issue.portLabel ?? null,
+      portIndex: issue.portIndex,
+      portId: issue.portId,
+      issueCount: 0,
+      codes: {},
+      values: {},
+    };
+    group.issueCount += 1;
+    countValue(group.codes, issue.code);
+    if (issue.currentValue != null && issue.currentValue !== "") {
+      const value = valueKey(issue.currentValue);
+      group.values[value] = group.values[value] ?? { value: issue.currentValue, count: 0 };
+      group.values[value].count += 1;
+    }
+    portGroups.set(key, group);
+  }
+
+  return {
+    affectedTemplates,
+    affectedPorts: [...portGroups.values()]
+      .map((group) => {
+        const template = templatesById.get(group.templateId);
+        return {
+          templateId: group.templateId,
+          manufacturer: template?.manufacturer ?? null,
+          modelNumber: template?.modelNumber ?? null,
+          templateLabel: template?.label ?? null,
+          portLabel: group.portLabel,
+          portIndex: group.portIndex,
+          portId: group.portId,
+          issueCount: group.issueCount,
+          codes: sortedCounts(group.codes).map(({ key, count }) => ({ code: key, count })),
+          currentValues: Object.values(group.values)
+            .sort((a, b) => b.count - a.count || valueKey(a.value).localeCompare(valueKey(b.value))),
+        };
+      })
+      .sort((a, b) => b.issueCount - a.issueCount || (a.templateLabel ?? "").localeCompare(b.templateLabel ?? "")),
+    messages: Object.entries(messages)
+      .map(([message, count]) => ({ message, count }))
+      .sort((a, b) => b.count - a.count || a.message.localeCompare(b.message)),
+    currentValues: Object.values(values)
+      .sort((a, b) => b.count - a.count || valueKey(a.value).localeCompare(valueKey(b.value))),
+    suggestedActions: Object.entries(actions)
+      .map(([suggestedAction, count]) => ({ suggestedAction, count }))
+      .sort((a, b) => b.count - a.count || a.suggestedAction.localeCompare(b.suggestedAction)),
+  };
+}
+
+function makeReport(
+  templates: DeviceTemplate[],
+  issues: LibraryAuditIssue[],
+  filtersApplied: LibraryAuditFiltersApplied,
+  issuesBeforeFilters: number,
+): LibraryAuditReport {
   const countsBySeverity: Record<LibraryAuditSeverity, number> = { error: 0, warning: 0, info: 0 };
   const countsByCode: Partial<Record<LibraryAuditIssueCode, number>> = {};
   const countsByManufacturer: Record<string, number> = {};
@@ -619,6 +764,8 @@ function makeReport(templates: DeviceTemplate[], issues: LibraryAuditIssue[]): L
   const completeness = makeCompleteness(issues);
   const completenessIssueCount = issues.filter((issue) => COMPLETENESS_CODES.has(issue.code)).length;
   const actionableIssues = issues.filter((issue) => !HEADLINE_EXCLUDED_CODES.has(issue.code)).length;
+  const affectedTemplates = [...affected.values()];
+  const issueFiltersApplied = Object.keys(filtersApplied).length > 0;
 
   return {
     headline: {
@@ -630,37 +777,50 @@ function makeReport(templates: DeviceTemplate[], issues: LibraryAuditIssue[]): L
       infoCount: countsBySeverity.info,
       completenessIssueCount,
     },
+    filtersApplied,
+    scope: {
+      templatesScanned: templates.length,
+      issuesBeforeFilters,
+      issuesAfterFilters: issues.length,
+      issueFiltersApplied,
+    },
     totalTemplatesScanned: templates.length,
     totalIssues: issues.length,
     countsBySeverity,
     countsByCode,
     countsByManufacturer,
-    affectedTemplates: [...affected.values()],
+    affectedTemplates,
     issueGroups: makeIssueGroups(issues, templatesById),
     templateSummaries: makeTemplateSummaries(issues, templatesById),
     completeness,
+    drilldown: makeDrilldown(issues, affectedTemplates, templatesById),
     issues,
   };
 }
 
 export function auditLibraryTemplates(templates: DeviceTemplate[], options: LibraryAuditOptions = {}): LibraryAuditReport {
-  const manufacturerFilter = norm(options.manufacturer);
-  const scopedTemplates = manufacturerFilter
-    ? templates.filter((template) => norm(template.manufacturer) === manufacturerFilter)
-    : templates;
   const issues: LibraryAuditIssue[] = [];
 
-  scopedTemplates.forEach((template, index) => {
+  templates.forEach((template, index) => {
     auditTemplate(template, index, issues);
     auditPorts(template, index, issues);
   });
-  auditDuplicates(scopedTemplates, issues);
+  auditDuplicates(templates, issues);
 
+  const filtersApplied = filtersFromOptions(options);
+  const codeFilter = filtersApplied.code;
+  const severityFilter = filtersApplied.severity;
+  const manufacturerFilter = norm(filtersApplied.manufacturer);
+  const currentValueFilter = norm(filtersApplied.currentValue);
+  const templateIdFilter = norm(filtersApplied.templateId);
   const filteredIssues = issues.filter((issue) => {
-    if (options.severity && issue.severity !== options.severity) return false;
-    if (options.code && issue.code !== options.code) return false;
+    if (severityFilter && issue.severity !== severityFilter) return false;
+    if (codeFilter && issue.code !== codeFilter) return false;
+    if (manufacturerFilter && norm(issue.manufacturer) !== manufacturerFilter) return false;
+    if (currentValueFilter && norm(issue.currentValue) !== currentValueFilter) return false;
+    if (templateIdFilter && norm(issue.templateId) !== templateIdFilter) return false;
     return true;
   });
 
-  return makeReport(scopedTemplates, filteredIssues);
+  return makeReport(templates, filteredIssues, filtersApplied, issues.length);
 }

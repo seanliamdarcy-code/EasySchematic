@@ -199,4 +199,77 @@ describe("auditLibraryTemplates", () => {
       }),
     ]));
   });
+
+  it("filters issues and recomputes rollups for drilldown", () => {
+    const report = auditLibraryTemplates([
+      template({
+        id: "bose",
+        manufacturer: "Bose Professional",
+        modelNumber: "EX-1280",
+        ports: [
+          { id: "p1", label: "In 1", direction: "input", signalType: "analog-audio", connectorType: "euroblock" },
+          { id: "p2", label: "Logic", direction: "bidirectional", signalType: "custom", connectorType: "other" },
+        ],
+      } as unknown as DeviceTemplate),
+      template({
+        id: "biamp",
+        manufacturer: "Biamp",
+        modelNumber: "Tesira",
+        ports: [
+          { id: "p1", label: "In 1", direction: "input", signalType: "analog-audio", connectorType: "euroblock" },
+        ],
+      } as unknown as DeviceTemplate),
+    ], {
+      code: "INVALID_CONNECTOR_TYPE",
+      manufacturer: "Bose Professional",
+      currentValue: "euroblock",
+    });
+
+    expect(report.filtersApplied).toEqual({
+      code: "INVALID_CONNECTOR_TYPE",
+      manufacturer: "Bose Professional",
+      currentValue: "euroblock",
+    });
+    expect(report.scope).toMatchObject({
+      templatesScanned: 2,
+      issueFiltersApplied: true,
+      issuesAfterFilters: 1,
+    });
+    expect(report.headline.totalIssues).toBe(1);
+    expect(report.issueGroups).toHaveLength(1);
+    expect(report.issueGroups[0]).toMatchObject({
+      code: "INVALID_CONNECTOR_TYPE",
+      manufacturer: "Bose Professional",
+      currentValue: "euroblock",
+      issueCount: 1,
+    });
+    expect(report.templateSummaries).toHaveLength(1);
+    expect(report.templateSummaries[0]).toMatchObject({
+      templateId: "bose",
+      errorCount: 1,
+    });
+    expect(report.drilldown.affectedTemplates).toHaveLength(1);
+    expect(report.drilldown.affectedPorts).toEqual([
+      expect.objectContaining({
+        templateId: "bose",
+        portLabel: "In 1",
+        currentValues: [{ value: "euroblock", count: 1 }],
+      }),
+    ]);
+  });
+
+  it("handles unknown filter values safely", () => {
+    const report = auditLibraryTemplates([template()], {
+      code: "NOT_A_CODE",
+      severity: "bad-severity",
+      currentValue: "not-present",
+    });
+
+    expect(report.scope.issueFiltersApplied).toBe(true);
+    expect(report.totalIssues).toBe(0);
+    expect(report.issues).toEqual([]);
+    expect(report.issueGroups).toEqual([]);
+    expect(report.templateSummaries).toEqual([]);
+    expect(report.drilldown.affectedPorts).toEqual([]);
+  });
 });

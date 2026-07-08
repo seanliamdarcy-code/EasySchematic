@@ -568,6 +568,8 @@ test("library audit route returns a structured report and filters", async () => 
     assert.equal(report.countsByCode.INVALID_CONNECTOR_TYPE, 1);
     assert.ok(report.affectedTemplates.some((template) => template.manufacturer === "Unknown"));
     assert.ok(report.issues.every((issue) => issue.code && issue.severity && issue.templateId && issue.message && issue.suggestion));
+    assert.equal(report.scope.issueFiltersApplied, false);
+    assert.equal(report.drilldown.affectedPorts.length > 0, true);
 
     const filteredUrl = new URL("/api/tateside/library/audit", server.baseUrl);
     filteredUrl.searchParams.set("manufacturer", "Unknown");
@@ -581,9 +583,48 @@ test("library audit route returns a structured report and filters", async () => 
     });
     assert.equal(filteredResponse.status, 200);
     const filtered = await readJson(filteredResponse);
-    assert.equal(filtered.totalTemplatesScanned, 1);
+    assert.equal(filtered.totalTemplatesScanned, 2);
     assert.equal(filtered.totalIssues, 1);
     assert.equal(filtered.issues[0].code, "INVALID_PORT_DIRECTION");
+    assert.deepEqual(filtered.filtersApplied, {
+      code: "INVALID_PORT_DIRECTION",
+      severity: "error",
+      manufacturer: "Unknown",
+    });
+    assert.equal(filtered.scope.issuesAfterFilters, 1);
+    assert.equal(filtered.issueGroups.length, 1);
+    assert.equal(filtered.templateSummaries.length, 1);
+
+    const euroblockUrl = new URL("/api/tateside/library/audit", server.baseUrl);
+    euroblockUrl.searchParams.set("code", "INVALID_CONNECTOR_TYPE");
+    euroblockUrl.searchParams.set("manufacturer", "Unknown");
+    euroblockUrl.searchParams.set("currentValue", "euroblock");
+    const euroblockResponse = await fetch(euroblockUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(euroblockResponse.status, 200);
+    const euroblock = await readJson(euroblockResponse);
+    assert.equal(euroblock.totalIssues, 1);
+    assert.equal(euroblock.issueGroups[0].currentValue, "euroblock");
+    assert.equal(euroblock.drilldown.affectedPorts[0].portLabel, "Port");
+
+    const unknownFilterUrl = new URL("/api/tateside/library/audit", server.baseUrl);
+    unknownFilterUrl.searchParams.set("code", "NOT_A_CODE");
+    unknownFilterUrl.searchParams.set("severity", "bad-severity");
+    const unknownFilterResponse = await fetch(unknownFilterUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(unknownFilterResponse.status, 200);
+    const unknownFilter = await readJson(unknownFilterResponse);
+    assert.equal(unknownFilter.scope.issueFiltersApplied, true);
+    assert.equal(unknownFilter.totalIssues, 0);
+    assert.deepEqual(unknownFilter.issues, []);
   } finally {
     await server.stop();
   }

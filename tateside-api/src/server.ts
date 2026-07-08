@@ -4,7 +4,7 @@ import { URL } from "node:url";
 import { getConfig } from "./config.js";
 import { openDatabase, runMigrations } from "./db.js";
 import { bulkDeleteTemplates, bulkEditTemplates, deleteTemplate, listCurrentTemplates, saveTemplates, updateTemplate } from "./deviceStore.js";
-import { auditLibraryTemplates, type LibraryAuditIssueCode, type LibraryAuditSeverity } from "./libraryAudit.js";
+import { auditLibraryTemplates } from "./libraryAudit.js";
 import {
   createImportNormalizationRule,
   deleteImportNormalizationRule,
@@ -362,8 +362,10 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
 
     sendJson(ctx.res, 200, auditLibraryTemplates(listCurrentTemplates(db), {
       manufacturer: ctx.url.searchParams.get("manufacturer") ?? undefined,
-      severity: (ctx.url.searchParams.get("severity") ?? undefined) as LibraryAuditSeverity | undefined,
-      code: (ctx.url.searchParams.get("code") ?? undefined) as LibraryAuditIssueCode | undefined,
+      severity: ctx.url.searchParams.get("severity") ?? undefined,
+      code: ctx.url.searchParams.get("code") ?? undefined,
+      currentValue: ctx.url.searchParams.get("currentValue") ?? undefined,
+      templateId: ctx.url.searchParams.get("templateId") ?? undefined,
     }), corsHeaders);
     return;
   }
