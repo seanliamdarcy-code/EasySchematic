@@ -1,4 +1,5 @@
 import { CONNECTOR_LABELS, SIGNAL_LABELS, type DeviceTemplate, type Port } from "../../src/types.js";
+import { DEVICE_TYPE_TO_CATEGORY } from "../../src/deviceTypeCategories.js";
 
 export type LibraryAuditSeverity = "error" | "warning" | "info";
 
@@ -11,6 +12,13 @@ export type LibraryAuditIssueCode =
   | "DUPLICATE_MANUFACTURER_MODEL"
   | "MISSING_DIMENSIONS"
   | "SUSPICIOUS_TEMPLATE_VALUE"
+  | "SUSPICIOUS_DEVICE_TYPE"
+  | "SUSPICIOUS_CATEGORY"
+  | "GENERIC_DEVICE_TYPE"
+  | "GENERIC_CATEGORY"
+  | "POSSIBLE_DEVICE_TYPE_MISMATCH"
+  | "POSSIBLE_CATEGORY_MISMATCH"
+  | "LOW_CLASSIFICATION_CONFIDENCE"
   | "MISSING_PORT_LABEL"
   | "MISSING_PORT_DIRECTION"
   | "INVALID_PORT_DIRECTION"
@@ -31,6 +39,7 @@ export interface LibraryAuditIssue {
   portIndex?: number;
   portId?: string;
   currentValue?: unknown;
+  suggestedReviewTarget?: string;
   message: string;
   suggestion: string;
 }
@@ -58,6 +67,7 @@ export interface LibraryAuditIssueGroup {
   severity: LibraryAuditSeverity;
   manufacturer: string | null;
   currentValue: unknown;
+  suggestedReviewTarget?: string;
   suggestedAction: string;
   issueCount: number;
   affectedTemplateCount: number;
@@ -152,6 +162,7 @@ const DIRECTIONS = new Set(["input", "output", "bidirectional", "passthrough"]);
 const SIGNAL_TYPES = new Set(Object.keys(SIGNAL_LABELS));
 const CONNECTOR_TYPES = new Set(Object.keys(CONNECTOR_LABELS));
 const GENERIC_TEMPLATE_VALUES = new Set(["custom", "unknown", "other", "uncategorized"]);
+const GENERIC_CLASSIFICATION_VALUES = new Set(["custom", "unknown", "other", "uncategorized", "device", "generic", "audio", "video"]);
 const GENERIC_SIGNAL_VALUES = new Set(["custom", "unknown", "data", "digital-audio", "network", "other"]);
 const GENERIC_CONNECTOR_VALUES = new Set(["custom", "unknown", "data", "digital-audio", "network", "other"]);
 const COMPLETENESS_CODES = new Set<LibraryAuditIssueCode>([
@@ -162,6 +173,69 @@ const COMPLETENESS_CODES = new Set<LibraryAuditIssueCode>([
   "MISSING_MODEL",
 ]);
 const HEADLINE_EXCLUDED_CODES = new Set<LibraryAuditIssueCode>(["MISSING_DIMENSIONS"]);
+
+interface ClassificationFamily {
+  target: string;
+  category: string;
+  deviceTypes: string[];
+  weak?: RegExp;
+  strong: RegExp;
+}
+
+const CLASSIFICATION_FAMILIES: ClassificationFamily[] = [
+  {
+    target: "media-player",
+    category: "Sources",
+    deviceTypes: ["media-player", "computer", "streaming-encoder"],
+    strong: /\b(brightsign|roku|signage player|media player)\b/i,
+  },
+  {
+    target: "display",
+    category: "Displays",
+    deviceTypes: ["display", "monitor", "tv", "touch-screen"],
+    weak: /\b(samsung|lg electronics|hisense|iiyama|philips|sony|nec|panasonic)\b/i,
+    strong: /\b(display|digital signage|tv|monitor)\b/i,
+  },
+  {
+    target: "audio-dsp",
+    category: "Audio",
+    deviceTypes: ["audio-dsp", "audio-processor"],
+    strong: /\b(q[-\s]?sys core|tesira\w*|biamp forte|bose controlspace|symetrix prism|bss)\b/i,
+  },
+  {
+    target: "amplifier",
+    category: "Amplifiers",
+    deviceTypes: ["amplifier", "headphone-amplifier", "power-mixer"],
+    strong: /\b(powersoft|mezzo|unica|blaze powerzone|crown dci|crown cdi|amplifier|amp)\b/i,
+  },
+  {
+    target: "network-switch",
+    category: "Networking",
+    deviceTypes: ["network-switch", "network-router", "network-wifi", "access-point"],
+    strong: /\b(netgear m4250|network switch|poe switch|switch poe)\b/i,
+  },
+  {
+    target: "video-distribution",
+    category: "Distribution",
+    deviceTypes: ["da", "av-over-ip", "hdbaset-extender", "fiber-transmitter", "switcher", "router"],
+    weak: /\bblustream\b/i,
+    strong: /\b(matrix|hdbaset|av ?over ?ip|avoip|video (transmitter|receiver|extender)|(transmitter|receiver|extender).*(video|hdbaset|hdmi))\b/i,
+  },
+  {
+    target: "control",
+    category: "Control",
+    deviceTypes: ["control-processor", "controller", "button-panel", "touch-screen", "ptz-controller"],
+    weak: /\bcrestron\b/i,
+    strong: /\b(touch panel|controller|rmc|cp4|cp3|keypad|wall controller)\b/i,
+  },
+  {
+    target: "camera-or-microphone",
+    category: "Sources/Microphones",
+    deviceTypes: ["camera", "ptz-camera", "wired-mic", "wireless-mic-receiver"],
+    weak: /\b(aver|shure|sennheiser)\b/i,
+    strong: /\b(microphone|camera|ptz|ceiling mic)\b/i,
+  },
+];
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -177,6 +251,48 @@ function templateId(template: DeviceTemplate, index: number): string {
 
 function templateModel(template: DeviceTemplate): string {
   return text(template.modelNumber) || text((template as { model?: unknown }).model) || text(template.label);
+}
+
+function categoryForDeviceType(deviceType: string): string {
+  return DEVICE_TYPE_TO_CATEGORY[deviceType] ?? "";
+}
+
+function classificationText(template: DeviceTemplate): string {
+  return [
+    template.manufacturer,
+    template.modelNumber,
+    (template as { model?: unknown }).model,
+    (template as { name?: unknown }).name,
+    template.label,
+    ...(Array.isArray(template.searchTerms) ? template.searchTerms : []),
+  ].map(text).filter(Boolean).join(" ");
+}
+
+function isGenericClassification(value: unknown): boolean {
+  return GENERIC_CLASSIFICATION_VALUES.has(norm(value));
+}
+
+function isFamilyDeviceType(deviceType: string, family: ClassificationFamily): boolean {
+  const value = norm(deviceType);
+  return family.deviceTypes.some((type) => value === type || value.includes(type));
+}
+
+function isFamilyCategory(category: string, deviceType: string, family: ClassificationFamily): boolean {
+  const values = [category, categoryForDeviceType(deviceType)].map(norm).filter(Boolean);
+  return values.some((value) => family.category.split("/").some((part) => value === norm(part)));
+}
+
+function classificationFamily(template: DeviceTemplate): { family: ClassificationFamily; lowConfidence: boolean } | null {
+  const haystack = classificationText(template);
+  const deviceType = text(template.deviceType);
+  const category = text(template.category);
+  for (const family of CLASSIFICATION_FAMILIES) {
+    if (family.strong.test(haystack)) return { family, lowConfidence: false };
+    if (family.weak?.test(haystack) && (isGenericClassification(deviceType) || isGenericClassification(category))) {
+      return { family, lowConfidence: true };
+    }
+  }
+  return null;
 }
 
 function hasAnyDimension(template: DeviceTemplate): boolean {
@@ -290,13 +406,13 @@ function auditTemplate(template: DeviceTemplate, index: number, issues: LibraryA
       message: "Template is missing deviceType.",
       suggestion: "Set deviceType to the closest existing library device type.",
     });
-  } else if (GENERIC_TEMPLATE_VALUES.has(deviceType.toLowerCase())) {
+  } else if (isGenericClassification(deviceType)) {
     addIssue(issues, template, index, {
-      code: "SUSPICIOUS_TEMPLATE_VALUE",
+      code: "GENERIC_DEVICE_TYPE",
       severity: "info",
       currentValue: template.deviceType,
-      message: "Template deviceType is generic.",
-      suggestion: "Replace generic deviceType values with a more specific type.",
+      message: "Current deviceType is generic; review classification.",
+      suggestion: "Replace generic deviceType values with a more specific existing type when known.",
     });
   }
 
@@ -308,12 +424,12 @@ function auditTemplate(template: DeviceTemplate, index: number, issues: LibraryA
       message: "Template has an empty category field.",
       suggestion: "Set category or remove the empty field.",
     });
-  } else if (GENERIC_TEMPLATE_VALUES.has(norm(template.category))) {
+  } else if (isGenericClassification(template.category)) {
     addIssue(issues, template, index, {
-      code: "SUSPICIOUS_TEMPLATE_VALUE",
+      code: "GENERIC_CATEGORY",
       severity: "info",
       currentValue: template.category,
-      message: "Template category is generic.",
+      message: "Current category is generic; review classification.",
       suggestion: "Use a specific category from the existing library taxonomy.",
     });
   }
@@ -338,6 +454,70 @@ function auditTemplate(template: DeviceTemplate, index: number, issues: LibraryA
         suggestion: `Replace ${field} with a real value or leave it blank for manual review.`,
       });
     }
+  }
+
+  auditClassification(template, index, issues);
+}
+
+function auditClassification(template: DeviceTemplate, index: number, issues: LibraryAuditIssue[]): void {
+  const deviceType = text(template.deviceType);
+  const category = text(template.category);
+  const expectedCategory = categoryForDeviceType(deviceType);
+  if (deviceType && !isGenericClassification(deviceType) && !expectedCategory) {
+    addIssue(issues, template, index, {
+      code: "SUSPICIOUS_DEVICE_TYPE",
+      severity: "info",
+      currentValue: template.deviceType,
+      message: "Current deviceType is not in the known library taxonomy; review classification.",
+      suggestion: "Review deviceType against the existing canonical device type list.",
+    });
+  }
+  if (category && expectedCategory && norm(category) !== norm(expectedCategory) && !isGenericClassification(category)) {
+    addIssue(issues, template, index, {
+      code: "SUSPICIOUS_CATEGORY",
+      severity: "warning",
+      currentValue: template.category,
+      suggestedReviewTarget: expectedCategory,
+      message: "Current category does not match the canonical category for deviceType; review classification.",
+      suggestion: "Review category against the existing device type taxonomy.",
+    });
+  }
+
+  const match = classificationFamily(template);
+  if (!match) return;
+  const { family, lowConfidence } = match;
+
+  if (lowConfidence) {
+    addIssue(issues, template, index, {
+      code: "LOW_CLASSIFICATION_CONFIDENCE",
+      severity: "info",
+      currentValue: deviceType || category,
+      suggestedReviewTarget: family.target,
+      message: `Manufacturer/model has weak ${family.target} clues; review current classification.`,
+      suggestion: "Use this as a review hint only; leave unchanged unless confirmed.",
+    });
+    return;
+  }
+
+  if (deviceType && !isGenericClassification(deviceType) && !isFamilyDeviceType(deviceType, family)) {
+    addIssue(issues, template, index, {
+      code: "POSSIBLE_DEVICE_TYPE_MISMATCH",
+      severity: "warning",
+      currentValue: template.deviceType,
+      suggestedReviewTarget: family.target,
+      message: `Model/manufacturer pattern suggests ${family.target} family; current deviceType may need review.`,
+      suggestion: "Review current deviceType; do not change automatically.",
+    });
+  }
+  if (category && !isGenericClassification(category) && !isFamilyCategory(category, deviceType, family)) {
+    addIssue(issues, template, index, {
+      code: "POSSIBLE_CATEGORY_MISMATCH",
+      severity: "warning",
+      currentValue: template.category,
+      suggestedReviewTarget: family.category,
+      message: `Model/manufacturer pattern suggests ${family.category} category; current category may need review.`,
+      suggestion: "Review current category; do not change automatically.",
+    });
   }
 }
 
@@ -542,6 +722,7 @@ function makeIssueGroups(
     severity: LibraryAuditSeverity;
     manufacturer: string | null;
     currentValue: unknown;
+    suggestedReviewTarget?: string;
     suggestedAction: string;
     issueCount: number;
     templateIds: Set<string>;
@@ -551,18 +732,21 @@ function makeIssueGroups(
   }>();
 
   for (const issue of issues) {
+    const groupManufacturer = issue.suggestedReviewTarget ? null : issue.manufacturer;
     const key = [
       issue.code,
       issue.severity,
-      issue.manufacturer ?? "",
+      groupManufacturer ?? "",
       valueKey(issue.currentValue),
+      issue.suggestedReviewTarget ?? "",
       suggestedAction(issue),
     ].join("\0");
     const group = groups.get(key) ?? {
       code: issue.code,
       severity: issue.severity,
-      manufacturer: issue.manufacturer,
+      manufacturer: groupManufacturer,
       currentValue: issue.currentValue,
+      suggestedReviewTarget: issue.suggestedReviewTarget,
       suggestedAction: suggestedAction(issue),
       issueCount: 0,
       templateIds: new Set<string>(),
@@ -586,6 +770,7 @@ function makeIssueGroups(
       severity: group.severity,
       manufacturer: group.manufacturer,
       currentValue: group.currentValue,
+      suggestedReviewTarget: group.suggestedReviewTarget,
       suggestedAction: group.suggestedAction,
       issueCount: group.issueCount,
       affectedTemplateCount: group.templateIds.size,
