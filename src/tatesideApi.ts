@@ -1,5 +1,10 @@
 import type { DeviceTemplate, SchematicFile } from "./types";
 import type {
+  ImportNormalizationResolveRequest,
+  ImportNormalizationResolution,
+  ImportNormalizationRule,
+} from "./importNormalization";
+import type {
   ExtractedQuoteDevice,
   JetbuiltClientSearchResult,
   JetbuiltIndexStatus,
@@ -158,6 +163,47 @@ export async function saveTatesideDeviceTemplates(
       ...(options.note ? { note: options.note } : {}),
       ...(options.source ? { source: options.source } : {}),
     },
+  });
+}
+
+export async function listImportNormalizationRules(): Promise<ImportNormalizationRule[]> {
+  const response = await requestJson<{ rules: ImportNormalizationRule[] }>("/import-normalization-rules");
+  return response.rules;
+}
+
+export async function createImportNormalizationRule(
+  rule: Omit<ImportNormalizationRule, "id" | "normalizedRawValue" | "normalizedManufacturer" | "normalizedModelNumber" | "createdAt" | "createdByEmail" | "updatedAt" | "updatedByEmail" | "source">,
+): Promise<ImportNormalizationRule> {
+  const response = await requestJson<{ rule: ImportNormalizationRule }>("/import-normalization-rules", {
+    method: "POST",
+    body: rule,
+  });
+  return response.rule;
+}
+
+export async function updateImportNormalizationRule(
+  ruleId: string,
+  rule: Partial<Omit<ImportNormalizationRule, "id" | "normalizedRawValue" | "normalizedManufacturer" | "normalizedModelNumber" | "createdAt" | "createdByEmail" | "updatedAt" | "updatedByEmail" | "source">>,
+): Promise<ImportNormalizationRule> {
+  const response = await requestJson<{ rule: ImportNormalizationRule }>(`/import-normalization-rules/${encodeURIComponent(ruleId)}`, {
+    method: "PUT",
+    body: rule,
+  });
+  return response.rule;
+}
+
+export async function deleteImportNormalizationRule(ruleId: string): Promise<void> {
+  await requestJson(`/import-normalization-rules/${encodeURIComponent(ruleId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function resolveImportNormalizationRequest(
+  request: ImportNormalizationResolveRequest,
+): Promise<ImportNormalizationResolution> {
+  return requestJson<ImportNormalizationResolution>("/import-normalization-rules/resolve", {
+    method: "POST",
+    body: request,
   });
 }
 

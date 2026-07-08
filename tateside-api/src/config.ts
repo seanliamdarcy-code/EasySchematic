@@ -16,6 +16,7 @@ export interface ApiConfig {
   jetbuiltIndexPath: string;
   jetbuiltIndexRefreshMs: number;
   quoteResearchCachePath: string;
+  importNormalizationEnabled: boolean;
   sharePoint: SharePointConfig | null;
 }
 
@@ -167,6 +168,7 @@ export function getConfig(): ApiConfig {
       1,
     ),
     quoteResearchCachePath: process.env.OPENAI_QUOTE_RESEARCH_CACHE_PATH || path.join(dataDir, "quote-research-cache.json"),
+    importNormalizationEnabled: process.env.TATESIDE_IMPORT_NORMALIZATION_ENABLED === "1",
     sharePoint: getSharePointConfig(),
   };
 }

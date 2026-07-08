@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 const accessEmail = "route-test@example.com";
@@ -68,7 +69,7 @@ async function waitForHealth(baseUrl) {
   throw lastError instanceof Error ? lastError : new Error("Timed out waiting for TateSide API health check");
 }
 
-async function startServer() {
+async function startServer(envOverrides = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "tateside-api-routes-"));
   const port = await getAvailablePort();
   const child = spawn(
@@ -82,6 +83,7 @@ async function startServer() {
         TATESIDE_API_HOST: "127.0.0.1",
         TATESIDE_API_PORT: String(port),
         TATESIDE_REQUIRE_ACCESS_IDENTITY: "1",
+        ...envOverrides,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -109,6 +111,7 @@ async function startServer() {
 
   return {
     baseUrl: new URL(`http://127.0.0.1:${port}`),
+    dataDir: root,
     async stop() {
       child.kill("SIGTERM");
       await new Promise((resolve) => child.once("exit", resolve));
@@ -273,6 +276,217 @@ test("schematic routes cover create, save, versions, restore, and validation", a
     assert.equal(invalidSequenceResponse.status, 400);
     assert.deepEqual(await readJson(invalidSequenceResponse), {
       error: "sequence must be a positive safe integer",
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("import normalization routes resolve scoped rules only when staging flag is enabled", async () => {
+  const server = await startServer({
+    TATESIDE_IMPORT_NORMALIZATION_ENABLED: "1",
+  });
+
+  try {
+    const rulesUrl = new URL("/api/tateside/import-normalization-rules", server.baseUrl);
+    const createManufacturerRule = await fetch(rulesUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        fieldKind: "connectorType",
+        rawValue: "3.5mm",
+        manufacturer: "Bose Professional",
+        canonicalValue: "trs-eighth",
+        scope: "manufacturer",
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(createManufacturerRule.status, 201);
+
+    const createModelRule = await fetch(rulesUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        fieldKind: "signalType",
+        rawValue: "digital-video",
+        manufacturer: "AIDA",
+        modelNumber: "HD-NDI-200",
+        canonicalValue: "ndi",
+        scope: "model",
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(createModelRule.status, 201);
+
+    const createDeviceTypeRule = await fetch(rulesUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        fieldKind: "deviceType",
+        rawValue: "camera-head",
+        manufacturer: "AIDA",
+        canonicalValue: "camera",
+        scope: "manufacturer",
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(createDeviceTypeRule.status, 201);
+
+    const resolveUrl = new URL("/api/tateside/import-normalization-rules/resolve", server.baseUrl);
+    const resolveResponse = await fetch(resolveUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        templates: [
+          {
+            id: "import-1",
+            label: "Bose CSP-428",
+            manufacturer: "Bose Professional",
+            modelNumber: "CSP-428",
+            deviceType: "audio-dsp",
+            ports: [
+              { id: "p1", label: "AUX IN", signalType: "analog-audio", connectorType: "3.5mm", direction: "input" },
+            ],
+          },
+          {
+            id: "import-2",
+            label: "AIDA HD-NDI-200",
+            manufacturer: "AIDA",
+            modelNumber: "HD-NDI-200",
+            deviceType: "camera-head",
+            category: "Uncategorized",
+            ports: [
+              { id: "p1", label: "HDMI OUT", signalType: "digital-video", connectorType: "hdmi", direction: "output" },
+            ],
+          },
+          {
+            id: "import-3",
+            label: "Other Device",
+            manufacturer: "Other",
+            modelNumber: "X1",
+            deviceType: "camera",
+            ports: [
+              { id: "p1", label: "Out", signalType: "digital-video", connectorType: "3.5mm", direction: "output" },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(resolveResponse.status, 200);
+    const resolution = await readJson(resolveResponse);
+    assert.equal(resolution.templates[0].ports[0].connectorType, "trs-eighth");
+    assert.equal(resolution.templates[0].ports[0].importNormalization.rawConnectorType, "3.5mm");
+    assert.equal(resolution.templates[1].ports[0].signalType, "ndi");
+    assert.equal(resolution.templates[1].ports[0].importNormalization.rawSignalType, "digital-video");
+    assert.equal(resolution.templates[1].deviceType, "camera");
+    assert.equal(resolution.templates[1].importNormalization.rawDeviceType, "camera-head");
+    assert.equal(resolution.templates[2].ports[0].connectorType, "3.5mm");
+    assert.equal(resolution.templates[2].ports[0].signalType, "digital-video");
+    assert.deepEqual(
+      resolution.unresolved.map((item) => [item.fieldKind, item.rawValue, item.manufacturer ?? null]),
+      [
+        ["connectorType", "3.5mm", "Other"],
+        ["signalType", "digital-video", "Other"],
+      ],
+    );
+    assert.equal(resolution.templates[1].category, "Sources");
+  } finally {
+    await server.stop();
+  }
+});
+
+test("import normalization rule deletion keeps immutable audit history", async () => {
+  const server = await startServer({
+    TATESIDE_IMPORT_NORMALIZATION_ENABLED: "1",
+  });
+
+  try {
+    const rulesUrl = new URL("/api/tateside/import-normalization-rules", server.baseUrl);
+    const createResponse = await fetch(rulesUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        fieldKind: "connectorType",
+        rawValue: "Euroblock",
+        canonicalValue: "phoenix",
+        scope: "global",
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(createResponse.status, 201);
+    const created = await readJson(createResponse);
+
+    const deleteResponse = await fetch(
+      new URL(`/api/tateside/import-normalization-rules/${created.rule.id}`, server.baseUrl),
+      {
+        method: "DELETE",
+        headers: {
+          "Cf-Access-Authenticated-User-Email": accessEmail,
+        },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    assert.equal(deleteResponse.status, 204);
+
+    const listResponse = await fetch(rulesUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(listResponse.status, 200);
+    const listed = await readJson(listResponse);
+    assert.equal(listed.rules.some((rule) => rule.id === created.rule.id), false);
+
+    const db = new DatabaseSync(path.join(server.dataDir, "tateside.db"));
+    try {
+      const indexList = db.prepare(`
+        PRAGMA index_list('import_normalization_rule_audit_log')
+      `).all();
+      const auditIndex = indexList.find((index) => index.name === "idx_import_normalization_rule_audit_rule_id");
+      assert.ok(auditIndex, "expected idx_import_normalization_rule_audit_rule_id to exist");
+
+      const indexColumns = db.prepare(`
+        PRAGMA index_info('idx_import_normalization_rule_audit_rule_id')
+      `).all();
+      assert.deepEqual(
+        indexColumns.map((column) => column.name),
+        ["rule_id", "created_at"],
+      );
+
+      const auditRows = db.prepare(`
+        SELECT action, details_json
+        FROM import_normalization_rule_audit_log
+        WHERE rule_id = ?
+        ORDER BY created_at ASC
+      `).all(created.rule.id);
+      assert.equal(auditRows.length, 2);
+      assert.equal(auditRows.at(-1).action, "delete");
+      const details = JSON.parse(auditRows.at(-1).details_json);
+      assert.equal(details.deletedRule.id, created.rule.id);
+      assert.equal(details.deletedRule.canonicalValue, "phoenix");
+    } finally {
+      db.close();
+    }
+  } finally {
+    await server.stop();
+  }
+});
+
+test("import normalization routes stay hidden when the staging flag is off", async () => {
+  const server = await startServer();
+
+  try {
+    const response = await fetch(new URL("/api/tateside/import-normalization-rules", server.baseUrl), {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await readJson(response), {
+      error: "Import normalization is not enabled",
     });
   } finally {
     await server.stop();

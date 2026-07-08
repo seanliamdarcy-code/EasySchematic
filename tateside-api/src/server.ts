@@ -4,6 +4,13 @@ import { URL } from "node:url";
 import { getConfig } from "./config.js";
 import { openDatabase, runMigrations } from "./db.js";
 import { bulkDeleteTemplates, bulkEditTemplates, deleteTemplate, listCurrentTemplates, saveTemplates, updateTemplate } from "./deviceStore.js";
+import {
+  createImportNormalizationRule,
+  deleteImportNormalizationRule,
+  listImportNormalizationRules,
+  resolveImportNormalization,
+  updateImportNormalizationRule,
+} from "./importNormalizationStore.js";
 import type { ExtractedQuoteDevice, ProductBundleDefinition, ProductBundlePreviewRequest, QuoteImportResearchJobResponse, QuoteImportResearchResponse } from "../../src/quoteImportTypes.js";
 import { listProductBundles, resolveProductBundle, saveProductBundle } from "./productBundleStore.js";
 import {
@@ -340,6 +347,77 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     if (email === undefined) return;
     sendJson(ctx.res, 200, listCurrentTemplates(db), corsHeaders);
     return;
+  }
+
+  if (path.startsWith("/api/tateside/import-normalization-rules")) {
+    if (!config.importNormalizationEnabled) {
+      sendJson(ctx.res, 404, { error: "Import normalization is not enabled" }, corsHeaders);
+      return;
+    }
+
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/import-normalization-rules") {
+      sendJson(ctx.res, 200, { rules: listImportNormalizationRules(db) }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/import-normalization-rules") {
+      const body = await readJsonObject(ctx.req);
+      const rule = createImportNormalizationRule(db, {
+        fieldKind: body.fieldKind,
+        rawValue: body.rawValue,
+        manufacturer: body.manufacturer,
+        modelNumber: body.modelNumber,
+        canonicalValue: body.canonicalValue,
+        scope: body.scope,
+        trustLevel: body.trustLevel,
+        notes: body.notes,
+        actorEmail: email,
+        source: "manual",
+      });
+      sendJson(ctx.res, 201, { rule }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/import-normalization-rules/resolve") {
+      const body = await readJsonObject(ctx.req);
+      const resolution = resolveImportNormalization(db, {
+        templates: Array.isArray(body.templates) ? body.templates as never[] : [],
+        draftRules: Array.isArray(body.draftRules) ? body.draftRules as never[] : [],
+      });
+      sendJson(ctx.res, 200, resolution, corsHeaders);
+      return;
+    }
+
+    const ruleMatch = path.match(/^\/api\/tateside\/import-normalization-rules\/([^/]+)$/);
+    if (ruleMatch) {
+      const ruleId = decodeURIComponent(ruleMatch[1]);
+
+      if (ctx.req.method === "PUT") {
+        const body = await readJsonObject(ctx.req);
+        const rule = updateImportNormalizationRule(db, ruleId, {
+          fieldKind: body.fieldKind,
+          rawValue: body.rawValue,
+          manufacturer: body.manufacturer,
+          modelNumber: body.modelNumber,
+          canonicalValue: body.canonicalValue,
+          scope: body.scope,
+          trustLevel: body.trustLevel,
+          notes: body.notes,
+          actorEmail: email,
+        });
+        sendJson(ctx.res, 200, { rule }, corsHeaders);
+        return;
+      }
+
+      if (ctx.req.method === "DELETE") {
+        deleteImportNormalizationRule(db, ruleId, email);
+        sendEmpty(ctx.res, 204, corsHeaders);
+        return;
+      }
+    }
   }
 
   if (ctx.req.method === "GET" && path === "/api/tateside/product-bundles") {
