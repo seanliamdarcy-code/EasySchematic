@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSchematicStore } from "../store";
 import { CONNECTOR_LABELS, SIGNAL_LABELS, type ConnectorType, type DeviceTemplate, type SignalType } from "../types";
 import { DEVICE_TYPE_LABELS, DEVICE_TYPE_TO_CATEGORY } from "../deviceTypeCategories";
@@ -6,7 +6,18 @@ import { parseJsonImport } from "../import/parseJson";
 import { parseCsvImport } from "../import/parseCsv";
 import type { ParsedTemplate } from "../import/types";
 import { validateTemplate } from "../import/validate";
-import { saveTatesideDeviceTemplates } from "../tatesideApi";
+import type {
+  ImportNormalizationDraftRule,
+  ImportNormalizationScope,
+  ImportNormalizationUnresolved,
+} from "../importNormalization";
+import { getImportNormalizationUiMode } from "../importNormalizationUi";
+import {
+  createImportNormalizationRule,
+  resolveImportNormalizationRequest,
+  saveTatesideDeviceTemplates,
+  TatesideApiError,
+} from "../tatesideApi";
 
 type Tab = "json" | "csv";
 
@@ -21,6 +32,8 @@ const ALL_CONNECTOR_TYPES = (Object.keys(CONNECTOR_LABELS) as ConnectorType[]).s
 const ALL_DEVICE_TYPES = Object.keys(DEVICE_TYPE_TO_CATEGORY).sort((a, b) =>
   (DEVICE_TYPE_LABELS[a] ?? a).localeCompare(DEVICE_TYPE_LABELS[b] ?? b),
 );
+
+const NORMALIZATION_ENABLED = import.meta.env?.VITE_TATESIDE_IMPORT_NORMALIZATION_ENABLED === "1";
 
 function remapUnknownSignalTypes(raw: string, unknownSignalTypes: string[], replacement: SignalType): string | null {
   let parsed: unknown;
@@ -226,6 +239,60 @@ function getConnectorTypeSuggestions(unknownType: string): ConnectorType[] {
     .map((entry) => entry.candidate);
 }
 
+function scoreSignalTypeCandidate(candidate: SignalType, unknownType: string): number {
+  const candidateNorm = normalizeToken(candidate);
+  const unknownNorm = normalizeToken(unknownType);
+  const labelNorm = normalizeToken(SIGNAL_LABELS[candidate] ?? candidate);
+  const tokens = new Set(tokenize(unknownType));
+  let score = 0;
+
+  if (candidateNorm === unknownNorm || labelNorm === unknownNorm) score += 1000;
+  if (candidateNorm.includes(unknownNorm) || unknownNorm.includes(candidateNorm)) score += 300;
+  if (labelNorm.includes(unknownNorm) || unknownNorm.includes(labelNorm)) score += 240;
+
+  for (const token of tokens) {
+    if (candidateNorm.includes(token) || labelNorm.includes(token)) score += 60;
+  }
+
+  const lower = unknownType.toLowerCase();
+  if (/video/.test(lower)) {
+    if (candidate === "hdmi") score += 120;
+    if (candidate === "sdi") score += 110;
+    if (candidate === "displayport") score += 100;
+    if (candidate === "ndi") score += 90;
+    if (candidate === "hdbaset") score += 80;
+  }
+  if (/audio/.test(lower)) {
+    if (candidate === "analog-audio") score += 150;
+    if (candidate === "dante") score += 140;
+    if (candidate === "aes67") score += 120;
+    if (candidate === "speaker-level") score += 110;
+  }
+  if (/network|ethernet/.test(lower) && candidate === "ethernet") score += 180;
+  if (/dante/.test(lower) && candidate === "dante") score += 260;
+  if (/ndi/.test(lower) && candidate === "ndi") score += 260;
+  if (/hdmi/.test(lower) && candidate === "hdmi") score += 260;
+  if (/sdi/.test(lower) && candidate === "sdi") score += 260;
+
+  return score;
+}
+
+function getSignalTypeSuggestions(unknownType: string): SignalType[] {
+  return ALL_SIGNAL_TYPES
+    .map((candidate) => ({
+      candidate,
+      score: scoreSignalTypeCandidate(candidate, unknownType),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || SIGNAL_LABELS[a.candidate].localeCompare(SIGNAL_LABELS[b.candidate]))
+    .slice(0, 5)
+    .map((entry) => entry.candidate);
+}
+
+function unresolvedKey(item: ImportNormalizationUnresolved): string {
+  return [item.fieldKind, item.rawValue, item.manufacturer ?? "", item.modelNumber ?? ""].join("|");
+}
+
 function applyConnectorTypeRemaps(
   template: DeviceTemplate,
   connectorTypeReplacements: Record<string, ConnectorType>,
@@ -250,6 +317,13 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [connectorTypeReplacements, setConnectorTypeReplacements] = useState<Record<string, ConnectorType>>({});
   const [templateOverrides, setTemplateOverrides] = useState<Record<string, Partial<DeviceTemplate>>>({});
+  const [draftRules, setDraftRules] = useState<ImportNormalizationDraftRule[]>([]);
+  const [ruleChoices, setRuleChoices] = useState<Record<string, { canonicalValue: string; scope: ImportNormalizationScope }>>({});
+  const [normalizedTemplates, setNormalizedTemplates] = useState<DeviceTemplate[] | null>(null);
+  const [unresolvedValues, setUnresolvedValues] = useState<ImportNormalizationUnresolved[]>([]);
+  const [normalizationPending, setNormalizationPending] = useState(false);
+  const [normalizationMismatch, setNormalizationMismatch] = useState(false);
+  const [normalizationError, setNormalizationError] = useState<string | null>(null);
   const [savingShared, setSavingShared] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -259,18 +333,76 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
     return tab === "json" ? parseJsonImport(text) : parseCsvImport(text);
   }, [text, tab]);
 
+  const normalizationMode = useMemo(
+    () => getImportNormalizationUiMode(NORMALIZATION_ENABLED, normalizationMismatch ? new TatesideApiError("Import normalization is not enabled", 404) : normalizationError ? new Error(normalizationError) : null),
+    [normalizationError, normalizationMismatch],
+  );
+  const useSharedNormalization = normalizationMode.useSharedNormalization;
+  const useLegacyFallback = normalizationMode.useLegacyFallback;
+
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    if (!useSharedNormalization || !parsedResult) {
+      setNormalizedTemplates(null);
+      setUnresolvedValues([]);
+      setNormalizationPending(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setNormalizedTemplates(null);
+    setUnresolvedValues([]);
+    setNormalizationPending(true);
+    setNormalizationError(null);
+    timeoutId = window.setTimeout(() => {
+      void resolveImportNormalizationRequest({
+        templates: parsedResult.templates.map((pt) => pt.template),
+        draftRules,
+      }).then((resolution) => {
+        if (cancelled) return;
+        setNormalizationMismatch(false);
+        setNormalizedTemplates(resolution.templates);
+        setUnresolvedValues(resolution.unresolved);
+        setNormalizationPending(false);
+      }).catch((error) => {
+        if (cancelled) return;
+        const nextMode = getImportNormalizationUiMode(NORMALIZATION_ENABLED, error);
+        setNormalizationMismatch(!nextMode.useSharedNormalization && nextMode.useLegacyFallback);
+        setNormalizationError(nextMode.message);
+        setNormalizedTemplates(null);
+        setUnresolvedValues([]);
+        setNormalizationPending(false);
+      });
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
+  }, [draftRules, parsedResult, useSharedNormalization]);
+
   const result = useMemo(() => {
     if (!parsedResult) return null;
-    const templates = parsedResult.templates.map((pt) => {
+    const templates = parsedResult.templates.map((pt, index) => {
       const key = rowKey(pt);
       const override = templateOverrides[key] ?? {};
-      const templateWithConnectorFixes = applyConnectorTypeRemaps(pt.template, connectorTypeReplacements);
+      const baseTemplate = useSharedNormalization
+        ? (normalizedTemplates?.[index] ?? pt.template)
+        : pt.template;
+      const templateWithConnectorFixes = useSharedNormalization
+        ? baseTemplate
+        : applyConnectorTypeRemaps(baseTemplate, connectorTypeReplacements);
       const template = { ...templateWithConnectorFixes, ...override } as DeviceTemplate;
       const validation = validateTemplate(template);
       return { ...pt, template, validation };
     });
     return { ...parsedResult, templates };
-  }, [connectorTypeReplacements, parsedResult, templateOverrides]);
+  }, [connectorTypeReplacements, normalizedTemplates, parsedResult, templateOverrides, useSharedNormalization]);
+
+  const saveLockedByNormalization = useSharedNormalization && parsedResult != null && (normalizationPending || normalizedTemplates == null);
 
   const selectedTemplates = (result?.templates ?? []).filter(
     (pt) => !skipped.has(rowKey(pt)) && pt.validation.ok,
@@ -307,6 +439,10 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
     }
     return [...found].sort((a, b) => a.localeCompare(b));
   }, [result, tab]);
+  const sharedUnresolvedValues = useMemo(
+    () => unresolvedValues.filter((item) => item.fieldKind === "connectorType" || item.fieldKind === "signalType" || item.fieldKind === "deviceType"),
+    [unresolvedValues],
+  );
 
   const handleAddUnknownConnectorTypes = () => {
     if (unknownConnectorTypes.length === 0) return;
@@ -331,6 +467,76 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
       };
     });
     if (saveError) setSaveError(null);
+  };
+
+  const setRuleChoice = (item: ImportNormalizationUnresolved, patch: Partial<{ canonicalValue: string; scope: ImportNormalizationScope }>) => {
+    const key = unresolvedKey(item);
+    setRuleChoices((current) => ({
+      ...current,
+      [key]: {
+        canonicalValue: current[key]?.canonicalValue ?? "",
+        scope: current[key]?.scope ?? (item.modelNumber ? "manufacturer" : item.manufacturer ? "manufacturer" : "global"),
+        ...patch,
+      },
+    }));
+  };
+
+  const applyDraftRule = (item: ImportNormalizationUnresolved) => {
+    const key = unresolvedKey(item);
+    const choice = ruleChoices[key];
+    if (!choice?.canonicalValue) {
+      addToast("Choose a canonical value first", "error");
+      return;
+    }
+
+    const draftRule: ImportNormalizationDraftRule = {
+      fieldKind: item.fieldKind,
+      rawValue: item.rawValue,
+      manufacturer: item.manufacturer,
+      modelNumber: item.modelNumber,
+      canonicalValue: choice.canonicalValue,
+      scope: choice.scope,
+      trustLevel: "draft",
+    };
+
+    setDraftRules((current) => {
+      const next = current.filter((rule) => !(
+        rule.fieldKind === draftRule.fieldKind
+        && rule.rawValue === draftRule.rawValue
+        && (rule.manufacturer ?? "") === (draftRule.manufacturer ?? "")
+        && (rule.modelNumber ?? "") === (draftRule.modelNumber ?? "")
+      ));
+      return [...next, draftRule];
+    });
+    setSaveError(null);
+    addToast(`Applied ${item.rawValue} for this import`, "success");
+  };
+
+  const saveSharedRule = async (item: ImportNormalizationUnresolved) => {
+    const key = unresolvedKey(item);
+    const choice = ruleChoices[key];
+    if (!choice?.canonicalValue) {
+      addToast("Choose a canonical value first", "error");
+      return;
+    }
+
+    try {
+      await createImportNormalizationRule({
+        fieldKind: item.fieldKind,
+        rawValue: item.rawValue,
+        manufacturer: item.manufacturer,
+        modelNumber: item.modelNumber,
+        canonicalValue: choice.canonicalValue,
+        scope: choice.scope,
+        trustLevel: "reviewed",
+        notes: undefined,
+      });
+      applyDraftRule(item);
+      addToast(`Saved shared rule for ${item.rawValue}`, "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save normalization rule";
+      addToast(message, "error");
+    }
   };
 
   const applyTemplateOverride = (pt: ParsedTemplate, patch: Partial<DeviceTemplate>) => {
@@ -384,6 +590,12 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
     setSkipped(new Set());
     setConnectorTypeReplacements({});
     setTemplateOverrides({});
+    setDraftRules([]);
+    setRuleChoices({});
+    setNormalizedTemplates(null);
+    setUnresolvedValues([]);
+    setNormalizationMismatch(false);
+    setNormalizationError(null);
     setLibraryNote("");
     setSaveError(null);
     onClose();
@@ -402,6 +614,9 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
     setText(content);
     setConnectorTypeReplacements({});
     setTemplateOverrides({});
+    setDraftRules([]);
+    setRuleChoices({});
+    setNormalizationMismatch(false);
     setSkipped(new Set());
     setSaveError(null);
     e.target.value = "";
@@ -411,6 +626,9 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
     setText(tab === "json" ? SAMPLE_JSON : SAMPLE_CSV);
     setConnectorTypeReplacements({});
     setTemplateOverrides({});
+    setDraftRules([]);
+    setRuleChoices({});
+    setNormalizationMismatch(false);
     setSkipped(new Set());
     setSaveError(null);
   };
@@ -492,7 +710,20 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
           {(["json", "csv"] as const).map((t) => (
             <button
               key={t}
-              onClick={() => { setTab(t); setText(""); setSkipped(new Set()); setConnectorTypeReplacements({}); setTemplateOverrides({}); setSaveError(null); }}
+              onClick={() => {
+                setTab(t);
+                setText("");
+                setSkipped(new Set());
+                setConnectorTypeReplacements({});
+                setTemplateOverrides({});
+                setDraftRules([]);
+                setRuleChoices({});
+                setNormalizedTemplates(null);
+                setUnresolvedValues([]);
+                setNormalizationMismatch(false);
+                setNormalizationError(null);
+                setSaveError(null);
+              }}
               className={`px-4 py-2 text-xs cursor-pointer ${
                 tab === t
                   ? "border-b-2 border-blue-500 text-[var(--color-text-heading)] font-medium"
@@ -549,6 +780,21 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
             </div>
           )}
 
+          {useSharedNormalization && normalizationPending && (
+            <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800">
+              Resolving shared import vocabulary before validation…
+            </div>
+          )}
+
+          {NORMALIZATION_ENABLED && normalizationMode.message && (
+            <div className="rounded border border-red-200 bg-red-50 px-3 py-2">
+              <div className="text-xs font-semibold text-red-800 mb-1">
+                {normalizationMismatch ? "Shared normalization configuration mismatch" : "Shared normalization unavailable"}
+              </div>
+              <div className="text-[11px] text-red-700 whitespace-pre-wrap">{normalizationMode.message}</div>
+            </div>
+          )}
+
           {result && (
             <div>
               {result.fatalErrors.length > 0 && (
@@ -560,7 +806,104 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
                 </div>
               )}
 
-              {unknownConnectorTypes.length > 0 && (
+              {useSharedNormalization && sharedUnresolvedValues.length > 0 && (
+                <div className="mb-2 px-3 py-2 rounded bg-amber-50 border border-amber-200">
+                  <div className="text-xs font-semibold text-amber-900 mb-1">Shared import vocabulary review</div>
+                  <div className="text-[11px] text-amber-800">
+                    Resolve each unknown value once, then keep it local to this import or save it for staging users.
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {sharedUnresolvedValues.map((item) => {
+                      const key = unresolvedKey(item);
+                      const choice = ruleChoices[key] ?? { canonicalValue: "", scope: item.manufacturer ? "manufacturer" : "global" };
+                      const connectorSuggestions = item.fieldKind === "connectorType" ? getConnectorTypeSuggestions(item.rawValue) : [];
+                      const signalSuggestions = item.fieldKind === "signalType" ? getSignalTypeSuggestions(item.rawValue) : [];
+                      return (
+                        <div key={key} className="rounded border border-amber-200 bg-white px-2 py-2">
+                          <div className="text-[11px] font-medium text-amber-900">
+                            Unknown {item.fieldKind}: "{item.rawValue}"
+                          </div>
+                          <div className="mt-1 text-[10px] text-amber-700">
+                            Scope context: {item.manufacturer ?? "All manufacturers"}{item.modelNumber ? ` / ${item.modelNumber}` : ""}
+                          </div>
+                          <div className="mt-1 text-[10px] text-amber-700">
+                            Found in: {item.affectedPorts.slice(0, 3).map((port) => `${port.templateLabel}${port.portLabel ? `, ${port.portLabel}` : ""}`).join(" • ")}
+                            {item.affectedPorts.length > 3 ? ` • +${item.affectedPorts.length - 3} more` : ""}
+                          </div>
+                          {(connectorSuggestions.length > 0 || signalSuggestions.length > 0) && (
+                            <div className="mt-1 text-[10px] text-amber-700">
+                              Suggestions: {item.fieldKind === "connectorType"
+                                ? connectorSuggestions.slice(0, 3).map((type) => CONNECTOR_LABELS[type]).join(", ")
+                                : item.fieldKind === "signalType"
+                                  ? signalSuggestions.slice(0, 3).map((type) => SIGNAL_LABELS[type]).join(", ")
+                                  : "Use a known device type"}
+                            </div>
+                          )}
+                          <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_180px]">
+                            <select
+                              value={choice.canonicalValue}
+                              onChange={(e) => setRuleChoice(item, { canonicalValue: e.target.value })}
+                              className="w-full rounded border border-amber-200 bg-white px-2 py-1 text-[11px] text-[var(--color-text)] outline-none focus:border-amber-400"
+                            >
+                              <option value="">Choose a known value...</option>
+                              {item.fieldKind === "connectorType" && connectorSuggestions.length > 0 && (
+                                <optgroup label="Suggested matches">
+                                  {connectorSuggestions.map((type) => (
+                                    <option key={`${key}-${type}`} value={type}>{CONNECTOR_LABELS[type]}</option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              {item.fieldKind === "signalType" && signalSuggestions.length > 0 && (
+                                <optgroup label="Suggested matches">
+                                  {signalSuggestions.map((type) => (
+                                    <option key={`${key}-${type}`} value={type}>{SIGNAL_LABELS[type]}</option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              <optgroup label="All values">
+                                {item.fieldKind === "connectorType" && ALL_CONNECTOR_TYPES.map((type) => (
+                                  <option key={`all-${key}-${type}`} value={type}>{CONNECTOR_LABELS[type]}</option>
+                                ))}
+                                {item.fieldKind === "signalType" && ALL_SIGNAL_TYPES.map((type) => (
+                                  <option key={`all-${key}-${type}`} value={type}>{SIGNAL_LABELS[type]}</option>
+                                ))}
+                                {item.fieldKind === "deviceType" && ALL_DEVICE_TYPES.map((type) => (
+                                  <option key={`all-${key}-${type}`} value={type}>{DEVICE_TYPE_LABELS[type] ?? type}</option>
+                                ))}
+                              </optgroup>
+                            </select>
+                            <select
+                              value={choice.scope}
+                              onChange={(e) => setRuleChoice(item, { scope: e.target.value as ImportNormalizationScope })}
+                              className="w-full rounded border border-amber-200 bg-white px-2 py-1 text-[11px] text-[var(--color-text)] outline-none focus:border-amber-400"
+                            >
+                              {item.modelNumber && <option value="model">This model only</option>}
+                              {item.manufacturer && <option value="manufacturer">This manufacturer</option>}
+                              <option value="global">All manufacturers</option>
+                            </select>
+                          </div>
+                          <div className="mt-2 flex items-center gap-2">
+                            <button
+                              onClick={() => applyDraftRule(item)}
+                              className="px-2 py-1 rounded border border-amber-200 bg-white text-[11px] text-amber-900 hover:bg-amber-100 cursor-pointer"
+                            >
+                              This import only
+                            </button>
+                            <button
+                              onClick={() => void saveSharedRule(item)}
+                              className="px-2 py-1 rounded bg-amber-600 text-white text-[11px] hover:bg-amber-500 cursor-pointer"
+                            >
+                              Save shared rule
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {useLegacyFallback && unknownConnectorTypes.length > 0 && (
                 <div className="mb-2 px-3 py-2 rounded bg-amber-50 border border-amber-200">
                   <div className="text-xs font-semibold text-amber-900 mb-1">New connector type(s) found</div>
                   <div className="text-[11px] text-amber-800">
@@ -618,7 +961,7 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
                 </div>
               )}
 
-              {unknownSignalTypes.length > 0 && tab === "json" && (
+              {useLegacyFallback && unknownSignalTypes.length > 0 && tab === "json" && (
                 <div className="mb-2 px-3 py-2 rounded bg-sky-50 border border-sky-200">
                   <div className="text-xs font-semibold text-sky-900 mb-1">Unknown signal type(s) found</div>
                   <div className="text-[11px] text-sky-800">
@@ -702,7 +1045,7 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
           </button>
           <button
             onClick={handleAddLocalOnly}
-            disabled={selectedTemplates.length === 0 || savingShared}
+            disabled={selectedTemplates.length === 0 || savingShared || saveLockedByNormalization}
             className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-white text-xs hover:bg-[var(--color-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             title="Adds only to this browser's local custom device library"
           >
@@ -710,7 +1053,7 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
           </button>
           <button
             onClick={handleAddToTatesideLibrary}
-            disabled={selectedTemplates.length === 0 || savingShared}
+            disabled={selectedTemplates.length === 0 || savingShared || saveLockedByNormalization}
             className="px-4 py-1.5 rounded bg-blue-500 text-white text-xs hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             {savingShared ? "Saving..." : `Add ${selectedTemplates.length} to TateSide Library`}

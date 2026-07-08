@@ -1,4 +1,5 @@
 import type { Node, Edge } from "@xyflow/react";
+import type { ImportNormalizationMetadata } from "./importNormalization.js";
 
 export type ConnectorType =
   | "bnc" | "hdmi" | "displayport" | "vga"
@@ -187,6 +188,7 @@ export interface Port {
   linkSpeed?: string;
   /** Stable link back to the template port this was cloned from — used for template-sync reconciliation. */
   templatePortId?: string;
+  importNormalization?: ImportNormalizationMetadata;
 }
 
 export interface SlotDefinition {
@@ -534,6 +536,7 @@ export interface DeviceTemplate {
   rackForm?: "full" | "half" | "shelf-only"; // Optional override for the size-based rack-form heuristic
   auxiliaryData?: AuxRow[];      // Aux rows shown on the node (each row carries its own header/footer slot)
   facePlateLayout?: FacePlateLayout; // Custom face-plate connector positions
+  importNormalization?: ImportNormalizationMetadata;
   aiMetadata?: AiDeviceGenerationMetadata;
 }
 
