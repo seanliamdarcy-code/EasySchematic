@@ -15,6 +15,15 @@ export function getDefaultImportNormalizationScope(
   return "global";
 }
 
+export function isImportDevicesSaveLockedByNormalization(
+  useSharedNormalization: boolean,
+  hasParsedResult: boolean,
+  normalizationPending: boolean,
+  hasNormalizedTemplates: boolean,
+): boolean {
+  return useSharedNormalization && hasParsedResult && (normalizationPending || !hasNormalizedTemplates);
+}
+
 export function getImportNormalizationUiMode(
   featureEnabled: boolean,
   error: unknown,

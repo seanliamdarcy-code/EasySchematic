@@ -3,6 +3,7 @@ import { TatesideApiError } from "../tatesideApi";
 import {
   getDefaultImportNormalizationScope,
   getImportNormalizationUiMode,
+  isImportDevicesSaveLockedByNormalization,
 } from "../importNormalizationUi";
 
 describe("getImportNormalizationUiMode", () => {
@@ -26,5 +27,13 @@ describe("getImportNormalizationUiMode", () => {
     expect(getDefaultImportNormalizationScope("AIDA", "HD-NDI-200")).toBe("model");
     expect(getDefaultImportNormalizationScope("AIDA", undefined)).toBe("manufacturer");
     expect(getDefaultImportNormalizationScope(undefined, undefined)).toBe("global");
+  });
+
+  it("keeps save and import actions disabled while shared normalization is still resolving", () => {
+    expect(isImportDevicesSaveLockedByNormalization(true, true, true, false)).toBe(true);
+    expect(isImportDevicesSaveLockedByNormalization(true, true, false, false)).toBe(true);
+    expect(isImportDevicesSaveLockedByNormalization(true, true, false, true)).toBe(false);
+    expect(isImportDevicesSaveLockedByNormalization(false, true, true, false)).toBe(false);
+    expect(isImportDevicesSaveLockedByNormalization(true, false, true, false)).toBe(false);
   });
 });

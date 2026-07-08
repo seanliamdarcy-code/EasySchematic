@@ -376,7 +376,11 @@ test("import normalization routes resolve scoped rules only when staging flag is
     assert.equal(resolveResponse.status, 200);
     const resolution = await readJson(resolveResponse);
     assert.equal(resolution.templates[0].ports[0].connectorType, "trs-eighth");
+    assert.equal(resolution.templates[0].ports[0].importNormalization.rawConnectorType, "3.5mm");
     assert.equal(resolution.templates[1].ports[0].signalType, "ndi");
+    assert.equal(resolution.templates[1].ports[0].importNormalization.rawSignalType, "digital-video");
+    assert.equal(resolution.templates[1].deviceType, "camera");
+    assert.equal(resolution.templates[1].importNormalization.rawDeviceType, "camera-head");
     assert.equal(resolution.templates[2].ports[0].connectorType, "3.5mm");
     assert.equal(resolution.templates[2].ports[0].signalType, "digital-video");
     assert.deepEqual(

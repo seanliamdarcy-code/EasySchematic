@@ -11,7 +11,11 @@ import type {
   ImportNormalizationScope,
   ImportNormalizationUnresolved,
 } from "../importNormalization";
-import { getDefaultImportNormalizationScope, getImportNormalizationUiMode } from "../importNormalizationUi";
+import {
+  getDefaultImportNormalizationScope,
+  getImportNormalizationUiMode,
+  isImportDevicesSaveLockedByNormalization,
+} from "../importNormalizationUi";
 import {
   createImportNormalizationRule,
   resolveImportNormalizationRequest,
@@ -402,7 +406,12 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
     return { ...parsedResult, templates };
   }, [connectorTypeReplacements, normalizedTemplates, parsedResult, templateOverrides, useSharedNormalization]);
 
-  const saveLockedByNormalization = useSharedNormalization && parsedResult != null && (normalizationPending || normalizedTemplates == null);
+  const saveLockedByNormalization = isImportDevicesSaveLockedByNormalization(
+    useSharedNormalization,
+    parsedResult != null,
+    normalizationPending,
+    normalizedTemplates != null,
+  );
 
   const selectedTemplates = (result?.templates ?? []).filter(
     (pt) => !skipped.has(rowKey(pt)) && pt.validation.ok,
