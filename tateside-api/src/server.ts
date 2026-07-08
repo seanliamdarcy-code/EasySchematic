@@ -4,6 +4,7 @@ import { URL } from "node:url";
 import { getConfig } from "./config.js";
 import { openDatabase, runMigrations } from "./db.js";
 import { bulkDeleteTemplates, bulkEditTemplates, deleteTemplate, listCurrentTemplates, saveTemplates, updateTemplate } from "./deviceStore.js";
+import { auditLibraryTemplates } from "./libraryAudit.js";
 import {
   createImportNormalizationRule,
   deleteImportNormalizationRule,
@@ -346,6 +347,26 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     const email = requireIdentity(ctx, config.requireAccessIdentity);
     if (email === undefined) return;
     sendJson(ctx.res, 200, listCurrentTemplates(db), corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/library/audit") {
+    if (!config.libraryAuditEnabled) {
+      sendJson(ctx.res, 404, { error: "Library audit is not enabled" }, corsHeaders);
+      return;
+    }
+
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+
+    sendJson(ctx.res, 200, auditLibraryTemplates(listCurrentTemplates(db), {
+      manufacturer: ctx.url.searchParams.get("manufacturer") ?? undefined,
+      severity: ctx.url.searchParams.get("severity") ?? undefined,
+      code: ctx.url.searchParams.get("code") ?? undefined,
+      currentValue: ctx.url.searchParams.get("currentValue") ?? undefined,
+      templateId: ctx.url.searchParams.get("templateId") ?? undefined,
+    }), corsHeaders);
     return;
   }
 

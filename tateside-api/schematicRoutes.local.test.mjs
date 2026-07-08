@@ -492,3 +492,140 @@ test("import normalization routes stay hidden when the staging flag is off", asy
     await server.stop();
   }
 });
+
+test("library audit route stays hidden when the staging flag is off", async () => {
+  const server = await startServer();
+
+  try {
+    const response = await fetch(new URL("/api/tateside/library/audit", server.baseUrl), {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await readJson(response), {
+      error: "Library audit is not enabled",
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("library audit route returns a structured report and filters", async () => {
+  const server = await startServer({
+    TATESIDE_LIBRARY_AUDIT_ENABLED: "1",
+  });
+
+  try {
+    const templatesUrl = new URL("/api/tateside/devices/templates", server.baseUrl);
+    const saveResponse = await fetch(templatesUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        templates: [
+          {
+            label: "Mystery Switch",
+            manufacturer: "Unknown",
+            modelNumber: "",
+            deviceType: "other",
+            category: "",
+            ports: [
+              { id: "p1", label: "Port", direction: "sideways", signalType: "network", connectorType: "euroblock" },
+              { id: "p2", label: "Port", direction: "output", signalType: "custom", connectorType: "other" },
+            ],
+          },
+          {
+            label: "Clean Camera",
+            manufacturer: "AIDA",
+            modelNumber: "HD-NDI-200",
+            deviceType: "camera",
+            heightMm: 45,
+            ports: [
+              { id: "p1", label: "HDMI Out", direction: "output", signalType: "hdmi", connectorType: "hdmi" },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(saveResponse.status, 201);
+
+    const auditUrl = new URL("/api/tateside/library/audit", server.baseUrl);
+    const auditResponse = await fetch(auditUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(auditResponse.status, 200);
+    const report = await readJson(auditResponse);
+    assert.equal(report.totalTemplatesScanned, 2);
+    assert.ok(report.totalIssues > 0);
+    assert.equal(report.countsByCode.MISSING_MODEL, 1);
+    assert.equal(report.countsByCode.INVALID_PORT_DIRECTION, 1);
+    assert.equal(report.countsByCode.INVALID_SIGNAL_TYPE, 1);
+    assert.equal(report.countsByCode.INVALID_CONNECTOR_TYPE, 1);
+    assert.ok(report.affectedTemplates.some((template) => template.manufacturer === "Unknown"));
+    assert.ok(report.issues.every((issue) => issue.code && issue.severity && issue.templateId && issue.message && issue.suggestion));
+    assert.equal(report.scope.issueFiltersApplied, false);
+    assert.equal(report.drilldown.affectedPorts.length > 0, true);
+
+    const filteredUrl = new URL("/api/tateside/library/audit", server.baseUrl);
+    filteredUrl.searchParams.set("manufacturer", "Unknown");
+    filteredUrl.searchParams.set("severity", "error");
+    filteredUrl.searchParams.set("code", "INVALID_PORT_DIRECTION");
+    const filteredResponse = await fetch(filteredUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(filteredResponse.status, 200);
+    const filtered = await readJson(filteredResponse);
+    assert.equal(filtered.totalTemplatesScanned, 2);
+    assert.equal(filtered.totalIssues, 1);
+    assert.equal(filtered.issues[0].code, "INVALID_PORT_DIRECTION");
+    assert.deepEqual(filtered.filtersApplied, {
+      code: "INVALID_PORT_DIRECTION",
+      severity: "error",
+      manufacturer: "Unknown",
+    });
+    assert.equal(filtered.scope.issuesAfterFilters, 1);
+    assert.equal(filtered.issueGroups.length, 1);
+    assert.equal(filtered.templateSummaries.length, 1);
+
+    const euroblockUrl = new URL("/api/tateside/library/audit", server.baseUrl);
+    euroblockUrl.searchParams.set("code", "INVALID_CONNECTOR_TYPE");
+    euroblockUrl.searchParams.set("manufacturer", "Unknown");
+    euroblockUrl.searchParams.set("currentValue", "euroblock");
+    const euroblockResponse = await fetch(euroblockUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(euroblockResponse.status, 200);
+    const euroblock = await readJson(euroblockResponse);
+    assert.equal(euroblock.totalIssues, 1);
+    assert.equal(euroblock.issueGroups[0].currentValue, "euroblock");
+    assert.equal(euroblock.drilldown.affectedPorts[0].portLabel, "Port");
+
+    const unknownFilterUrl = new URL("/api/tateside/library/audit", server.baseUrl);
+    unknownFilterUrl.searchParams.set("code", "NOT_A_CODE");
+    unknownFilterUrl.searchParams.set("severity", "bad-severity");
+    const unknownFilterResponse = await fetch(unknownFilterUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(unknownFilterResponse.status, 200);
+    const unknownFilter = await readJson(unknownFilterResponse);
+    assert.equal(unknownFilter.scope.issueFiltersApplied, true);
+    assert.equal(unknownFilter.totalIssues, 0);
+    assert.deepEqual(unknownFilter.issues, []);
+  } finally {
+    await server.stop();
+  }
+});
