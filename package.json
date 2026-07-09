@@ -45,6 +45,7 @@
     "tateside:api:test:routes": "npm run tateside:api:build && node --test tateside-api/schematicRoutes.local.test.mjs",
     "tateside:api:test:storage": "npm run tateside:api:build && node --test tateside-api/schematicStore.local.test.mjs",
     "tateside:api:serve": "node dist-tateside-api/tateside-api/src/server.js",
+    "tateside:mcp:library": "node dist-tateside-api/tateside-api/src/mcpServer.js",
     "tateside:api:watch": "tsc -p tateside-api/tsconfig.json --watch --preserveWatchOutput",
     "tateside:api:watch:serve": "node --watch --watch-preserve-output dist-tateside-api/tateside-api/src/server.js",
     "tateside:api:smoke": "node tateside-api/smoke.mjs",
@@ -57,6 +58,7 @@
     "serialize-javascript": "^7.0.5"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@xyflow/react": "12.10.1",
     "html-to-image": "^1.11.13",
     "jspdf": "^4.2.0",
