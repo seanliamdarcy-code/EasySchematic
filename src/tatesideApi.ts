@@ -478,3 +478,221 @@ export async function researchQuoteDevices(
 
   throw new TatesideApiError(jobResponse.error || "Missing-device research failed", 500);
 }
+
+// ─── Library Doctor review queue (read/review only — no apply path) ───────────
+
+export type LibraryDoctorProposalStatus =
+  | "pending"
+  | "accepted"
+  | "rejected"
+  | "needs-manual-review"
+  | "superseded";
+
+export type LibraryDoctorConfidence = "low" | "medium" | "high";
+export type LibraryDoctorRisk = "low" | "medium" | "high";
+export type LibraryDoctorProposalType =
+  | "field-value-change"
+  | "taxonomy-classification"
+  | "alias-normalization"
+  | "completeness-fill"
+  | "other";
+
+export type LibraryDoctorGenerationSource =
+  | "alias-registry"
+  | "library-audit"
+  | "taxonomy-preview";
+
+export interface LibraryDoctorEvidenceRef {
+  type: string;
+  url?: string;
+  title?: string;
+  excerpt?: string;
+  note?: string;
+  capturedAt?: string;
+}
+
+export interface LibraryDoctorProposalPreview {
+  field: string;
+  currentValue: unknown;
+  proposedValue: unknown;
+  readOnly: true;
+  arrayDiff?: {
+    added: unknown[];
+    removed: unknown[];
+  };
+}
+
+export interface LibraryDoctorProposal {
+  id: string;
+  templateId: string;
+  manufacturer: string | null;
+  modelNumber: string | null;
+  sourceIssueCode: string | null;
+  sourceIssueGroup: string | null;
+  sourceCurrentValue: unknown;
+  field: string;
+  currentValue: unknown;
+  proposedValue: unknown;
+  proposalType: LibraryDoctorProposalType;
+  confidence: LibraryDoctorConfidence;
+  risk: LibraryDoctorRisk;
+  evidenceRefs: LibraryDoctorEvidenceRef[];
+  rationale: string | null;
+  status: LibraryDoctorProposalStatus;
+  createdAt: string;
+  createdBy: string | null;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  reviewNote: string | null;
+  supersedesProposalId: string | null;
+  generationKey: string | null;
+  preview: LibraryDoctorProposalPreview;
+}
+
+export interface LibraryDoctorProposalEvent {
+  id: string;
+  proposalId: string;
+  oldStatus: LibraryDoctorProposalStatus | null;
+  newStatus: LibraryDoctorProposalStatus;
+  reviewer: string | null;
+  reviewNote: string | null;
+  eventType: "created" | "reviewed" | "superseded";
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface LibraryDoctorProposalCandidate {
+  candidateKey: string;
+  templateId: string;
+  manufacturer: string | null;
+  modelNumber: string | null;
+  source: LibraryDoctorGenerationSource;
+  sourceIssueCode: string | null;
+  sourceIssueGroup: string | null;
+  sourceCurrentValue: unknown;
+  field: string;
+  currentValue: unknown;
+  proposedValue: unknown;
+  proposalType: LibraryDoctorProposalType;
+  confidence: LibraryDoctorConfidence;
+  risk: LibraryDoctorRisk;
+  evidenceRefs: LibraryDoctorEvidenceRef[];
+  rationale: string;
+  readOnly: true;
+}
+
+export interface LibraryDoctorGenerationScope {
+  templateIds?: string[];
+  manufacturer?: string;
+  issueCodes?: string[];
+  fields?: string[];
+  maxCandidates?: number;
+}
+
+export interface LibraryDoctorPreviewResult {
+  readOnly: true;
+  templatesScanned: number;
+  candidates: LibraryDoctorProposalCandidate[];
+  skipped: {
+    highRisk: number;
+    ambiguous: number;
+    duplicateExisting: number;
+  };
+}
+
+export interface LibraryDoctorEnqueueResult {
+  requested: number;
+  created: number;
+  alreadyExisting: number;
+  staleOrMissing: number;
+  rejectedHighRisk: number;
+  proposalIds: string[];
+  existing: Array<{ candidateKey: string; proposalId: string; status: string }>;
+  createdProposals: LibraryDoctorProposal[];
+}
+
+export interface LibraryDoctorProposalFilters {
+  status?: string;
+  manufacturer?: string;
+  templateId?: string;
+  field?: string;
+  proposalType?: string;
+  confidence?: string;
+  risk?: string;
+  sourceIssueCode?: string;
+}
+
+/** Review-queue status only. Accepted does not apply the proposal to a template. */
+export type LibraryDoctorReviewActionStatus =
+  | "accepted"
+  | "rejected"
+  | "needs-manual-review"
+  | "pending";
+
+export async function previewLibraryDoctorGeneration(
+  scope: LibraryDoctorGenerationScope,
+): Promise<LibraryDoctorPreviewResult> {
+  return requestJson<LibraryDoctorPreviewResult>("/library-doctor/generation/preview", {
+    method: "POST",
+    body: scope,
+  });
+}
+
+export async function enqueueLibraryDoctorCandidates(
+  candidateKeys: string[],
+): Promise<LibraryDoctorEnqueueResult> {
+  return requestJson<LibraryDoctorEnqueueResult>("/library-doctor/generation/enqueue", {
+    method: "POST",
+    body: { candidateKeys },
+  });
+}
+
+export async function listLibraryDoctorProposals(
+  filters: LibraryDoctorProposalFilters = {},
+): Promise<LibraryDoctorProposal[]> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value != null && value !== "") query.set(key, value);
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await requestJson<{ proposals: LibraryDoctorProposal[] }>(
+    `/library-doctor/proposals${suffix}`,
+  );
+  return response.proposals;
+}
+
+export async function getLibraryDoctorProposal(proposalId: string): Promise<LibraryDoctorProposal> {
+  const response = await requestJson<{ proposal: LibraryDoctorProposal }>(
+    `/library-doctor/proposals/${encodeURIComponent(proposalId)}`,
+  );
+  return response.proposal;
+}
+
+export async function reviewLibraryDoctorProposal(
+  proposalId: string,
+  input: { status: LibraryDoctorReviewActionStatus; reviewNote?: string },
+): Promise<LibraryDoctorProposal> {
+  const response = await requestJson<{ proposal: LibraryDoctorProposal }>(
+    `/library-doctor/proposals/${encodeURIComponent(proposalId)}/review`,
+    {
+      method: "POST",
+      body: {
+        status: input.status,
+        ...(input.reviewNote != null && input.reviewNote !== ""
+          ? { reviewNote: input.reviewNote }
+          : {}),
+      },
+    },
+  );
+  return response.proposal;
+}
+
+export async function getLibraryDoctorProposalHistory(
+  proposalId: string,
+): Promise<LibraryDoctorProposalEvent[]> {
+  const response = await requestJson<{ history: LibraryDoctorProposalEvent[] }>(
+    `/library-doctor/proposals/${encodeURIComponent(proposalId)}/history`,
+  );
+  return response.history;
+}
+
