@@ -65,6 +65,7 @@ export interface LibraryDoctorProposal {
   reviewedBy: string | null;
   reviewNote: string | null;
   supersedesProposalId: string | null;
+  generationKey: string | null;
   preview: LibraryDoctorProposalPreview;
 }
 
@@ -97,6 +98,8 @@ export interface CreateLibraryDoctorProposalInput {
   rationale?: unknown;
   createdBy?: string | null;
   supersedesProposalId?: unknown;
+  /** Deterministic generation identity; unique across all proposal statuses when set. */
+  generationKey?: unknown;
 }
 
 export interface LibraryDoctorProposalFilters {
@@ -172,6 +175,7 @@ interface ProposalRow {
   reviewed_by: string | null;
   review_note: string | null;
   supersedes_proposal_id: string | null;
+  generation_key: string | null;
 }
 
 interface EventRow {
@@ -342,6 +346,7 @@ function asProposal(row: ProposalRow): LibraryDoctorProposal {
     reviewedBy: row.reviewed_by,
     reviewNote: row.review_note,
     supersedesProposalId: row.supersedes_proposal_id,
+    generationKey: row.generation_key ?? null,
     preview: buildProposalPreview(row.field, currentValue, proposedValue),
   };
 }
@@ -428,6 +433,7 @@ function prepareCreateInput(input: CreateLibraryDoctorProposalInput): {
   rationale: string | null;
   createdBy: string | null;
   supersedesProposalId: string | null;
+  generationKey: string | null;
 } {
   return {
     templateId: requireNonEmptyString(input.templateId, "templateId"),
@@ -446,6 +452,7 @@ function prepareCreateInput(input: CreateLibraryDoctorProposalInput): {
     rationale: optionalLongString(input.rationale, "rationale"),
     createdBy: input.createdBy ?? null,
     supersedesProposalId: optionalString(input.supersedesProposalId, "supersedesProposalId"),
+    generationKey: optionalString(input.generationKey, "generationKey"),
   };
 }
 
@@ -459,13 +466,12 @@ function assertTransition(from: LibraryDoctorProposalStatus, to: LibraryDoctorPr
   }
 }
 
-export function createLibraryDoctorProposal(
+function insertProposalRow(
   db: DatabaseSync,
-  input: CreateLibraryDoctorProposalInput,
-): LibraryDoctorProposal {
-  const prepared = prepareCreateInput(input);
-  const id = randomUUID();
-
+  prepared: ReturnType<typeof prepareCreateInput>,
+  id: string,
+  createdAt: string,
+): void {
   if (prepared.supersedesProposalId) {
     if (prepared.supersedesProposalId === id) {
       throw new LibraryDoctorStoreError(400, "supersedesProposalId cannot reference the proposal itself");
@@ -476,67 +482,106 @@ export function createLibraryDoctorProposal(
     }
   }
 
+  if (prepared.generationKey) {
+    const existing = getProposalRowByGenerationKey(db, prepared.generationKey);
+    if (existing) {
+      throw new LibraryDoctorStoreError(409, `A proposal already exists for generationKey "${prepared.generationKey}"`);
+    }
+  }
+
+  db.prepare(`
+    INSERT INTO library_doctor_proposals (
+      id,
+      template_id,
+      manufacturer,
+      model_number,
+      source_issue_code,
+      source_issue_group,
+      source_current_value_json,
+      field,
+      current_value_json,
+      proposed_value_json,
+      proposal_type,
+      confidence,
+      risk,
+      evidence_refs_json,
+      rationale,
+      status,
+      created_at,
+      created_by,
+      reviewed_at,
+      reviewed_by,
+      review_note,
+      supersedes_proposal_id,
+      generation_key
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL, NULL, NULL, ?, ?)
+  `).run(
+    id,
+    prepared.templateId,
+    prepared.manufacturer,
+    prepared.modelNumber,
+    prepared.sourceIssueCode,
+    prepared.sourceIssueGroup,
+    serializeJsonValue(prepared.sourceCurrentValue),
+    prepared.field,
+    serializeJsonValue(prepared.currentValue),
+    serializeJsonValue(prepared.proposedValue),
+    prepared.proposalType,
+    prepared.confidence,
+    prepared.risk,
+    JSON.stringify(prepared.evidenceRefs),
+    prepared.rationale,
+    createdAt,
+    prepared.createdBy,
+    prepared.supersedesProposalId,
+    prepared.generationKey,
+  );
+
+  appendEvent(db, id, "created", null, "pending", prepared.createdBy, null, {
+    field: prepared.field,
+    proposalType: prepared.proposalType,
+    templateId: prepared.templateId,
+    generationKey: prepared.generationKey,
+  });
+}
+
+export function getProposalRowByGenerationKey(db: DatabaseSync, generationKey: string): ProposalRow | undefined {
+  return db.prepare(`
+    SELECT *
+    FROM library_doctor_proposals
+    WHERE generation_key = ?
+  `).get(generationKey) as ProposalRow | undefined;
+}
+
+export function getLibraryDoctorProposalByGenerationKey(
+  db: DatabaseSync,
+  generationKey: string,
+): LibraryDoctorProposal | null {
+  const row = getProposalRowByGenerationKey(db, generationKey);
+  return row ? asProposal(row) : null;
+}
+
+export function createLibraryDoctorProposal(
+  db: DatabaseSync,
+  input: CreateLibraryDoctorProposalInput,
+): LibraryDoctorProposal {
+  const prepared = prepareCreateInput(input);
+  const id = randomUUID();
   const createdAt = nowIso();
+
   db.exec("BEGIN");
   try {
-    db.prepare(`
-      INSERT INTO library_doctor_proposals (
-        id,
-        template_id,
-        manufacturer,
-        model_number,
-        source_issue_code,
-        source_issue_group,
-        source_current_value_json,
-        field,
-        current_value_json,
-        proposed_value_json,
-        proposal_type,
-        confidence,
-        risk,
-        evidence_refs_json,
-        rationale,
-        status,
-        created_at,
-        created_by,
-        reviewed_at,
-        reviewed_by,
-        review_note,
-        supersedes_proposal_id
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL, NULL, NULL, ?)
-    `).run(
-      id,
-      prepared.templateId,
-      prepared.manufacturer,
-      prepared.modelNumber,
-      prepared.sourceIssueCode,
-      prepared.sourceIssueGroup,
-      serializeJsonValue(prepared.sourceCurrentValue),
-      prepared.field,
-      serializeJsonValue(prepared.currentValue),
-      serializeJsonValue(prepared.proposedValue),
-      prepared.proposalType,
-      prepared.confidence,
-      prepared.risk,
-      JSON.stringify(prepared.evidenceRefs),
-      prepared.rationale,
-      createdAt,
-      prepared.createdBy,
-      prepared.supersedesProposalId,
-    );
-
-    appendEvent(db, id, "created", null, "pending", prepared.createdBy, null, {
-      field: prepared.field,
-      proposalType: prepared.proposalType,
-      templateId: prepared.templateId,
-    });
+    insertProposalRow(db, prepared, id, createdAt);
     db.exec("COMMIT");
   } catch (error) {
     try {
       db.exec("ROLLBACK");
     } catch {
       // ignore rollback failures when no transaction is active
+    }
+    if (error instanceof Error && /UNIQUE constraint failed.*generation_key/i.test(error.message)) {
+      throw new LibraryDoctorStoreError(409, "A proposal already exists for that generationKey");
     }
     throw error;
   }
@@ -546,6 +591,41 @@ export function createLibraryDoctorProposal(
     throw new LibraryDoctorStoreError(500, "Could not load created proposal");
   }
   return asProposal(saved);
+}
+
+/**
+ * Create multiple proposals in a single transaction (used by generation enqueue).
+ * Does not mutate templates.
+ */
+export function createLibraryDoctorProposalsBatch(
+  db: DatabaseSync,
+  inputs: CreateLibraryDoctorProposalInput[],
+): LibraryDoctorProposal[] {
+  if (inputs.length === 0) return [];
+
+  const createdIds: string[] = [];
+  db.exec("BEGIN");
+  try {
+    for (const input of inputs) {
+      const prepared = prepareCreateInput(input);
+      const id = randomUUID();
+      insertProposalRow(db, prepared, id, nowIso());
+      createdIds.push(id);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // ignore
+    }
+    if (error instanceof Error && /UNIQUE constraint failed.*generation_key/i.test(error.message)) {
+      throw new LibraryDoctorStoreError(409, "A proposal already exists for that generationKey");
+    }
+    throw error;
+  }
+
+  return createdIds.map((id) => getLibraryDoctorProposal(db, id));
 }
 
 export function getLibraryDoctorProposal(db: DatabaseSync, proposalId: string): LibraryDoctorProposal {

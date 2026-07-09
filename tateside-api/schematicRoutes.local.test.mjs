@@ -1053,3 +1053,144 @@ test("library doctor proposal queue create, list, filter, review, history, and n
     await server.stop();
   }
 });
+
+test("library doctor generation routes require both flags and support preview/enqueue", async () => {
+  const doctorOnly = await startServer({
+    TATESIDE_LIBRARY_DOCTOR_ENABLED: "1",
+  });
+  try {
+    const response = await fetch(new URL("/api/tateside/library-doctor/generation/preview", doctorOnly.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({ manufacturer: "QSC" }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(response.status, 404);
+  } finally {
+    await doctorOnly.stop();
+  }
+
+  const server = await startServer({
+    TATESIDE_LIBRARY_DOCTOR_ENABLED: "1",
+    TATESIDE_LIBRARY_DOCTOR_GENERATION_ENABLED: "1",
+  });
+
+  try {
+    const templatesUrl = new URL("/api/tateside/devices/templates", server.baseUrl);
+    const saveResponse = await fetch(templatesUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        templates: [
+          {
+            label: "QSC SPA2-60",
+            manufacturer: "QSC",
+            modelNumber: "SPA2-60",
+            deviceType: "amplifier",
+            category: "Audio",
+            ports: [
+              {
+                id: "p1",
+                label: "Line In",
+                direction: "inout",
+                signalType: "analog-audio",
+                connectorType: "euroblock",
+              },
+              {
+                id: "p2",
+                label: "Mic",
+                direction: "input",
+                signalType: "analog-audio",
+                connectorType: "xlr-trs-combo",
+              },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(saveResponse.status, 201);
+    const saved = await readJson(saveResponse);
+    const templateId = saved.templates[0].id;
+
+    const missingScope = await fetch(new URL("/api/tateside/library-doctor/generation/preview", server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(missingScope.status, 400);
+
+    const previewResponse = await fetch(new URL("/api/tateside/library-doctor/generation/preview", server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({ templateIds: [templateId] }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(previewResponse.status, 200);
+    const preview = await readJson(previewResponse);
+    assert.equal(preview.readOnly, true);
+    assert.ok(preview.skipped.highRisk >= 1);
+    assert.ok(!preview.candidates.some((c) => c.currentValue === "euroblock"));
+    assert.ok(preview.candidates.some((c) => c.currentValue === "inout" || c.currentValue === "xlr-trs-combo"));
+
+    const keys = preview.candidates.map((c) => c.candidateKey);
+    assert.ok(keys.length > 0);
+
+    const enqueueResponse = await fetch(new URL("/api/tateside/library-doctor/generation/enqueue", server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        candidateKeys: keys,
+        // Injected proposed values must be ignored / not accepted as free-form create.
+        proposedValue: "HACKED",
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(enqueueResponse.status, 201);
+    const enqueued = await readJson(enqueueResponse);
+    assert.equal(enqueued.created, keys.length);
+    assert.equal(enqueued.proposalIds.length, keys.length);
+
+    const templatesAfter = await fetch(templatesUrl, {
+      headers: { "Cf-Access-Authenticated-User-Email": accessEmail },
+      signal: AbortSignal.timeout(5_000),
+    });
+    const templates = await readJson(templatesAfter);
+    assert.equal(templates[0].ports[0].connectorType, "euroblock");
+    assert.equal(templates[0].ports[0].direction, "inout");
+    assert.equal(templates[0].ports[1].connectorType, "xlr-trs-combo");
+
+    const second = await fetch(new URL("/api/tateside/library-doctor/generation/enqueue", server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({ candidateKeys: keys }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(second.status, 201);
+    const secondBody = await readJson(second);
+    assert.equal(secondBody.created, 0);
+    assert.equal(secondBody.alreadyExisting, keys.length);
+
+    const stale = await fetch(new URL("/api/tateside/library-doctor/generation/enqueue", server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({ candidateKeys: ["deadbeef".repeat(8)] }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(stale.status, 201);
+    const staleBody = await readJson(stale);
+    assert.equal(staleBody.staleOrMissing, 1);
+    assert.equal(staleBody.created, 0);
+
+    const applyResponse = await fetch(new URL("/api/tateside/library-doctor/proposals/apply", server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(applyResponse.status, 404);
+  } finally {
+    await server.stop();
+  }
+});
