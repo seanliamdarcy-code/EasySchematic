@@ -116,6 +116,31 @@ export class TatesideApiError extends Error {
   }
 }
 
+export type TaxonomyRegistryKind = "category" | "deviceType" | "roleTag" | "deviceCapability" | "protocol";
+export type TaxonomyRegistryStatus = "active" | "deprecated";
+
+export interface TaxonomyRegistryValue {
+  id: string;
+  kind: TaxonomyRegistryKind;
+  value: string;
+  normalizedKey: string;
+  label: string | null;
+  description: string | null;
+  parentValue: string | null;
+  status: TaxonomyRegistryStatus;
+  replacementValue: string | null;
+  source: string;
+  version: number;
+  createdAt: string;
+  createdBy: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+export interface TaxonomyRegistryReadResponse {
+  values: TaxonomyRegistryValue[];
+}
+
 async function requestJson<T>(
   path: string,
   options: { method?: HttpMethod; body?: unknown } = {},
@@ -150,6 +175,10 @@ async function sleep(ms: number): Promise<void> {
 
 export async function fetchTatesideDeviceTemplates(): Promise<DeviceTemplate[]> {
   return requestJson<DeviceTemplate[]>("/devices/templates");
+}
+
+export async function fetchTaxonomyRegistry(): Promise<TaxonomyRegistryReadResponse> {
+  return requestJson<TaxonomyRegistryReadResponse>("/taxonomy/registry");
 }
 
 export async function saveTatesideDeviceTemplates(

@@ -7,6 +7,7 @@ import { useSchematicStore, CATEGORY_ORDER_DEFAULT } from "../store";
 import { scoreTemplate } from "../templateSearch";
 import { inventoryKeyFromDeviceData, inventoryKeyFromTemplate } from "../inventoryKey";
 import { compareTemplatesByModel } from "../templateOrdering";
+import { activeCategories, useEffectiveTaxonomy } from "../effectiveTaxonomy";
 import DeviceCreatorPicker from "./DeviceCreatorPicker";
 import ImportDevicesDialog from "./ImportDevicesDialog";
 import ImportQuoteDevicesDialog from "./ImportQuoteDevicesDialog";
@@ -1632,6 +1633,7 @@ export default function DeviceLibrary() {
   const [bulkPreviewState, setBulkPreviewState] = useState<{ signature: string; result: TatesideBulkEditResult } | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkDeleteConfirming, setBulkDeleteConfirming] = useState(false);
+  const { taxonomy } = useEffectiveTaxonomy();
   const bulkEditActive = selectedSharedTemplateIds.size > 0;
   const bulkPreviewSignature = useMemo(() => JSON.stringify({
     selectedTemplateIds: [...selectedSharedTemplateIds].sort(),
@@ -1825,11 +1827,14 @@ export default function DeviceLibrary() {
   }, [selectedSharedTemplateIds, templates]);
   const sharedCategoryOptions = useMemo(() => {
     const categories = new Set<string>();
+    for (const category of activeCategories(taxonomy)) {
+      if (category.value.trim()) categories.add(category.value.trim());
+    }
     for (const template of templates) {
       if (template.category?.trim()) categories.add(template.category.trim());
     }
     return [...categories].sort((a, b) => a.localeCompare(b));
-  }, [templates]);
+  }, [taxonomy, templates]);
   const totalResults = rankedResults?.length ?? (filteredCustom.length + totalLibraryResults);
   const ownedResults = useMemo(
     () => ownedGear.filter((item) => matchesOwnedGearQuery(item, query)).length,

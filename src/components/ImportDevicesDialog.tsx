@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSchematicStore } from "../store";
 import { CONNECTOR_LABELS, SIGNAL_LABELS, type ConnectorType, type DeviceTemplate, type SignalType } from "../types";
-import { DEVICE_TYPE_LABELS, DEVICE_TYPE_TO_CATEGORY } from "../deviceTypeCategories";
+import { activeDeviceTypes, deviceTypeLabel, useEffectiveTaxonomy, type EffectiveTaxonomy } from "../effectiveTaxonomy";
 import { parseJsonImport } from "../import/parseJson";
 import { parseCsvImport } from "../import/parseCsv";
 import type { ParsedTemplate } from "../import/types";
@@ -31,10 +31,6 @@ const ALL_SIGNAL_TYPES = (Object.keys(SIGNAL_LABELS) as SignalType[]).sort(
 
 const ALL_CONNECTOR_TYPES = (Object.keys(CONNECTOR_LABELS) as ConnectorType[]).sort(
   (a, b) => CONNECTOR_LABELS[a].localeCompare(CONNECTOR_LABELS[b]),
-);
-
-const ALL_DEVICE_TYPES = Object.keys(DEVICE_TYPE_TO_CATEGORY).sort((a, b) =>
-  (DEVICE_TYPE_LABELS[a] ?? a).localeCompare(DEVICE_TYPE_LABELS[b] ?? b),
 );
 
 const NORMALIZATION_ENABLED = import.meta.env?.VITE_TATESIDE_IMPORT_NORMALIZATION_ENABLED === "1";
@@ -112,7 +108,7 @@ function tokenize(value: string): string[] {
   return value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 }
 
-function scoreDeviceTypeCandidate(candidate: string, current: string, label: string, category?: string): number {
+function scoreDeviceTypeCandidate(candidate: string, current: string, label: string, category: string | undefined, taxonomy: EffectiveTaxonomy): number {
   const candidateNorm = normalizeToken(candidate);
   const currentNorm = normalizeToken(current);
   const labelNorm = normalizeToken(label);
@@ -158,7 +154,7 @@ function scoreDeviceTypeCandidate(candidate: string, current: string, label: str
   }
 
   // Slight bonus when the human-readable device type label overlaps the text.
-  const candidateLabel = DEVICE_TYPE_LABELS[candidate] ?? candidate;
+  const candidateLabel = deviceTypeLabel(taxonomy, candidate);
   const candidateLabelTokens = new Set(tokenize(candidateLabel));
   for (const token of searchTokens) {
     if (candidateLabelTokens.has(token)) score += 20;
@@ -171,18 +167,18 @@ function scoreDeviceTypeCandidate(candidate: string, current: string, label: str
   return score;
 }
 
-function getDeviceTypeSuggestions(template: DeviceTemplate): string[] {
+function getDeviceTypeSuggestions(template: DeviceTemplate, taxonomy: EffectiveTaxonomy): string[] {
   const current = template.deviceType || "";
   const label = template.label || "";
   const category = template.category || "";
-  const candidates = Object.keys(DEVICE_TYPE_TO_CATEGORY);
+  const candidates = activeDeviceTypes(taxonomy).map((deviceType) => deviceType.value);
   return candidates
     .map((candidate) => ({
       candidate,
-      score: scoreDeviceTypeCandidate(candidate, current, label, category),
+      score: scoreDeviceTypeCandidate(candidate, current, label, category, taxonomy),
     }))
     .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score || DEVICE_TYPE_LABELS[a.candidate].localeCompare(DEVICE_TYPE_LABELS[b.candidate]))
+    .sort((a, b) => b.score - a.score || deviceTypeLabel(taxonomy, a.candidate).localeCompare(deviceTypeLabel(taxonomy, b.candidate)))
     .slice(0, 4)
     .map((entry) => entry.candidate);
 }
@@ -313,6 +309,12 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
   const importCustomTemplates = useSchematicStore((s) => s.importCustomTemplates);
   const addToast = useSchematicStore((s) => s.addToast);
   const addCustomConnectorTypes = useSchematicStore((s) => s.addCustomConnectorTypes);
+  const { taxonomy } = useEffectiveTaxonomy();
+  const taxonomyDeviceTypes = useMemo(() => taxonomy.deviceTypes, [taxonomy]);
+  const importTaxonomy = useMemo(() => ({
+    allowedDeviceTypes: taxonomy.deviceTypes.map((type) => type.value),
+    deviceTypeCategories: Object.fromEntries(taxonomy.deviceTypes.map((type) => [type.value, type.parentValue])),
+  }), [taxonomy]);
 
   const [tab, setTab] = useState<Tab>("json");
   const [text, setText] = useState("");
@@ -334,8 +336,8 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
 
   const parsedResult = useMemo(() => {
     if (!text.trim()) return null;
-    return tab === "json" ? parseJsonImport(text) : parseCsvImport(text);
-  }, [text, tab]);
+    return tab === "json" ? parseJsonImport(text, importTaxonomy) : parseCsvImport(text, importTaxonomy);
+  }, [importTaxonomy, text, tab]);
 
   const normalizationMode = useMemo(
     () => getImportNormalizationUiMode(NORMALIZATION_ENABLED, normalizationMismatch ? new TatesideApiError("Import normalization is not enabled", 404) : normalizationError ? new Error(normalizationError) : null),
@@ -830,6 +832,9 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
                       };
                       const connectorSuggestions = item.fieldKind === "connectorType" ? getConnectorTypeSuggestions(item.rawValue) : [];
                       const signalSuggestions = item.fieldKind === "signalType" ? getSignalTypeSuggestions(item.rawValue) : [];
+                      const deviceTypeSuggestions = item.fieldKind === "deviceType"
+                        ? getDeviceTypeSuggestions({ deviceType: item.rawValue, label: item.rawValue, ports: [] } as DeviceTemplate, taxonomy)
+                        : [];
                       return (
                         <div key={key} className="rounded border border-amber-200 bg-white px-2 py-2">
                           <div className="text-[11px] font-medium text-amber-900">
@@ -842,13 +847,13 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
                             Found in: {item.affectedPorts.slice(0, 3).map((port) => `${port.templateLabel}${port.portLabel ? `, ${port.portLabel}` : ""}`).join(" • ")}
                             {item.affectedPorts.length > 3 ? ` • +${item.affectedPorts.length - 3} more` : ""}
                           </div>
-                          {(connectorSuggestions.length > 0 || signalSuggestions.length > 0) && (
+                          {(connectorSuggestions.length > 0 || signalSuggestions.length > 0 || deviceTypeSuggestions.length > 0) && (
                             <div className="mt-1 text-[10px] text-amber-700">
                               Suggestions: {item.fieldKind === "connectorType"
                                 ? connectorSuggestions.slice(0, 3).map((type) => CONNECTOR_LABELS[type]).join(", ")
                                 : item.fieldKind === "signalType"
                                   ? signalSuggestions.slice(0, 3).map((type) => SIGNAL_LABELS[type]).join(", ")
-                                  : "Use a known device type"}
+                                  : deviceTypeSuggestions.slice(0, 3).map((type) => deviceTypeLabel(taxonomy, type)).join(", ")}
                             </div>
                           )}
                           <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_180px]">
@@ -872,6 +877,13 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
                                   ))}
                                 </optgroup>
                               )}
+                              {item.fieldKind === "deviceType" && deviceTypeSuggestions.length > 0 && (
+                                <optgroup label="Suggested matches">
+                                  {deviceTypeSuggestions.map((type) => (
+                                    <option key={`suggested-${key}-${type}`} value={type}>{deviceTypeLabel(taxonomy, type)}</option>
+                                  ))}
+                                </optgroup>
+                              )}
                               <optgroup label="All values">
                                 {item.fieldKind === "connectorType" && ALL_CONNECTOR_TYPES.map((type) => (
                                   <option key={`all-${key}-${type}`} value={type}>{CONNECTOR_LABELS[type]}</option>
@@ -879,8 +891,10 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
                                 {item.fieldKind === "signalType" && ALL_SIGNAL_TYPES.map((type) => (
                                   <option key={`all-${key}-${type}`} value={type}>{SIGNAL_LABELS[type]}</option>
                                 ))}
-                                {item.fieldKind === "deviceType" && ALL_DEVICE_TYPES.map((type) => (
-                                  <option key={`all-${key}-${type}`} value={type}>{DEVICE_TYPE_LABELS[type] ?? type}</option>
+                              {item.fieldKind === "deviceType" && taxonomyDeviceTypes.map((type) => (
+                                  <option key={`all-${key}-${type.value}`} value={type.value}>
+                                    {type.label}{type.status === "deprecated" ? " (deprecated)" : ""}
+                                  </option>
                                 ))}
                               </optgroup>
                             </select>
@@ -1020,6 +1034,7 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
                         pt={pt}
                         skipped={skipped.has(rowKey(pt))}
                         brandCount={brandCounts.get((pt.template.manufacturer ?? "").trim().toLowerCase()) ?? 0}
+                        taxonomy={taxonomy}
                         onToggle={() => toggleSkip(rowKey(pt))}
                         onApplyFix={(patch) => applyTemplateOverride(pt, patch)}
                         onApplyBrandUrl={applyReferenceUrlToBrand}
@@ -1080,6 +1095,7 @@ function PreviewRow({
   pt,
   skipped,
   brandCount,
+  taxonomy,
   onToggle,
   onApplyFix,
   onApplyBrandUrl,
@@ -1087,6 +1103,7 @@ function PreviewRow({
   pt: ParsedTemplate;
   skipped: boolean;
   brandCount: number;
+  taxonomy: EffectiveTaxonomy;
   onToggle: () => void;
   onApplyFix: (patch: Partial<DeviceTemplate>) => void;
   onApplyBrandUrl: (manufacturer: string, referenceUrl: string) => void;
@@ -1099,11 +1116,12 @@ function PreviewRow({
     || pt.validation.errors.some((error) => error.toLowerCase().includes("unknown devicetype"));
   const needsReferenceUrl = !t.referenceUrl || !/^https?:\/\//i.test(t.referenceUrl);
   const manufacturer = (t.manufacturer ?? "").trim();
-  const deviceTypeSuggestions = getDeviceTypeSuggestions(t);
-  const currentIsKnownType = t.deviceType ? Boolean(DEVICE_TYPE_TO_CATEGORY[t.deviceType]) : false;
+  const deviceTypeSuggestions = getDeviceTypeSuggestions(t, taxonomy);
+  const typeByValue = new Map(taxonomy.deviceTypes.map((type) => [type.value, type]));
+  const currentIsKnownType = t.deviceType ? typeByValue.has(t.deviceType) : false;
   const deviceTypeOptions = currentIsKnownType
-    ? [t.deviceType, ...ALL_DEVICE_TYPES.filter((type) => type !== t.deviceType)]
-    : ALL_DEVICE_TYPES;
+    ? [t.deviceType, ...taxonomy.deviceTypes.map((type) => type.value).filter((type) => type !== t.deviceType)]
+    : taxonomy.deviceTypes.map((type) => type.value);
 
   return (
     <div
@@ -1151,7 +1169,7 @@ function PreviewRow({
               </span>
               {deviceTypeSuggestions.length > 0 && (
                 <span className="text-[10px] text-[var(--color-text-muted)]">
-                  Suggestions: {deviceTypeSuggestions.slice(0, 3).map((type) => DEVICE_TYPE_LABELS[type] ?? type).join(", ")}
+                  Suggestions: {deviceTypeSuggestions.slice(0, 3).map((type) => deviceTypeLabel(taxonomy, type)).join(", ")}
                 </span>
               )}
             </div>
@@ -1160,21 +1178,22 @@ function PreviewRow({
               onChange={(e) => {
                 const nextType = e.target.value;
                 if (!nextType) return;
+                const parentValue = typeByValue.get(nextType)?.parentValue;
                 onApplyFix({
                   deviceType: nextType,
-                  ...(DEVICE_TYPE_TO_CATEGORY[nextType] ? { category: DEVICE_TYPE_TO_CATEGORY[nextType] } : {}),
+                  ...(parentValue ? { category: parentValue } : {}),
                 });
               }}
               className="w-full px-2 py-1 rounded border border-sky-200 bg-white text-[11px] text-[var(--color-text)] outline-none focus:border-sky-400"
             >
               <option value="">
-                {t.deviceType ? `Current: ${DEVICE_TYPE_LABELS[t.deviceType] ?? t.deviceType} (unknown)` : "Select a known device type..."}
+                {t.deviceType ? `Current: ${deviceTypeLabel(taxonomy, t.deviceType)} (unknown)` : "Select a known device type..."}
               </option>
               {deviceTypeSuggestions.length > 0 && (
                 <optgroup label="Suggested matches">
                   {deviceTypeSuggestions.map((type) => (
                     <option key={`suggested-${type}`} value={type}>
-                      {DEVICE_TYPE_LABELS[type] ?? type}
+                      {deviceTypeLabel(taxonomy, type)}
                     </option>
                   ))}
                 </optgroup>
@@ -1182,7 +1201,7 @@ function PreviewRow({
               <optgroup label="All device types">
                 {deviceTypeOptions.map((type) => (
                   <option key={type} value={type}>
-                    {DEVICE_TYPE_LABELS[type] ?? type}
+                    {deviceTypeLabel(taxonomy, type)}
                   </option>
                 ))}
               </optgroup>

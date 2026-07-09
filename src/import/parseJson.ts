@@ -1,11 +1,11 @@
 import type { DeviceTemplate, Port } from "../types";
 import { DEVICE_TYPE_TO_CATEGORY } from "../deviceTypeCategories";
 import { validateTemplate } from "./validate";
-import { generatePortId, generateTemplateId, type ParseResult, type ParsedTemplate } from "./types";
+import { generatePortId, generateTemplateId, type ImportTaxonomyOptions, type ParseResult, type ParsedTemplate } from "./types";
 
 /** Parse a JSON string into one or more device templates.
  * Accepts either a single object or an array. */
-export function parseJsonImport(raw: string): ParseResult {
+export function parseJsonImport(raw: string, taxonomy: ImportTaxonomyOptions = {}): ParseResult {
   let json: unknown;
   try {
     json = JSON.parse(raw);
@@ -25,8 +25,8 @@ export function parseJsonImport(raw: string): ParseResult {
       fatalErrors.push(`Item ${idx}: not an object`);
       return;
     }
-    const normalized = normalizeTemplate(item as Record<string, unknown>);
-    const validation = validateTemplate(normalized);
+    const normalized = normalizeTemplate(item as Record<string, unknown>, taxonomy);
+    const validation = validateTemplate(normalized, taxonomy.allowedDeviceTypes);
     templates.push({
       template: normalized as DeviceTemplate,
       validation,
@@ -120,7 +120,7 @@ export function normalizeTemplateJson(raw: Record<string, unknown>): Partial<Dev
   return template;
 }
 
-function normalizeTemplate(raw: Record<string, unknown>): Partial<DeviceTemplate> {
+function normalizeTemplate(raw: Record<string, unknown>, taxonomy: ImportTaxonomyOptions = {}): Partial<DeviceTemplate> {
   const template = normalizeTemplateJson(raw);
   const ports = Array.isArray(template.ports)
     ? template.ports
@@ -128,7 +128,7 @@ function normalizeTemplate(raw: Record<string, unknown>): Partial<DeviceTemplate
 
   // Derive category from deviceType if not provided (or if user gave a freeform value)
   const deviceType = typeof template.deviceType === "string" ? template.deviceType : "";
-  const derivedCategory = DEVICE_TYPE_TO_CATEGORY[deviceType];
+  const derivedCategory = taxonomy.deviceTypeCategories?.[deviceType] ?? DEVICE_TYPE_TO_CATEGORY[deviceType];
   const category = typeof template.category === "string" && template.category.trim()
     ? template.category
     : derivedCategory ?? "Uncategorized";

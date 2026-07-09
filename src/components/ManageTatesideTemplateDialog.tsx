@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { DEFAULT_CONNECTOR } from "../connectorTypes";
-import { ALL_CATEGORIES } from "../deviceTypeCategories";
+import { categoryOptionsForCurrent, useEffectiveTaxonomy } from "../effectiveTaxonomy";
 import { useSchematicStore } from "../store";
 import {
   CONNECTOR_GROUPS,
@@ -337,18 +337,12 @@ function ManageTatesideTemplateDialogContent({
   const [showCustomCategoryInput, setShowCustomCategoryInput] = useState(false);
   const [customCategoryDraft, setCustomCategoryDraft] = useState("");
   const jsonInputRef = useRef<HTMLInputElement>(null);
+  const { taxonomy } = useEffectiveTaxonomy();
+  const currentCategory = draft.category ?? "";
 
   const categoryOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const options: string[] = [];
-    for (const category of [...ALL_CATEGORIES, ...customCategories]) {
-      const trimmed = category.trim();
-      if (!trimmed || seen.has(trimmed)) continue;
-      seen.add(trimmed);
-      options.push(trimmed);
-    }
-    return options;
-  }, [customCategories]);
+    return categoryOptionsForCurrent(taxonomy, currentCategory, customCategories);
+  }, [customCategories, currentCategory, taxonomy]);
 
   const inputs = useMemo(() => draft?.ports.filter((port) => port.direction === "input") ?? [], [draft]);
   const outputs = useMemo(() => draft?.ports.filter((port) => port.direction === "output") ?? [], [draft]);
@@ -487,8 +481,7 @@ function ManageTatesideTemplateDialogContent({
   };
 
   const searchTermsCount = searchTermsRaw.split(",").map((term) => term.trim()).filter(Boolean).length;
-  const currentCategory = draft.category ?? "";
-  const categoryInList = currentCategory ? categoryOptions.includes(currentCategory) : false;
+  const categoryInList = currentCategory ? categoryOptions.some((category) => category.value === currentCategory) : false;
   const showCategoryInput = showCustomCategoryInput || (!!currentCategory && !categoryInList);
   const categoryInputValue = showCustomCategoryInput ? customCategoryDraft : (categoryInList ? "" : currentCategory);
 
@@ -648,7 +641,9 @@ function ManageTatesideTemplateDialogContent({
                 >
                   <option value="">Select category...</option>
                   {categoryOptions.map((category) => (
-                    <option key={category} value={category}>{category}</option>
+                    <option key={category.value} value={category.value}>
+                      {category.label}{category.status === "deprecated" ? " (deprecated)" : ""}
+                    </option>
                   ))}
                   <option value="__custom__">+ Add new category...</option>
                 </select>
