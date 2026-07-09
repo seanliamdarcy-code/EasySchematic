@@ -402,11 +402,11 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
         ? baseTemplate
         : applyConnectorTypeRemaps(baseTemplate, connectorTypeReplacements);
       const template = { ...templateWithConnectorFixes, ...override } as DeviceTemplate;
-      const validation = validateTemplate(template);
+      const validation = validateTemplate(template, importTaxonomy.allowedDeviceTypes);
       return { ...pt, template, validation };
     });
     return { ...parsedResult, templates };
-  }, [connectorTypeReplacements, normalizedTemplates, parsedResult, templateOverrides, useSharedNormalization]);
+  }, [connectorTypeReplacements, importTaxonomy, normalizedTemplates, parsedResult, templateOverrides, useSharedNormalization]);
 
   const saveLockedByNormalization = isImportDevicesSaveLockedByNormalization(
     useSharedNormalization,

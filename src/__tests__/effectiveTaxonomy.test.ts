@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseCsvImport } from "../import/parseCsv";
 import { parseJsonImport } from "../import/parseJson";
+import { validateTemplate } from "../import/validate";
 import {
   activeCategories,
   activeDeviceTypes,
@@ -138,6 +139,7 @@ describe("effective taxonomy", () => {
 
     expect(jsonResult.templates[0].template.category).toBe("Audio");
     expect(jsonResult.templates[0].validation.ok).toBe(true);
+    expect(validateTemplate(jsonResult.templates[0].template, options.allowedDeviceTypes).ok).toBe(true);
 
     const csvResult = parseCsvImport([
       "model_number,label,manufacturer,device_type,port_label,port_signal_type,port_connector_type,port_direction",
@@ -146,6 +148,13 @@ describe("effective taxonomy", () => {
 
     expect(csvResult.templates[0].template.category).toBe("Audio");
     expect(csvResult.templates[0].validation.ok).toBe(true);
+
+    expect(categoryOptionsForCurrent(taxonomy, "Legacy Category")).toContainEqual({
+      value: "Legacy Category",
+      label: "Legacy Category",
+      status: "active",
+    });
+    expect(deviceTypeLabel(taxonomy, "legacy-device-type")).toBe("Legacy Device Type");
   });
 
   it("treats empty or malformed dynamic values as unusable so callers can fall back", () => {
