@@ -13,6 +13,10 @@ import {
   updateImportNormalizationRule,
 } from "./importNormalizationStore.js";
 import {
+  enqueueLibraryDoctorCandidates,
+  previewLibraryDoctorGeneration,
+} from "./libraryDoctorProposalGenerator.js";
+import {
   LibraryDoctorStoreError,
   createLibraryDoctorProposal,
   getLibraryDoctorProposal,
@@ -424,6 +428,46 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
       templateId: ctx.url.searchParams.get("templateId") ?? undefined,
     }), corsHeaders);
     return;
+  }
+
+  if (path.startsWith("/api/tateside/library-doctor/generation")) {
+    if (!config.libraryDoctorEnabled || !config.libraryDoctorGenerationEnabled) {
+      sendJson(ctx.res, 404, { error: "Library Doctor generation is not enabled" }, corsHeaders);
+      return;
+    }
+
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/library-doctor/generation/preview") {
+      const body = await readJsonObject(ctx.req);
+      const result = previewLibraryDoctorGeneration(db, listCurrentTemplates(db), {
+        templateIds: Array.isArray(body.templateIds) ? body.templateIds as string[] : undefined,
+        manufacturer: typeof body.manufacturer === "string" ? body.manufacturer : undefined,
+        issueCodes: Array.isArray(body.issueCodes) ? body.issueCodes as string[] : undefined,
+        fields: Array.isArray(body.fields) ? body.fields as string[] : undefined,
+        maxCandidates: typeof body.maxCandidates === "number" ? body.maxCandidates : undefined,
+      });
+      // Preview is read-only: no queue writes and no template mutation.
+      sendJson(ctx.res, 200, result, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/library-doctor/generation/enqueue") {
+      const body = await readJsonObject(ctx.req);
+      if (!Array.isArray(body.candidateKeys)) {
+        throw new RequestError(400, "candidateKeys must be an array of strings");
+      }
+      // Recompute candidates server-side from current templates; never trust client proposed values.
+      const result = enqueueLibraryDoctorCandidates(
+        db,
+        listCurrentTemplates(db),
+        body.candidateKeys as string[],
+        email,
+      );
+      sendJson(ctx.res, 201, result, corsHeaders);
+      return;
+    }
   }
 
   if (path.startsWith("/api/tateside/library-doctor/proposals")) {

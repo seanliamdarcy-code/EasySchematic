@@ -19,6 +19,7 @@ export interface ApiConfig {
   importNormalizationEnabled: boolean;
   libraryAuditEnabled: boolean;
   libraryDoctorEnabled: boolean;
+  libraryDoctorGenerationEnabled: boolean;
   sharePoint: SharePointConfig | null;
 }
 
@@ -173,6 +174,7 @@ export function getConfig(): ApiConfig {
     importNormalizationEnabled: process.env.TATESIDE_IMPORT_NORMALIZATION_ENABLED === "1",
     libraryAuditEnabled: process.env.TATESIDE_LIBRARY_AUDIT_ENABLED === "1",
     libraryDoctorEnabled: process.env.TATESIDE_LIBRARY_DOCTOR_ENABLED === "1",
+    libraryDoctorGenerationEnabled: process.env.TATESIDE_LIBRARY_DOCTOR_GENERATION_ENABLED === "1",
     sharePoint: getSharePointConfig(),
   };
 }
