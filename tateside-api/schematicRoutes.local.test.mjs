@@ -803,6 +803,85 @@ test("taxonomy routes expose read-only vocabularies, aliases, inspection, and pr
   }
 });
 
+test("dynamic taxonomy registry routes obey read and write feature flags", async () => {
+  const offServer = await startServer();
+  try {
+    const offResponse = await fetch(new URL("/api/tateside/taxonomy/registry", offServer.baseUrl), {
+      headers: { "Cf-Access-Authenticated-User-Email": accessEmail },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(offResponse.status, 404);
+  } finally {
+    await offServer.stop();
+  }
+
+  const readOnlyServer = await startServer({ TATESIDE_DYNAMIC_TAXONOMY_ENABLED: "1" });
+  try {
+    const db = new DatabaseSync(path.join(readOnlyServer.dataDir, "tateside.db"));
+    try {
+      const seeded = db.prepare(`
+        SELECT count(*) AS count
+        FROM taxonomy_registry_values
+        WHERE kind = 'deviceType' AND value = 'audio-dsp'
+      `).get();
+      assert.equal(seeded.count, 1);
+    } finally {
+      db.close();
+    }
+
+    const listResponse = await fetch(new URL("/api/tateside/taxonomy/registry/values?kind=deviceType", readOnlyServer.baseUrl), {
+      headers: { "Cf-Access-Authenticated-User-Email": accessEmail },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(listResponse.status, 200);
+    const list = await readJson(listResponse);
+    assert.ok(list.values.some((entry) => entry.kind === "deviceType" && entry.value === "audio-dsp" && entry.parentValue === "Audio"));
+
+    const previewOffResponse = await fetch(new URL("/api/tateside/taxonomy/registry/preview", readOnlyServer.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({ operation: "create-value", payload: { kind: "category", value: "Accessories" } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(previewOffResponse.status, 404);
+  } finally {
+    await readOnlyServer.stop();
+  }
+
+  const writeServer = await startServer({
+    TATESIDE_DYNAMIC_TAXONOMY_ENABLED: "1",
+    TATESIDE_DYNAMIC_TAXONOMY_WRITE_ENABLED: "1",
+  });
+  try {
+    const previewResponse = await fetch(new URL("/api/tateside/taxonomy/registry/preview", writeServer.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({ operation: "create-value", payload: { kind: "category", value: "Accessories" } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(previewResponse.status, 200);
+    const preview = await readJson(previewResponse);
+    assert.equal(preview.readOnly, true);
+    assert.equal(preview.operation, "create-value");
+
+    const commitResponse = await fetch(new URL("/api/tateside/taxonomy/registry/changes/commit", writeServer.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        operation: "create-value",
+        payload: { kind: "category", value: "Accessories" },
+        changeKey: preview.changeKey,
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(commitResponse.status, 201);
+    const committed = await readJson(commitResponse);
+    assert.equal(committed.value.value, "Accessories");
+  } finally {
+    await writeServer.stop();
+  }
+});
+
 test("library doctor routes are hidden when feature flag is off", async () => {
   const server = await startServer();
 

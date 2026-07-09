@@ -15,6 +15,7 @@ export type LibraryDoctorRisk = "low" | "medium" | "high";
 export type LibraryDoctorProposalType =
   | "field-value-change"
   | "taxonomy-classification"
+  | "taxonomy-registry-change"
   | "alias-normalization"
   | "completeness-fill"
   | "other";
@@ -138,6 +139,7 @@ const RISKS = new Set<LibraryDoctorRisk>(["low", "medium", "high"]);
 const PROPOSAL_TYPES = new Set<LibraryDoctorProposalType>([
   "field-value-change",
   "taxonomy-classification",
+  "taxonomy-registry-change",
   "alias-normalization",
   "completeness-fill",
   "other",

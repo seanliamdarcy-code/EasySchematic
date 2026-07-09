@@ -20,6 +20,8 @@ export interface ApiConfig {
   libraryAuditEnabled: boolean;
   libraryDoctorEnabled: boolean;
   libraryDoctorGenerationEnabled: boolean;
+  dynamicTaxonomyEnabled: boolean;
+  dynamicTaxonomyWriteEnabled: boolean;
   sharePoint: SharePointConfig | null;
 }
 
@@ -175,6 +177,8 @@ export function getConfig(): ApiConfig {
     libraryAuditEnabled: process.env.TATESIDE_LIBRARY_AUDIT_ENABLED === "1",
     libraryDoctorEnabled: process.env.TATESIDE_LIBRARY_DOCTOR_ENABLED === "1",
     libraryDoctorGenerationEnabled: process.env.TATESIDE_LIBRARY_DOCTOR_GENERATION_ENABLED === "1",
+    dynamicTaxonomyEnabled: process.env.TATESIDE_DYNAMIC_TAXONOMY_ENABLED === "1",
+    dynamicTaxonomyWriteEnabled: process.env.TATESIDE_DYNAMIC_TAXONOMY_WRITE_ENABLED === "1",
     sharePoint: getSharePointConfig(),
   };
 }
