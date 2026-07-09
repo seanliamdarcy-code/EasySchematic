@@ -12,6 +12,8 @@ import {
   resolveImportNormalization,
   updateImportNormalizationRule,
 } from "./importNormalizationStore.js";
+import { getTaxonomyVocabularies, inspectTemplateTaxonomy, listTaxonomyAliases, previewTemplateTaxonomy } from "./taxonomy.js";
+import { validateDeviceTemplate } from "./validation.js";
 import type { ExtractedQuoteDevice, ProductBundleDefinition, ProductBundlePreviewRequest, QuoteImportResearchJobResponse, QuoteImportResearchResponse } from "../../src/quoteImportTypes.js";
 import { listProductBundles, resolveProductBundle, saveProductBundle } from "./productBundleStore.js";
 import {
@@ -182,6 +184,17 @@ async function readJsonObject(req: http.IncomingMessage, maxBytes = MAX_JSON_BOD
   return body;
 }
 
+function readTemplateFromBody(body: Record<string, unknown>): Record<string, unknown> {
+  if (!isObject(body.template)) {
+    throw new RequestError(400, "template must be a JSON object");
+  }
+  const validation = validateDeviceTemplate(body.template);
+  if (!validation.ok) {
+    throw new RequestError(400, `template is invalid: ${validation.errors.join("; ")}`);
+  }
+  return body.template;
+}
+
 function readSequenceFromBody(value: unknown): number {
   if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
     return value;
@@ -347,6 +360,40 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     const email = requireIdentity(ctx, config.requireAccessIdentity);
     if (email === undefined) return;
     sendJson(ctx.res, 200, listCurrentTemplates(db), corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/taxonomy/vocabularies") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    sendJson(ctx.res, 200, getTaxonomyVocabularies(), corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/taxonomy/aliases") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    sendJson(ctx.res, 200, { entries: listTaxonomyAliases() }, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "POST" && path === "/api/tateside/taxonomy/inspect") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    const body = await readJsonObject(ctx.req);
+    sendJson(ctx.res, 200, inspectTemplateTaxonomy(readTemplateFromBody(body) as never), corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "POST" && path === "/api/tateside/taxonomy/proposals/preview") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    const body = await readJsonObject(ctx.req);
+    sendJson(ctx.res, 200, previewTemplateTaxonomy(readTemplateFromBody(body) as never), corsHeaders);
     return;
   }
 

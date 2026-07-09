@@ -502,6 +502,25 @@ export interface ConnectionData {
 
 export type ConnectionEdge = Edge<ConnectionData>;
 
+export type TaxonomyReviewStatus =
+  | "imported"
+  | "ai-researched"
+  | "needs-review"
+  | "human-reviewed"
+  | "trusted-standard"
+  | "deprecated";
+
+export type TaxonomyClassificationConfidence = "low" | "medium" | "high";
+
+export interface TaxonomyEvidenceRef {
+  type: string;
+  url?: string;
+  title?: string;
+  excerpt?: string;
+  note?: string;
+  capturedAt?: string;
+}
+
 export interface DeviceTemplate {
   id?: string;
   version?: number;
@@ -538,6 +557,14 @@ export interface DeviceTemplate {
   facePlateLayout?: FacePlateLayout; // Custom face-plate connector positions
   importNormalization?: ImportNormalizationMetadata;
   aiMetadata?: AiDeviceGenerationMetadata;
+  roleTags?: string[];
+  deviceCapabilities?: string[];
+  protocols?: string[];
+  reviewStatus?: TaxonomyReviewStatus;
+  classificationConfidence?: TaxonomyClassificationConfidence;
+  evidenceRefs?: TaxonomyEvidenceRef[];
+  lastReviewedBy?: string;
+  lastReviewedAt?: string;
 }
 
 export interface CustomTemplateGroup {
