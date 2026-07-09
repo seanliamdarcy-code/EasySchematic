@@ -1,0 +1,74 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { existsSync } from "node:fs";
+import { z } from "zod";
+import { getConfig } from "./config.js";
+import { assertMigrationsApplied, openDatabase } from "./db.js";
+import { createMcpLibraryTools, MCP_LIBRARY_TOOL_DESCRIPTIONS, McpLibraryError, type McpLibraryContext } from "./mcpLibrary.js";
+
+const common = {
+  kind: z.string().optional(), status: z.string().optional(), source: z.string().optional(), parentValue: z.string().optional(), canonicalValue: z.string().optional(), limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).max(1_000_000).optional(),
+};
+const templateSearch = {
+  manufacturer: z.string().optional(), model: z.string().optional(), name: z.string().optional(), category: z.string().optional(), deviceType: z.string().optional(), query: z.string().optional(), limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).max(1_000_000).optional(),
+};
+
+function result(value: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(value) }], structuredContent: value as Record<string, unknown> };
+}
+
+export function openMcpDatabase(dbPath: string) {
+  if (!existsSync(dbPath)) throw new McpLibraryError(`TateSide database does not exist: ${dbPath}`);
+  const db = openDatabase(dbPath);
+  try {
+    assertMigrationsApplied(db);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}
+
+export function createTateSideMcpServer(context: McpLibraryContext): McpServer {
+  const server = new McpServer({ name: "easyschematic-library", version: "1.0.0" });
+  const tools = createMcpLibraryTools(context);
+  const register = (name: keyof typeof MCP_LIBRARY_TOOL_DESCRIPTIONS, inputSchema: z.ZodObject<z.ZodRawShape>) => server.registerTool(name, {
+    description: MCP_LIBRARY_TOOL_DESCRIPTIONS[name], inputSchema,
+  }, (input) => {
+    try {
+      return result(tools.execute(name, input));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unexpected MCP tool error";
+      return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: message }) }], isError: true };
+    }
+  });
+
+  register("list_taxonomy_values", z.object(common));
+  register("list_taxonomy_aliases", z.object({ kind: z.string().optional(), status: z.string().optional(), canonicalValue: z.string().optional(), limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).max(1_000_000).optional() }));
+  register("get_taxonomy_value", z.object({ kind: z.string(), value: z.string() }));
+  register("search_templates", z.object(templateSearch));
+  register("get_template", z.object({ id: z.string() }));
+  register("get_template_issues", z.object({ id: z.string(), limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).max(1_000_000).optional() }));
+  register("get_library_audit", z.object({ manufacturer: z.string().optional(), severity: z.string().optional(), code: z.string().optional(), currentValue: z.string().optional(), templateId: z.string().optional(), limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).max(1_000_000).optional() }));
+  register("preview_template_taxonomy", z.object({ id: z.string() }));
+  register("get_library_coverage", z.object({}));
+  register("create_library_doctor_proposal", z.object({ templateId: z.string(), field: z.string(), proposedValue: z.unknown().optional(), currentValue: z.unknown().optional(), proposalType: z.string(), confidence: z.string().optional(), risk: z.string().optional(), sourceIssueCode: z.string().optional(), sourceIssueGroup: z.string().optional(), sourceCurrentValue: z.unknown().optional(), evidenceRefs: z.array(z.unknown()).optional(), rationale: z.string().optional(), createdBy: z.string().optional(), supersedesProposalId: z.string().optional(), generationKey: z.string().optional() }));
+  register("preview_taxonomy_registry_change", z.object({ operation: z.string(), payload: z.record(z.string(), z.unknown()) }));
+  register("create_taxonomy_registry_change_proposal", z.object({ operation: z.string(), payload: z.record(z.string(), z.unknown()), changeKey: z.string(), rationale: z.string().optional(), createdBy: z.string().optional() }));
+  return server;
+}
+
+async function main(): Promise<void> {
+  const config = getConfig();
+  if (!config.mcpLibraryEnabled) throw new McpLibraryError("Set TATESIDE_MCP_LIBRARY_ENABLED=1 to start the MCP library server");
+  const db = openMcpDatabase(config.dbPath);
+  const server = createTateSideMcpServer({ db, config });
+  await server.connect(new StdioServerTransport());
+}
+
+if (process.argv[1]?.endsWith("mcpServer.js")) {
+  void main().catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}

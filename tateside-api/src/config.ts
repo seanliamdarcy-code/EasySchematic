@@ -22,6 +22,7 @@ export interface ApiConfig {
   libraryDoctorGenerationEnabled: boolean;
   dynamicTaxonomyEnabled: boolean;
   dynamicTaxonomyWriteEnabled: boolean;
+  mcpLibraryEnabled: boolean;
   sharePoint: SharePointConfig | null;
 }
 
@@ -179,6 +180,7 @@ export function getConfig(): ApiConfig {
     libraryDoctorGenerationEnabled: process.env.TATESIDE_LIBRARY_DOCTOR_GENERATION_ENABLED === "1",
     dynamicTaxonomyEnabled: process.env.TATESIDE_DYNAMIC_TAXONOMY_ENABLED === "1",
     dynamicTaxonomyWriteEnabled: process.env.TATESIDE_DYNAMIC_TAXONOMY_WRITE_ENABLED === "1",
+    mcpLibraryEnabled: process.env.TATESIDE_MCP_LIBRARY_ENABLED === "1",
     sharePoint: getSharePointConfig(),
   };
 }
