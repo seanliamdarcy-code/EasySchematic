@@ -629,3 +629,176 @@ test("library audit route returns a structured report and filters", async () => 
     await server.stop();
   }
 });
+
+test("taxonomy routes expose read-only vocabularies, aliases, inspection, and preview", async () => {
+  const server = await startServer();
+
+  try {
+    const templatesUrl = new URL("/api/tateside/devices/templates", server.baseUrl);
+    const saveResponse = await fetch(templatesUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        templates: [
+          {
+            label: "Legacy Camera",
+            manufacturer: "AIDA",
+            modelNumber: "HD-100",
+            deviceType: "camera",
+            category: "Sources",
+            ports: [
+              { id: "p1", label: "HDMI Out", direction: "output", signalType: "hdmi", connectorType: "hdmi" },
+            ],
+          },
+          {
+            label: "Candidate DSP",
+            manufacturer: "Bose",
+            modelNumber: "EX-1280",
+            deviceType: "audio-dsp",
+            category: "Audio",
+            roleTags: ["dsp", "av-over-ip"],
+            deviceCapabilities: ["audio-processing"],
+            protocols: ["dante"],
+            reviewStatus: "needs-review",
+            classificationConfidence: "medium",
+            evidenceRefs: [
+              {
+                type: "trusted-human-note",
+                title: "Manual review seed",
+                note: "Read-only taxonomy foundation coverage.",
+                capturedAt: "2026-07-09T10:00:00Z",
+              },
+            ],
+            lastReviewedBy: "route-test@example.com",
+            lastReviewedAt: "2026-07-09T10:00:00Z",
+            ports: [
+              { id: "p1", label: "Dante Primary", direction: "bidirectional", signalType: "dante", connectorType: "rj45" },
+              { id: "p2", label: "GPIO", direction: "input", signalType: "gpio", connectorType: "terminal-block" },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(saveResponse.status, 201);
+
+    const saved = await readJson(saveResponse);
+    assert.equal(saved.templates.length, 2);
+
+    const vocabResponse = await fetch(new URL("/api/tateside/taxonomy/vocabularies", server.baseUrl), {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(vocabResponse.status, 200);
+    const vocabularies = await readJson(vocabResponse);
+    assert.ok(vocabularies.categories.includes("Audio"));
+    assert.ok(vocabularies.deviceTypes.some((entry) => entry.value === "audio-dsp"));
+    assert.ok(vocabularies.roleTags.includes("dsp"));
+    assert.ok(vocabularies.deviceCapabilities.includes("audio-processing"));
+    assert.ok(vocabularies.protocols.includes("dante"));
+
+    const aliasResponse = await fetch(new URL("/api/tateside/taxonomy/aliases", server.baseUrl), {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(aliasResponse.status, 200);
+    const aliases = await readJson(aliasResponse);
+    assert.ok(aliases.entries.some((entry) => entry.field === "connectorType" && entry.canonicalValue === "terminal-block"));
+    assert.ok(aliases.entries.some((entry) => entry.field === "roleTags" && entry.canonicalValue === "avoip"));
+
+    const inspectResponse = await fetch(new URL("/api/tateside/taxonomy/inspect", server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        template: saved.templates[1],
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(inspectResponse.status, 200);
+    const inspection = await readJson(inspectResponse);
+    assert.equal(inspection.readOnly, true);
+    assert.equal(inspection.deviceType.known, true);
+    assert.deepEqual(inspection.template.deviceCapabilities.values, ["audio-processing"]);
+    assert.equal(inspection.template.reviewStatus, "needs-review");
+    assert.equal(inspection.template.classificationConfidence, "medium");
+    assert.equal(inspection.template.evidenceRefCount, 1);
+    assert.ok(inspection.aliasMatches.some((match) => match.field === "roleTags" && match.canonicalValue === "avoip"));
+
+    const beforePreviewList = await fetch(templatesUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    const beforePreviewTemplates = await readJson(beforePreviewList);
+    assert.equal(beforePreviewTemplates.length, 2);
+
+    const previewResponse = await fetch(new URL("/api/tateside/taxonomy/proposals/preview", server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        template: {
+          label: "Preview Amp",
+          manufacturer: "QSC",
+          modelNumber: "Amp 8",
+          deviceType: "amplifier",
+          category: "Audio",
+          ports: [
+            { id: "p1", label: "Speaker Out", direction: "output", signalType: "speaker-level", connectorType: "terminal-block" },
+            { id: "p2", label: "Telephone Line", direction: "bidirectional", signalType: "analog-audio", connectorType: "rj11" },
+          ],
+        },
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(previewResponse.status, 200);
+    const preview = await readJson(previewResponse);
+    assert.equal(preview.readOnly, true);
+    assert.ok(preview.proposals.some((proposal) => proposal.field === "category" && proposal.value === "Amplifiers"));
+    assert.ok(preview.proposals.some((proposal) => proposal.field === "roleTags" && proposal.value === "amplifier"));
+    assert.ok(preview.proposals.some((proposal) => proposal.field === "deviceCapabilities" && proposal.value === "amplification"));
+    assert.ok(preview.proposals.some((proposal) => proposal.field === "protocols" && proposal.value === "pstn"));
+
+    const afterPreviewList = await fetch(templatesUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    const afterPreviewTemplates = await readJson(afterPreviewList);
+    assert.equal(afterPreviewTemplates.length, 2);
+
+    const invalidInspectResponse = await fetch(new URL("/api/tateside/taxonomy/inspect", server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        template: {
+          label: "Broken",
+          deviceType: "camera",
+        },
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(invalidInspectResponse.status, 400);
+    const invalidInspect = await readJson(invalidInspectResponse);
+    assert.match(invalidInspect.error, /template is invalid/i);
+
+    const invalidPreviewResponse = await fetch(new URL("/api/tateside/taxonomy/proposals/preview", server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        template: "not-an-object",
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(invalidPreviewResponse.status, 400);
+    const invalidPreview = await readJson(invalidPreviewResponse);
+    assert.match(invalidPreview.error, /template must be a json object/i);
+  } finally {
+    await server.stop();
+  }
+});
