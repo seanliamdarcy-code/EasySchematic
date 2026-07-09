@@ -10,18 +10,20 @@ import { createTateSideMcpServer, openMcpDatabase } from "../dist-tateside-api/t
 import { listRegistryValues, seedTaxonomyRegistry } from "../dist-tateside-api/tateside-api/src/taxonomyRegistryStore.js";
 import { reviewLibraryDoctorProposal } from "../dist-tateside-api/tateside-api/src/libraryDoctorStore.js";
 
-function withTools(run, flags = {}) {
+function withTools(run, flags = {}, customTemplates = null) {
   const root = mkdtempSync(path.join(os.tmpdir(), "tateside-mcp-library-"));
   const db = openDatabase(path.join(root, "store.db"));
   try {
     runMigrations(db);
     seedTaxonomyRegistry(db);
-    const templates = saveTemplates(db, { templates: [{
+    const templates = saveTemplates(db, { templates: customTemplates ?? [{
       label: "Bad DSP", manufacturer: "Acme", modelNumber: "DSP-1", deviceType: "audio-dsp", category: "Video", ports: [{ id: "in", label: "Input", direction: "input", signalType: "analog-audio", connectorType: "xlr" }],
     }, {
       label: "Incomplete DSP", manufacturer: "Acme", modelNumber: "DSP-2", deviceType: "audio-dsp", ports: [{ id: "in", label: "Input", direction: "input", signalType: "analog-audio", connectorType: "xlr" }],
     }, {
       label: "Third DSP", manufacturer: "Acme", modelNumber: "DSP-3", deviceType: "audio-dsp", category: "Audio", ports: [{ id: "in", label: "Input", direction: "input", signalType: "analog-audio", connectorType: "xlr" }],
+    }, {
+      label: "Beta Camera", manufacturer: "Beta", modelNumber: "CAM-1", deviceType: "camera", category: "Cameras", ports: [{ id: "out", label: "Output", direction: "output", signalType: "hdmi", connectorType: "hdmi" }],
     }] });
     const [template, issueTemplate] = templates;
     const config = { mcpLibraryEnabled: true, dynamicTaxonomyEnabled: true, libraryAuditEnabled: true, libraryDoctorEnabled: true, ...flags };
@@ -61,7 +63,7 @@ test("MCP server initializes and reads support complete bounded traversal", () =
   assert.equal(audit.hasMore, true);
   assert.notDeepEqual(laterAudit.items[0], audit.items[0]);
   assert.equal(tools.execute("preview_template_taxonomy", { id: template.id }).readOnly, true);
-  assert.equal(tools.execute("get_library_coverage").totalTemplates, 3);
+  assert.equal(tools.execute("get_library_coverage").totalTemplates, 4);
   assert.throws(() => tools.execute("get_template", { id: "missing" }), /Template not found/);
   assert.throws(() => tools.execute("search_templates", { limit: 101 }), /limit/);
   assert.throws(() => tools.execute("search_templates", { offset: -1 }), /offset/);
@@ -121,3 +123,61 @@ test("MCP feature flags fail closed", () => withTools(({ db, config }) => {
   assert.throws(() => createMcpLibraryTools({ db, config: { ...config, libraryAuditEnabled: false } }).execute("get_library_audit"), /Library audit/);
   assert.throws(() => createMcpLibraryTools({ db, config: { ...config, libraryDoctorEnabled: false } }).execute("create_library_doctor_proposal", { templateId: "missing" }), /Library Doctor/);
 }));
+
+test("MCP intelligence tools are deterministic, bounded, and read-only", () => withTools(({ db, template, tools, config }) => {
+  const beforeTemplates = JSON.stringify(listCurrentTemplates(db));
+  const beforeRegistry = JSON.stringify(listRegistryValues(db));
+  const manufacturers = tools.execute("list_manufacturers", { limit: 1, sort: "name" });
+  const laterManufacturers = tools.execute("list_manufacturers", { limit: 1, offset: 1, sort: "name" });
+  assert.equal(manufacturers.total, 2);
+  assert.equal(manufacturers.items[0].manufacturer, "Acme");
+  assert.equal(laterManufacturers.items[0].manufacturer, "Beta");
+  assert.equal(manufacturers.hasMore, true);
+  assert.equal(tools.execute("get_manufacturer_summary", { manufacturer: "Acme" }).totalTemplates, 3);
+  assert.throws(() => tools.execute("get_manufacturer_summary", { manufacturer: "Missing" }), /not found/);
+  const related = tools.execute("find_related_templates", { templateId: template.id, limit: 1 });
+  assert.ok(related.total >= 2);
+  assert.ok(related.items[0].relationshipReasons.includes("same manufacturer"));
+  assert.throws(() => tools.execute("find_related_templates", { templateId: template.id, strategy: "semantic" }), /strategy/);
+  const conflicts = tools.execute("get_classification_conflicts", { limit: 100 });
+  assert.ok(conflicts.items.some((item) => item.conflictType === "deviceType-parent-category-disagreement"));
+  const clusters = tools.execute("get_library_issue_clusters", { grouping: "issueCode", limit: 100 });
+  assert.ok(clusters.items.some((item) => item.clusterKey === "MISSING_DIMENSIONS"));
+  assert.throws(() => tools.execute("get_library_issue_clusters", { grouping: "anything" }), /grouping/);
+  const gaps = tools.execute("get_taxonomy_coverage_gaps", { kind: "deviceType", limit: 100 });
+  assert.ok(gaps.items.some((item) => item.storedValue === "audio-dsp"));
+  const suspicious = tools.execute("get_suspicious_templates", { limit: 100 });
+  assert.equal(suspicious.items[0].templateId, template.id);
+  assert.ok(suspicious.items[0].score > 0);
+  const triage = tools.execute("get_template_triage_bundle", { templateId: template.id });
+  assert.equal(triage.template.templateId, template.id);
+  assert.ok(Array.isArray(triage.relatedTemplates));
+  assert.equal(JSON.stringify(listCurrentTemplates(db)), beforeTemplates);
+  assert.equal(JSON.stringify(listRegistryValues(db)), beforeRegistry);
+  assert.throws(() => tools.execute("list_manufacturers", []), /object/);
+  assert.throws(() => createMcpLibraryTools({ db, config: { ...config, dynamicTaxonomyEnabled: false } }).execute("get_suspicious_templates"), /Dynamic taxonomy/);
+}));
+
+test("suspicious scores cap repeated port patterns but preserve distinct errors", () => withTools(({ tools }) => {
+  const rows = tools.execute("get_suspicious_templates", { limit: 100 }).items;
+  const repeated = rows.find((row) => row.model === "PORT-32");
+  const smaller = rows.find((row) => row.model === "PORT-8");
+  const distinct = rows.find((row) => row.model === "PORT-DISTINCT");
+  assert.equal(repeated.score, smaller.score);
+  assert.equal(repeated.errorCount, 32);
+  assert.equal(repeated.scoreBreakdown[0].rawCount, 32);
+  assert.equal(repeated.scoreBreakdown[0].countedCount, 3);
+  assert.equal(repeated.scoreBreakdown[0].patternCount, 1);
+  assert.equal(repeated.scoreBreakdown[0].score, 30);
+  assert.equal(distinct.scoreBreakdown[0].countedCount, 2);
+  assert.equal(distinct.scoreBreakdown[0].score, 20);
+  for (const row of [repeated, smaller, distinct]) assert.equal(row.score, row.scoreBreakdown.reduce((sum, reason) => sum + reason.score, 0));
+  assert.deepEqual(rows, tools.execute("get_suspicious_templates", { limit: 100 }).items);
+}, {}, [
+  { label: "Port 32", manufacturer: "Ports", modelNumber: "PORT-32", deviceType: "audio-dsp", category: "Audio", ports: Array.from({ length: 32 }, (_, index) => ({ id: `p${index}`, label: `P${index}`, direction: "input", signalType: "analog-audio", connectorType: "not-a-connector" })) },
+  { label: "Port 8", manufacturer: "Ports", modelNumber: "PORT-8", deviceType: "audio-dsp", category: "Audio", ports: Array.from({ length: 8 }, (_, index) => ({ id: `p${index}`, label: `P${index}`, direction: "input", signalType: "analog-audio", connectorType: "not-a-connector" })) },
+  { label: "Distinct errors", manufacturer: "Ports", modelNumber: "PORT-DISTINCT", deviceType: "audio-dsp", category: "Audio", ports: [
+    { id: "connector", label: "Connector", direction: "input", signalType: "analog-audio", connectorType: "not-a-connector" },
+    { id: "signal", label: "Signal", direction: "input", signalType: "not-a-signal", connectorType: "hdmi" },
+  ] },
+]));
