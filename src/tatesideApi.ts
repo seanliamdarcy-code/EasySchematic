@@ -493,6 +493,7 @@ export type LibraryDoctorRisk = "low" | "medium" | "high";
 export type LibraryDoctorProposalType =
   | "field-value-change"
   | "taxonomy-classification"
+  | "taxonomy-registry-change"
   | "alias-normalization"
   | "completeness-fill"
   | "other";
@@ -695,4 +696,3 @@ export async function getLibraryDoctorProposalHistory(
   );
   return response.history;
 }
-

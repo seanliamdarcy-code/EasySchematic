@@ -26,6 +26,18 @@ import {
   supersedeLibraryDoctorProposal,
 } from "./libraryDoctorStore.js";
 import { getTaxonomyVocabularies, inspectTemplateTaxonomy, listTaxonomyAliases, previewTemplateTaxonomy } from "./taxonomy.js";
+import {
+  TaxonomyRegistryError,
+  commitTaxonomyRegistryChange,
+  dynamicRegistrySummary,
+  getRegistryValue,
+  listRegistryAliases,
+  listRegistryHistory,
+  listRegistryValues,
+  previewTaxonomyRegistryChange,
+  seedTaxonomyRegistry,
+  type TaxonomyRegistryKind,
+} from "./taxonomyRegistryStore.js";
 import { validateDeviceTemplate } from "./validation.js";
 import type { ExtractedQuoteDevice, ProductBundleDefinition, ProductBundlePreviewRequest, QuoteImportResearchJobResponse, QuoteImportResearchResponse } from "../../src/quoteImportTypes.js";
 import { listProductBundles, resolveProductBundle, saveProductBundle } from "./productBundleStore.js";
@@ -105,6 +117,10 @@ function sendEmpty(res: http.ServerResponse, status: number, headers: Record<str
     ...headers,
   });
   res.end();
+}
+
+function isRegistryKind(value: string): value is TaxonomyRegistryKind {
+  return ["category", "deviceType", "roleTag", "deviceCapability", "protocol"].includes(value);
 }
 
 function readBody(req: http.IncomingMessage, maxBytes: number): Promise<Buffer> {
@@ -251,6 +267,9 @@ function requireIdentity(ctx: RequestContext, requireAccessIdentity: boolean): s
 const config = getConfig();
 const db = openDatabase(config.dbPath);
 runMigrations(db);
+if (config.dynamicTaxonomyEnabled) {
+  seedTaxonomyRegistry(db);
+}
 const quoteResearchJobs = new Map<string, ResearchJobRecord>();
 if (process.env.JETBUILT_API_KEY) {
   initializeJetbuiltIndex({
@@ -408,6 +427,73 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     const body = await readJsonObject(ctx.req);
     sendJson(ctx.res, 200, previewTemplateTaxonomy(readTemplateFromBody(body) as never), corsHeaders);
     return;
+  }
+
+  if (path === "/api/tateside/taxonomy/registry" || path.startsWith("/api/tateside/taxonomy/registry/")) {
+    if (!config.dynamicTaxonomyEnabled) {
+      sendJson(ctx.res, 404, { error: "Dynamic taxonomy registry is not enabled" }, corsHeaders);
+      return;
+    }
+
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/taxonomy/registry") {
+      sendJson(ctx.res, 200, {
+        values: listRegistryValues(db),
+        aliases: listRegistryAliases(db),
+        summary: dynamicRegistrySummary(db),
+      }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/taxonomy/registry/values") {
+      const kind = ctx.url.searchParams.get("kind") ?? "";
+      sendJson(ctx.res, 200, { values: kind && isRegistryKind(kind) ? listRegistryValues(db, kind) : listRegistryValues(db) }, corsHeaders);
+      return;
+    }
+
+    const valueMatch = path.match(/^\/api\/tateside\/taxonomy\/registry\/values\/([^/]+)\/(.+)$/);
+    if (ctx.req.method === "GET" && valueMatch) {
+      const kind = decodeURIComponent(valueMatch[1]);
+      if (!isRegistryKind(kind)) throw new RequestError(400, "Invalid registry kind");
+      sendJson(ctx.res, 200, getRegistryValue(db, kind, decodeURIComponent(valueMatch[2])), corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/taxonomy/registry/aliases") {
+      const kind = ctx.url.searchParams.get("kind") ?? "";
+      sendJson(ctx.res, 200, { aliases: kind && isRegistryKind(kind) ? listRegistryAliases(db, kind) : listRegistryAliases(db) }, corsHeaders);
+      return;
+    }
+
+    const historyMatch = path.match(/^\/api\/tateside\/taxonomy\/registry\/history\/([^/]+)\/([^/]+)$/);
+    if (ctx.req.method === "GET" && historyMatch) {
+      const entityType = decodeURIComponent(historyMatch[1]);
+      if (entityType !== "value" && entityType !== "alias") throw new RequestError(400, "Invalid history entityType");
+      sendJson(ctx.res, 200, { events: listRegistryHistory(db, entityType, decodeURIComponent(historyMatch[2])) }, corsHeaders);
+      return;
+    }
+
+    if (!config.dynamicTaxonomyWriteEnabled) {
+      sendJson(ctx.res, 404, { error: "Dynamic taxonomy registry writes are not enabled" }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/taxonomy/registry/preview") {
+      const body = await readJsonObject(ctx.req);
+      sendJson(ctx.res, 200, previewTaxonomyRegistryChange(db, listCurrentTemplates(db), body), corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/taxonomy/registry/changes/commit") {
+      const body = await readJsonObject(ctx.req);
+      sendJson(ctx.res, 201, commitTaxonomyRegistryChange(db, listCurrentTemplates(db), {
+        ...body,
+        actor: typeof body.actor === "string" ? body.actor : email,
+      }), corsHeaders);
+      return;
+    }
   }
 
   if (ctx.req.method === "GET" && path === "/api/tateside/library/audit") {
@@ -1251,6 +1337,10 @@ const server = http.createServer((req, res) => {
       return;
     }
     if (err instanceof LibraryDoctorStoreError) {
+      sendJson(res, err.status, { error: err.message }, corsHeaders);
+      return;
+    }
+    if (err instanceof TaxonomyRegistryError) {
       sendJson(res, err.status, { error: err.message }, corsHeaders);
       return;
     }

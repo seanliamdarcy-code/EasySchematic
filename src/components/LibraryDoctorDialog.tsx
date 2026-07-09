@@ -784,6 +784,7 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                       <option value="">Any</option>
                       <option value="alias-normalization">alias-normalization</option>
                       <option value="taxonomy-classification">taxonomy-classification</option>
+                      <option value="taxonomy-registry-change">taxonomy-registry-change</option>
                       <option value="field-value-change">field-value-change</option>
                       <option value="completeness-fill">completeness-fill</option>
                       <option value="other">other</option>
