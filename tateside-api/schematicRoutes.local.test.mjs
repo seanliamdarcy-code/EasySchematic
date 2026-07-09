@@ -802,3 +802,254 @@ test("taxonomy routes expose read-only vocabularies, aliases, inspection, and pr
     await server.stop();
   }
 });
+
+test("library doctor routes are hidden when feature flag is off", async () => {
+  const server = await startServer();
+
+  try {
+    const response = await fetch(new URL("/api/tateside/library-doctor/proposals", server.baseUrl), {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await readJson(response), {
+      error: "Library Doctor is not enabled",
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("library doctor proposal queue create, list, filter, review, history, and no apply path", async () => {
+  const server = await startServer({
+    TATESIDE_LIBRARY_DOCTOR_ENABLED: "1",
+  });
+
+  try {
+    const templatesUrl = new URL("/api/tateside/devices/templates", server.baseUrl);
+    const saveResponse = await fetch(templatesUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        templates: [
+          {
+            label: "QSC SPA2-60",
+            manufacturer: "QSC",
+            modelNumber: "SPA2-60",
+            deviceType: "amplifier",
+            ports: [
+              {
+                id: "p1",
+                label: "Line In",
+                direction: "input",
+                signalType: "analog-audio",
+                connectorType: "euroblock",
+              },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(saveResponse.status, 201);
+    const saved = await readJson(saveResponse);
+    const templateId = saved.templates[0].id;
+    const beforeTemplates = structuredClone(saved.templates);
+
+    const proposalsUrl = new URL("/api/tateside/library-doctor/proposals", server.baseUrl);
+    const createResponse = await fetch(proposalsUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        templateId,
+        manufacturer: "QSC",
+        modelNumber: "SPA2-60",
+        sourceIssueCode: "INVALID_CONNECTOR_TYPE",
+        sourceIssueGroup: "connector",
+        sourceCurrentValue: "euroblock",
+        field: "connectorType",
+        currentValue: "euroblock",
+        proposedValue: "terminal-block",
+        proposalType: "alias-normalization",
+        confidence: "medium",
+        risk: "high",
+        evidenceRefs: [
+          {
+            type: "taxonomy-alias",
+            title: "terminal-block aliases",
+            note: "High-risk connector alias",
+          },
+        ],
+        rationale: "Canonicalize euroblock after human review",
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(createResponse.status, 201);
+    const created = await readJson(createResponse);
+    assert.equal(created.proposal.status, "pending");
+    assert.equal(created.proposal.createdBy, accessEmail);
+    assert.equal(created.proposal.preview.readOnly, true);
+    assert.equal(created.proposal.preview.currentValue, "euroblock");
+    assert.equal(created.proposal.preview.proposedValue, "terminal-block");
+    const proposalId = created.proposal.id;
+
+    const listResponse = await fetch(proposalsUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(listResponse.status, 200);
+    const listed = await readJson(listResponse);
+    assert.equal(listed.proposals.length, 1);
+
+    const filteredUrl = new URL("/api/tateside/library-doctor/proposals", server.baseUrl);
+    filteredUrl.searchParams.set("status", "pending");
+    filteredUrl.searchParams.set("manufacturer", "QSC");
+    filteredUrl.searchParams.set("field", "connectorType");
+    filteredUrl.searchParams.set("proposalType", "alias-normalization");
+    filteredUrl.searchParams.set("confidence", "medium");
+    filteredUrl.searchParams.set("risk", "high");
+    filteredUrl.searchParams.set("sourceIssueCode", "INVALID_CONNECTOR_TYPE");
+    filteredUrl.searchParams.set("templateId", templateId);
+    const filteredResponse = await fetch(filteredUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(filteredResponse.status, 200);
+    const filtered = await readJson(filteredResponse);
+    assert.equal(filtered.proposals.length, 1);
+
+    const getResponse = await fetch(new URL(`/api/tateside/library-doctor/proposals/${proposalId}`, server.baseUrl), {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(getResponse.status, 200);
+    const got = await readJson(getResponse);
+    assert.equal(got.proposal.id, proposalId);
+
+    const missingResponse = await fetch(new URL("/api/tateside/library-doctor/proposals/missing-id", server.baseUrl), {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(missingResponse.status, 404);
+    assert.deepEqual(await readJson(missingResponse), { error: "Proposal not found" });
+
+    const badCreateResponse = await fetch(proposalsUrl, {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        field: "connectorType",
+        proposalType: "not-a-type",
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(badCreateResponse.status, 400);
+
+    const reviewResponse = await fetch(new URL(`/api/tateside/library-doctor/proposals/${proposalId}/review`, server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        status: "accepted",
+        reviewNote: "Approved in review queue only",
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(reviewResponse.status, 200);
+    const reviewed = await readJson(reviewResponse);
+    assert.equal(reviewed.proposal.status, "accepted");
+    assert.equal(reviewed.proposal.reviewedBy, accessEmail);
+    assert.equal(reviewed.proposal.reviewNote, "Approved in review queue only");
+
+    // Accepted must not mutate the real template library.
+    const afterAcceptTemplatesResponse = await fetch(templatesUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(afterAcceptTemplatesResponse.status, 200);
+    const afterAcceptTemplates = await readJson(afterAcceptTemplatesResponse);
+    assert.equal(afterAcceptTemplates[0].ports[0].connectorType, "euroblock");
+    assert.equal(afterAcceptTemplates[0].ports[0].connectorType, beforeTemplates[0].ports[0].connectorType);
+
+    const badTransitionResponse = await fetch(new URL(`/api/tateside/library-doctor/proposals/${proposalId}/review`, server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        status: "rejected",
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(badTransitionResponse.status, 409);
+    assert.match((await readJson(badTransitionResponse)).error, /Invalid status transition/);
+
+    const historyResponse = await fetch(new URL(`/api/tateside/library-doctor/proposals/${proposalId}/history`, server.baseUrl), {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(historyResponse.status, 200);
+    const history = await readJson(historyResponse);
+    assert.equal(history.history.length, 2);
+    assert.equal(history.history[0].eventType, "created");
+    assert.equal(history.history[1].oldStatus, "pending");
+    assert.equal(history.history[1].newStatus, "accepted");
+
+    // Explicitly confirm there is no apply endpoint.
+    const applyResponse = await fetch(new URL(`/api/tateside/library-doctor/proposals/${proposalId}/apply`, server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(applyResponse.status, 404);
+
+    const supersedeResponse = await fetch(new URL(`/api/tateside/library-doctor/proposals/${proposalId}/supersede`, server.baseUrl), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        reviewNote: "Superseded by refined mapping",
+        replacement: {
+          templateId,
+          manufacturer: "QSC",
+          modelNumber: "SPA2-60",
+          field: "connectorType",
+          currentValue: "euroblock",
+          proposedValue: "phoenix",
+          proposalType: "alias-normalization",
+          confidence: "low",
+          risk: "high",
+          rationale: "Vendor-specific labeling",
+        },
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(supersedeResponse.status, 200);
+    const superseded = await readJson(supersedeResponse);
+    assert.equal(superseded.proposal.status, "superseded");
+    assert.equal(superseded.replacement.status, "pending");
+    assert.equal(superseded.replacement.supersedesProposalId, proposalId);
+    assert.equal(superseded.replacement.proposedValue, "phoenix");
+
+    const finalTemplatesResponse = await fetch(templatesUrl, {
+      headers: {
+        "Cf-Access-Authenticated-User-Email": accessEmail,
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+    const finalTemplates = await readJson(finalTemplatesResponse);
+    assert.equal(finalTemplates[0].ports[0].connectorType, "euroblock");
+  } finally {
+    await server.stop();
+  }
+});

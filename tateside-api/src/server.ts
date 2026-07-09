@@ -12,6 +12,15 @@ import {
   resolveImportNormalization,
   updateImportNormalizationRule,
 } from "./importNormalizationStore.js";
+import {
+  LibraryDoctorStoreError,
+  createLibraryDoctorProposal,
+  getLibraryDoctorProposal,
+  listLibraryDoctorProposalHistory,
+  listLibraryDoctorProposals,
+  reviewLibraryDoctorProposal,
+  supersedeLibraryDoctorProposal,
+} from "./libraryDoctorStore.js";
 import { getTaxonomyVocabularies, inspectTemplateTaxonomy, listTaxonomyAliases, previewTemplateTaxonomy } from "./taxonomy.js";
 import { validateDeviceTemplate } from "./validation.js";
 import type { ExtractedQuoteDevice, ProductBundleDefinition, ProductBundlePreviewRequest, QuoteImportResearchJobResponse, QuoteImportResearchResponse } from "../../src/quoteImportTypes.js";
@@ -415,6 +424,117 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
       templateId: ctx.url.searchParams.get("templateId") ?? undefined,
     }), corsHeaders);
     return;
+  }
+
+  if (path.startsWith("/api/tateside/library-doctor/proposals")) {
+    if (!config.libraryDoctorEnabled) {
+      sendJson(ctx.res, 404, { error: "Library Doctor is not enabled" }, corsHeaders);
+      return;
+    }
+
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/library-doctor/proposals") {
+      const proposals = listLibraryDoctorProposals(db, {
+        status: ctx.url.searchParams.get("status") ?? undefined,
+        manufacturer: ctx.url.searchParams.get("manufacturer") ?? undefined,
+        templateId: ctx.url.searchParams.get("templateId") ?? undefined,
+        field: ctx.url.searchParams.get("field") ?? undefined,
+        proposalType: ctx.url.searchParams.get("proposalType") ?? undefined,
+        confidence: ctx.url.searchParams.get("confidence") ?? undefined,
+        risk: ctx.url.searchParams.get("risk") ?? undefined,
+        sourceIssueCode: ctx.url.searchParams.get("sourceIssueCode") ?? undefined,
+      });
+      sendJson(ctx.res, 200, { proposals }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/library-doctor/proposals") {
+      const body = await readJsonObject(ctx.req);
+      const proposal = createLibraryDoctorProposal(db, {
+        templateId: body.templateId,
+        manufacturer: body.manufacturer,
+        modelNumber: body.modelNumber,
+        sourceIssueCode: body.sourceIssueCode,
+        sourceIssueGroup: body.sourceIssueGroup,
+        sourceCurrentValue: body.sourceCurrentValue,
+        field: body.field,
+        currentValue: body.currentValue,
+        proposedValue: body.proposedValue,
+        proposalType: body.proposalType,
+        confidence: body.confidence,
+        risk: body.risk,
+        evidenceRefs: body.evidenceRefs,
+        rationale: body.rationale,
+        createdBy: email,
+        supersedesProposalId: body.supersedesProposalId,
+      });
+      sendJson(ctx.res, 201, { proposal }, corsHeaders);
+      return;
+    }
+
+    const proposalMatch = path.match(/^\/api\/tateside\/library-doctor\/proposals\/([^/]+)$/);
+    if (proposalMatch) {
+      const proposalId = decodeURIComponent(proposalMatch[1]);
+      if (ctx.req.method === "GET") {
+        const proposal = getLibraryDoctorProposal(db, proposalId);
+        sendJson(ctx.res, 200, { proposal }, corsHeaders);
+        return;
+      }
+    }
+
+    const reviewMatch = path.match(/^\/api\/tateside\/library-doctor\/proposals\/([^/]+)\/review$/);
+    if (reviewMatch && ctx.req.method === "POST") {
+      const proposalId = decodeURIComponent(reviewMatch[1]);
+      const body = await readJsonObject(ctx.req);
+      const proposal = reviewLibraryDoctorProposal(db, proposalId, {
+        status: body.status,
+        reviewNote: body.reviewNote,
+        reviewedBy: email,
+      });
+      sendJson(ctx.res, 200, { proposal }, corsHeaders);
+      return;
+    }
+
+    const historyMatch = path.match(/^\/api\/tateside\/library-doctor\/proposals\/([^/]+)\/history$/);
+    if (historyMatch && ctx.req.method === "GET") {
+      const proposalId = decodeURIComponent(historyMatch[1]);
+      const history = listLibraryDoctorProposalHistory(db, proposalId);
+      sendJson(ctx.res, 200, { history }, corsHeaders);
+      return;
+    }
+
+    const supersedeMatch = path.match(/^\/api\/tateside\/library-doctor\/proposals\/([^/]+)\/supersede$/);
+    if (supersedeMatch && ctx.req.method === "POST") {
+      const proposalId = decodeURIComponent(supersedeMatch[1]);
+      const body = await readJsonObject(ctx.req);
+      const result = supersedeLibraryDoctorProposal(db, proposalId, {
+        reviewNote: body.reviewNote,
+        reviewedBy: email,
+        replacement: isObject(body.replacement)
+          ? {
+              templateId: body.replacement.templateId,
+              manufacturer: body.replacement.manufacturer,
+              modelNumber: body.replacement.modelNumber,
+              sourceIssueCode: body.replacement.sourceIssueCode,
+              sourceIssueGroup: body.replacement.sourceIssueGroup,
+              sourceCurrentValue: body.replacement.sourceCurrentValue,
+              field: body.replacement.field,
+              currentValue: body.replacement.currentValue,
+              proposedValue: body.replacement.proposedValue,
+              proposalType: body.replacement.proposalType,
+              confidence: body.replacement.confidence,
+              risk: body.replacement.risk,
+              evidenceRefs: body.replacement.evidenceRefs,
+              rationale: body.replacement.rationale,
+              createdBy: email,
+            }
+          : undefined,
+      });
+      sendJson(ctx.res, 200, result, corsHeaders);
+      return;
+    }
   }
 
   if (path.startsWith("/api/tateside/import-normalization-rules")) {
@@ -1083,6 +1203,10 @@ const server = http.createServer((req, res) => {
   handleRequest(ctx).catch((err) => {
     const corsHeaders = makeCorsHeaders(req.headers.origin, config.allowedOrigin);
     if (err instanceof SchematicStoreError) {
+      sendJson(res, err.status, { error: err.message }, corsHeaders);
+      return;
+    }
+    if (err instanceof LibraryDoctorStoreError) {
       sendJson(res, err.status, { error: err.message }, corsHeaders);
       return;
     }
