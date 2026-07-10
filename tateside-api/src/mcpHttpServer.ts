@@ -1,11 +1,19 @@
 import { createServer, type Server } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createRemoteJWKSet } from "jose/jwks/remote";
+import { jwtVerify } from "jose/jwt/verify";
 import { getConfig, type ApiConfig } from "./config.js";
 import { McpLibraryError, type McpLibraryContext } from "./mcpLibrary.js";
 import { createTateSideMcpServer, openMcpDatabase } from "./mcpServer.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+const CLOUDFLARE_ACCESS_JWT_HEADER = "cf-access-jwt-assertion";
+const CLOUDFLARE_ACCESS_ALGORITHMS = ["RS256"];
+const CLOUDFLARE_ACCESS_JWKS_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+const CLOUDFLARE_ACCESS_JWKS_COOLDOWN_MS = 30 * 1000;
+
+type CloudflareAccessVerifier = (assertion: string) => Promise<boolean>;
 
 export interface McpHttpHandle {
   server: Server;
@@ -15,13 +23,14 @@ export interface McpHttpHandle {
 }
 
 export async function startMcpHttpServer(
-  config: Pick<ApiConfig, "dbPath" | "mcpLibraryEnabled" | "dynamicTaxonomyEnabled" | "libraryAuditEnabled" | "libraryDoctorEnabled" | "mcpHttpEnabled" | "mcpHttpHost" | "mcpHttpPort" | "mcpHttpAllowNonLoopback">,
+  config: Pick<ApiConfig, "dbPath" | "mcpLibraryEnabled" | "dynamicTaxonomyEnabled" | "libraryAuditEnabled" | "libraryDoctorEnabled" | "mcpHttpEnabled" | "mcpHttpHost" | "mcpHttpPort" | "mcpHttpAllowNonLoopback" | "mcpHttpCloudflareAccessEnabled" | "mcpHttpCloudflareAccessIssuer" | "mcpHttpCloudflareAccessAudience">,
 ): Promise<McpHttpHandle> {
   if (!config.mcpLibraryEnabled) throw new McpLibraryError("Set TATESIDE_MCP_LIBRARY_ENABLED=1 to enable MCP library tools");
   if (!config.mcpHttpEnabled) throw new McpLibraryError("Set TATESIDE_MCP_HTTP_ENABLED=1 to start the MCP HTTP server");
   if (!LOOPBACK_HOSTS.has(config.mcpHttpHost) && !config.mcpHttpAllowNonLoopback) {
     throw new McpLibraryError("Non-loopback MCP HTTP binds require TATESIDE_MCP_HTTP_ALLOW_NON_LOOPBACK=1");
   }
+  const verifyCloudflareAccess = createCloudflareAccessVerifier(config);
 
   const db = openMcpDatabase(config.dbPath);
   const context: McpLibraryContext = { db, config };
@@ -29,6 +38,18 @@ export async function startMcpHttpServer(
     if (new URL(request.url ?? "/", "http://localhost").pathname !== "/mcp") {
       response.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "Not found" }));
       return;
+    }
+    if (verifyCloudflareAccess) {
+      const assertion = request.headers[CLOUDFLARE_ACCESS_JWT_HEADER];
+      const token = Array.isArray(assertion) ? assertion[0] : assertion;
+      if (!token || !(await verifyCloudflareAccess(token))) {
+        response.writeHead(401, {
+          "cache-control": "no-store",
+          "content-type": "application/json",
+          "www-authenticate": "Bearer",
+        }).end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
     }
     const mcpServer = createTateSideMcpServer(context);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -62,6 +83,46 @@ export async function startMcpHttpServer(
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       db.close();
     },
+  };
+}
+
+function createCloudflareAccessVerifier(
+  config: Pick<ApiConfig, "mcpHttpCloudflareAccessEnabled" | "mcpHttpCloudflareAccessIssuer" | "mcpHttpCloudflareAccessAudience">,
+): CloudflareAccessVerifier | null {
+  if (!config.mcpHttpCloudflareAccessEnabled) return null;
+  const configuredIssuer = config.mcpHttpCloudflareAccessIssuer;
+  const configuredAudience = config.mcpHttpCloudflareAccessAudience;
+  if (!configuredIssuer || !configuredAudience) {
+    throw new McpLibraryError(
+      "Cloudflare Access authentication requires TATESIDE_MCP_HTTP_CLOUDFLARE_ACCESS_ISSUER and TATESIDE_MCP_HTTP_CLOUDFLARE_ACCESS_AUDIENCE",
+    );
+  }
+
+  let issuer: URL;
+  try {
+    issuer = new URL(configuredIssuer);
+  } catch {
+    throw new McpLibraryError("Cloudflare Access issuer must be an absolute URL");
+  }
+  const remoteJwks = createRemoteJWKSet(
+    new URL("/cdn-cgi/access/certs", issuer),
+    {
+      cooldownDuration: CLOUDFLARE_ACCESS_JWKS_COOLDOWN_MS,
+      cacheMaxAge: CLOUDFLARE_ACCESS_JWKS_CACHE_MAX_AGE_MS,
+      timeoutDuration: 5000,
+    },
+  );
+  return async (assertion: string): Promise<boolean> => {
+    try {
+      const { payload } = await jwtVerify(assertion, remoteJwks, {
+        algorithms: CLOUDFLARE_ACCESS_ALGORITHMS,
+        audience: configuredAudience,
+        issuer: configuredIssuer,
+      });
+      return payload.exp != null;
+    } catch {
+      return false;
+    }
   };
 }
 

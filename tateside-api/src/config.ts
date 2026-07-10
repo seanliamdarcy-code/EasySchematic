@@ -27,6 +27,9 @@ export interface ApiConfig {
   mcpHttpHost: string;
   mcpHttpPort: number;
   mcpHttpAllowNonLoopback: boolean;
+  mcpHttpCloudflareAccessEnabled: boolean;
+  mcpHttpCloudflareAccessIssuer: string | null;
+  mcpHttpCloudflareAccessAudience: string | null;
   sharePoint: SharePointConfig | null;
 }
 
@@ -139,6 +142,49 @@ function getSharePointConfig(): SharePointConfig | null {
   };
 }
 
+function getMcpHttpCloudflareAccessConfig(): Pick<ApiConfig, "mcpHttpCloudflareAccessEnabled" | "mcpHttpCloudflareAccessIssuer" | "mcpHttpCloudflareAccessAudience"> {
+  const enabled = process.env.TATESIDE_MCP_HTTP_CLOUDFLARE_ACCESS_ENABLED === "1";
+  const issuer = stringFromEnv(process.env.TATESIDE_MCP_HTTP_CLOUDFLARE_ACCESS_ISSUER);
+  const audience = stringFromEnv(process.env.TATESIDE_MCP_HTTP_CLOUDFLARE_ACCESS_AUDIENCE);
+  if (!enabled) {
+    return {
+      mcpHttpCloudflareAccessEnabled: false,
+      mcpHttpCloudflareAccessIssuer: null,
+      mcpHttpCloudflareAccessAudience: null,
+    };
+  }
+  const missing = [
+    issuer == null ? "TATESIDE_MCP_HTTP_CLOUDFLARE_ACCESS_ISSUER" : null,
+    audience == null ? "TATESIDE_MCP_HTTP_CLOUDFLARE_ACCESS_AUDIENCE" : null,
+  ].filter((value): value is string => value != null);
+  if (missing.length > 0) {
+    throw new Error(
+      `Cloudflare Access authentication is enabled but missing ${missing.join(", ")}`,
+    );
+  }
+  if (issuer == null || audience == null) {
+    throw new Error("Cloudflare Access authentication configuration is incomplete");
+  }
+  const requiredIssuer = issuer;
+  const requiredAudience = audience;
+
+  let parsedIssuer: URL;
+  try {
+    parsedIssuer = new URL(requiredIssuer);
+  } catch {
+    throw new Error("TATESIDE_MCP_HTTP_CLOUDFLARE_ACCESS_ISSUER must be an absolute HTTPS URL");
+  }
+  if (parsedIssuer.protocol !== "https:" || parsedIssuer.pathname !== "/" || parsedIssuer.search || parsedIssuer.hash) {
+    throw new Error("TATESIDE_MCP_HTTP_CLOUDFLARE_ACCESS_ISSUER must be an absolute HTTPS team-domain URL");
+  }
+
+  return {
+    mcpHttpCloudflareAccessEnabled: true,
+    mcpHttpCloudflareAccessIssuer: parsedIssuer.toString().replace(/\/$/, ""),
+    mcpHttpCloudflareAccessAudience: requiredAudience,
+  };
+}
+
 export function getConfig(): ApiConfig {
   const dataDir = process.env.TATESIDE_DATA_DIR || defaultDataDir;
   mkdirSync(dataDir, { recursive: true });
@@ -189,6 +235,7 @@ export function getConfig(): ApiConfig {
     mcpHttpHost: process.env.TATESIDE_MCP_HTTP_HOST || "127.0.0.1",
     mcpHttpPort: integerFromEnv(process.env.TATESIDE_MCP_HTTP_PORT, 8790, "TATESIDE_MCP_HTTP_PORT", 1),
     mcpHttpAllowNonLoopback: process.env.TATESIDE_MCP_HTTP_ALLOW_NON_LOOPBACK === "1",
+    ...getMcpHttpCloudflareAccessConfig(),
     sharePoint: getSharePointConfig(),
   };
 }
