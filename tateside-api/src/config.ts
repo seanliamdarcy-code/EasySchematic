@@ -23,6 +23,10 @@ export interface ApiConfig {
   dynamicTaxonomyEnabled: boolean;
   dynamicTaxonomyWriteEnabled: boolean;
   mcpLibraryEnabled: boolean;
+  mcpHttpEnabled: boolean;
+  mcpHttpHost: string;
+  mcpHttpPort: number;
+  mcpHttpAllowNonLoopback: boolean;
   sharePoint: SharePointConfig | null;
 }
 
@@ -181,6 +185,10 @@ export function getConfig(): ApiConfig {
     dynamicTaxonomyEnabled: process.env.TATESIDE_DYNAMIC_TAXONOMY_ENABLED === "1",
     dynamicTaxonomyWriteEnabled: process.env.TATESIDE_DYNAMIC_TAXONOMY_WRITE_ENABLED === "1",
     mcpLibraryEnabled: process.env.TATESIDE_MCP_LIBRARY_ENABLED === "1",
+    mcpHttpEnabled: process.env.TATESIDE_MCP_HTTP_ENABLED === "1",
+    mcpHttpHost: process.env.TATESIDE_MCP_HTTP_HOST || "127.0.0.1",
+    mcpHttpPort: integerFromEnv(process.env.TATESIDE_MCP_HTTP_PORT, 8790, "TATESIDE_MCP_HTTP_PORT", 1),
+    mcpHttpAllowNonLoopback: process.env.TATESIDE_MCP_HTTP_ALLOW_NON_LOOPBACK === "1",
     sharePoint: getSharePointConfig(),
   };
 }
