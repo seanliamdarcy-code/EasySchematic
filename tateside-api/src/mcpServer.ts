@@ -34,6 +34,7 @@ export function createTateSideMcpServer(context: McpLibraryContext): McpServer {
   const tools = createMcpLibraryTools(context);
   const register = (name: keyof typeof MCP_LIBRARY_TOOL_DESCRIPTIONS, inputSchema: z.ZodObject<z.ZodRawShape>) => server.registerTool(name, {
     description: MCP_LIBRARY_TOOL_DESCRIPTIONS[name], inputSchema,
+    annotations: { readOnlyHint: !name.startsWith("create_") },
   }, (input) => {
     try {
       return result(tools.execute(name, input));
