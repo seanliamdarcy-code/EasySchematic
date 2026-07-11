@@ -3,6 +3,13 @@ import type { DatabaseSync } from "node:sqlite";
 import type { DeviceTemplate } from "../../src/types.js";
 import type { ApiConfig } from "./config.js";
 import { listCurrentTemplates } from "./deviceStore.js";
+import {
+  getJetbuiltCandidateCooccurrence,
+  getJetbuiltCandidateUsage,
+  getJetbuiltLibraryCandidate,
+  getJetbuiltLibraryCandidates,
+  getJetbuiltLibraryCoverageSummary,
+} from "./jetbuiltLibraryDiscovery.js";
 import { auditLibraryTemplates } from "./libraryAudit.js";
 import { createLibraryDoctorProposal } from "./libraryDoctorStore.js";
 import { LibraryIntelligence } from "./mcpLibraryIntelligence.js";
@@ -29,6 +36,11 @@ export class McpLibraryError extends Error {
 export interface McpLibraryContext {
   db: DatabaseSync;
   config: Pick<ApiConfig, "mcpLibraryEnabled" | "dynamicTaxonomyEnabled" | "libraryAuditEnabled" | "libraryDoctorEnabled">;
+  /**
+   * Optional separate Jetbuilt history database for read-only discovery tools.
+   * Never mutates history, templates, taxonomy, or schematics.
+   */
+  historyDb?: DatabaseSync | null;
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -98,6 +110,26 @@ function requireDoctor(context: McpLibraryContext): void {
 function requireIntelligence(context: McpLibraryContext): void {
   requireAudit(context);
   requireTaxonomy(context);
+}
+
+function requireHistoryDiscovery(context: McpLibraryContext): DatabaseSync {
+  requireEnabled(context);
+  if (!context.historyDb) {
+    throw new McpLibraryError("Jetbuilt history discovery is unavailable: history database is not configured");
+  }
+  return context.historyDb;
+}
+
+function optionalBool(value: unknown, label: string): boolean | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "boolean") throw new McpLibraryError(`${label} must be a boolean`);
+  return value;
+}
+
+function optionalNumber(value: unknown, label: string): number | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new McpLibraryError(`${label} must be a number`);
+  return value;
 }
 
 function templateForId(db: DatabaseSync, id: string): DeviceTemplate {
@@ -288,6 +320,97 @@ export function createMcpLibraryTools(context: McpLibraryContext) {
       }
       case "create_taxonomy_registry_change_proposal":
         return registryChangeProposal(context, input);
+      case "get_jetbuilt_library_coverage_summary": {
+        const historyDb = requireHistoryDiscovery(context);
+        return {
+          success: true,
+          readOnly: true,
+          ...getJetbuiltLibraryCoverageSummary(historyDb, {
+            cohort: text(input.cohort, "cohort") as never,
+            stage: text(input.stage, "stage"),
+            manufacturer: text(input.manufacturer, "manufacturer"),
+            from: text(input.from, "from"),
+            to: text(input.to, "to"),
+            dateBasis: text(input.dateBasis, "dateBasis") as "created" | "updated" | undefined,
+          }),
+          warnings: ["Historical frequency is triage evidence only and is not canonical device truth."],
+        };
+      }
+      case "get_jetbuilt_library_candidates": {
+        const historyDb = requireHistoryDiscovery(context);
+        return {
+          success: true,
+          readOnly: true,
+          ...getJetbuiltLibraryCandidates(historyDb, {
+            cohort: text(input.cohort, "cohort") as never,
+            stage: text(input.stage, "stage"),
+            manufacturer: text(input.manufacturer, "manufacturer"),
+            from: text(input.from, "from"),
+            to: text(input.to, "to"),
+            dateBasis: text(input.dateBasis, "dateBasis") as "created" | "updated" | undefined,
+            limit: limit(input.limit),
+            offset: offset(input.offset),
+            minimumProjectCount: optionalNumber(input.minimumProjectCount, "minimumProjectCount"),
+            minimumRoomCount: optionalNumber(input.minimumRoomCount, "minimumRoomCount"),
+            minimumDeliveredOrInstalledProjectCount: optionalNumber(input.minimumDeliveredOrInstalledProjectCount, "minimumDeliveredOrInstalledProjectCount"),
+            excludeKnownNonSchematic: optionalBool(input.excludeKnownNonSchematic, "excludeKnownNonSchematic"),
+            exactCanonicalMatch: optionalBool(input.exactCanonicalMatch, "exactCanonicalMatch"),
+            minimumPriorityScore: optionalNumber(input.minimumPriorityScore, "minimumPriorityScore"),
+          }),
+          warnings: [
+            "Candidates are deterministic historical triage only.",
+            "Does not create templates, aliases, or Library Doctor proposals.",
+          ],
+        };
+      }
+      case "get_jetbuilt_library_candidate": {
+        const historyDb = requireHistoryDiscovery(context);
+        const candidateKey = text(input.candidateKey, "candidateKey");
+        const manufacturer = text(input.manufacturer, "manufacturer");
+        const model = text(input.model, "model");
+        if (!candidateKey && !(manufacturer && model)) throw new McpLibraryError("candidateKey or manufacturer+model is required");
+        return {
+          success: true,
+          readOnly: true,
+          ...getJetbuiltLibraryCandidate(
+            historyDb,
+            candidateKey ?? manufacturer!,
+            candidateKey ? undefined : model,
+            { canonicalDb: context.db },
+          ),
+        };
+      }
+      case "get_jetbuilt_candidate_usage": {
+        const historyDb = requireHistoryDiscovery(context);
+        const candidateKey = text(input.candidateKey, "candidateKey");
+        const manufacturer = text(input.manufacturer, "manufacturer");
+        const model = text(input.model, "model");
+        if (!candidateKey && !(manufacturer && model)) throw new McpLibraryError("candidateKey or manufacturer+model is required");
+        return {
+          success: true,
+          readOnly: true,
+          ...getJetbuiltCandidateUsage(historyDb, candidateKey ?? manufacturer!, candidateKey ? undefined : model),
+        };
+      }
+      case "get_jetbuilt_candidate_cooccurrence": {
+        const historyDb = requireHistoryDiscovery(context);
+        return {
+          success: true,
+          readOnly: true,
+          ...getJetbuiltCandidateCooccurrence(historyDb, {
+            candidateKey: text(input.candidateKey, "candidateKey"),
+            manufacturer: text(input.manufacturer, "manufacturer"),
+            model: text(input.model, "model"),
+            cohort: text(input.cohort, "cohort") as never,
+            stage: text(input.stage, "stage"),
+            from: text(input.from, "from"),
+            to: text(input.to, "to"),
+            limit: limit(input.limit),
+            offset: offset(input.offset),
+            minimumRoomCount: optionalNumber(input.minimumRoomCount, "minimumRoomCount"),
+          }),
+        };
+      }
       default:
         throw new McpLibraryError(`Unknown MCP tool: ${name}`);
     }
@@ -316,4 +439,9 @@ export const MCP_LIBRARY_TOOL_DESCRIPTIONS: Record<string, string> = {
   create_library_doctor_proposal: "Create one validated Library Doctor queue proposal for an existing template. This creates a proposal only and never applies or changes the template.",
   preview_taxonomy_registry_change: "Read-only preview of a taxonomy registry change. Returns readOnly true and a deterministic changeKey; never commits registry data.",
   create_taxonomy_registry_change_proposal: "Create a Library Doctor taxonomy-registry-change proposal from a current preview's changeKey. It never commits or applies the registry change.",
+  get_jetbuilt_library_coverage_summary: "Read Jetbuilt historical library-discovery coverage summary from the configured history database. Defaults exclude nothing here; use candidates for ranked triage. Never writes, never backfills, never mutates templates/taxonomy/schematics.",
+  get_jetbuilt_library_candidates: "Read ranked unmatched Jetbuilt historical device candidates (default excludes known non-schematic and exact matches). Filters: cohort, stage, manufacturer, dates, minimum project/room/delivered counts, excludeKnownNonSchematic, exactCanonicalMatch, priority threshold, limit/offset. Quantity does not dominate ranking. Never writes.",
+  get_jetbuilt_library_candidate: "Read one Jetbuilt discovery candidate evidence bundle with usage, co-occurrence, and non-authoritative possible related canonical templates. Inputs: candidateKey or manufacturer+model. Never writes or auto-links.",
+  get_jetbuilt_candidate_usage: "Read stage/cohort/time usage for one Jetbuilt discovery candidate. Distinguishes projects, rooms, and line occurrences. Never writes.",
+  get_jetbuilt_candidate_cooccurrence: "Read what commonly appears in the same rooms as one Jetbuilt discovery candidate. Distinguishes line occurrences, distinct rooms, and distinct projects. Never writes.",
 };

@@ -1,9 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { existsSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { getConfig } from "./config.js";
 import { assertMigrationsApplied, openDatabase } from "./db.js";
+import { openJetbuiltHistoryDatabase, runJetbuiltHistoryMigrations } from "./jetbuiltHistoryStore.js";
 import { createMcpLibraryTools, MCP_LIBRARY_TOOL_DESCRIPTIONS, McpLibraryError, type McpLibraryContext } from "./mcpLibrary.js";
 
 const common = {
@@ -64,14 +66,54 @@ export function createTateSideMcpServer(context: McpLibraryContext): McpServer {
   register("create_library_doctor_proposal", z.object({ templateId: z.string(), field: z.string(), proposedValue: z.unknown().optional(), currentValue: z.unknown().optional(), proposalType: z.string(), confidence: z.string().optional(), risk: z.string().optional(), sourceIssueCode: z.string().optional(), sourceIssueGroup: z.string().optional(), sourceCurrentValue: z.unknown().optional(), evidenceRefs: z.array(z.unknown()).optional(), rationale: z.string().optional(), createdBy: z.string().optional(), supersedesProposalId: z.string().optional(), generationKey: z.string().optional() }));
   register("preview_taxonomy_registry_change", z.object({ operation: z.string(), payload: z.record(z.string(), z.unknown()) }));
   register("create_taxonomy_registry_change_proposal", z.object({ operation: z.string(), payload: z.record(z.string(), z.unknown()), changeKey: z.string(), rationale: z.string().optional(), createdBy: z.string().optional() }));
+  // Read-only Jetbuilt historical discovery (requires optional historyDb on context).
+  register("get_jetbuilt_library_coverage_summary", z.object({
+    cohort: z.string().optional(), stage: z.string().optional(), manufacturer: z.string().optional(),
+    from: z.string().optional(), to: z.string().optional(), dateBasis: z.enum(["created", "updated"]).optional(),
+  }));
+  register("get_jetbuilt_library_candidates", z.object({
+    cohort: z.string().optional(), stage: z.string().optional(), manufacturer: z.string().optional(),
+    from: z.string().optional(), to: z.string().optional(), dateBasis: z.enum(["created", "updated"]).optional(),
+    limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).max(1_000_000).optional(),
+    minimumProjectCount: z.number().int().min(0).max(1_000_000).optional(),
+    minimumRoomCount: z.number().int().min(0).max(1_000_000).optional(),
+    minimumDeliveredOrInstalledProjectCount: z.number().int().min(0).max(1_000_000).optional(),
+    excludeKnownNonSchematic: z.boolean().optional(),
+    exactCanonicalMatch: z.boolean().optional(),
+    minimumPriorityScore: z.number().optional(),
+  }));
+  register("get_jetbuilt_library_candidate", z.object({
+    candidateKey: z.string().optional(), manufacturer: z.string().optional(), model: z.string().optional(),
+  }));
+  register("get_jetbuilt_candidate_usage", z.object({
+    candidateKey: z.string().optional(), manufacturer: z.string().optional(), model: z.string().optional(),
+  }));
+  register("get_jetbuilt_candidate_cooccurrence", z.object({
+    candidateKey: z.string().optional(), manufacturer: z.string().optional(), model: z.string().optional(),
+    cohort: z.string().optional(), stage: z.string().optional(), from: z.string().optional(), to: z.string().optional(),
+    limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).max(1_000_000).optional(),
+    minimumRoomCount: z.number().int().min(1).max(1_000_000).optional(),
+  }));
   return server;
+}
+
+function openOptionalHistoryDatabase(): DatabaseSync | null {
+  const historyPath = process.env.TATESIDE_JETBUILT_HISTORY_DB_PATH?.trim();
+  if (!historyPath) return null;
+  if (!existsSync(historyPath)) {
+    throw new McpLibraryError(`Configured Jetbuilt history database does not exist: ${historyPath}`);
+  }
+  const historyDb = openJetbuiltHistoryDatabase(historyPath);
+  runJetbuiltHistoryMigrations(historyDb);
+  return historyDb;
 }
 
 async function main(): Promise<void> {
   const config = getConfig();
   if (!config.mcpLibraryEnabled) throw new McpLibraryError("Set TATESIDE_MCP_LIBRARY_ENABLED=1 to start the MCP library server");
   const db = openMcpDatabase(config.dbPath);
-  const server = createTateSideMcpServer({ db, config });
+  const historyDb = openOptionalHistoryDatabase();
+  const server = createTateSideMcpServer({ db, config, historyDb });
   await server.connect(new StdioServerTransport());
 }
 

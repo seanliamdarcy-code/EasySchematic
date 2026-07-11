@@ -46,6 +46,15 @@ import {
   summarizeRepeatedPatterns,
 } from "../dist-tateside-api/tateside-api/src/jetbuiltHistoryIntelligence.js";
 import { selectStratifiedHistoryProjectIds, syncJetbuiltHistory, validateHistoryBounds } from "../dist-tateside-api/tateside-api/src/jetbuiltHistorySync.js";
+import {
+  getJetbuiltCandidateCooccurrence,
+  getJetbuiltCandidateUsage,
+  getJetbuiltLibraryCandidate,
+  getJetbuiltLibraryCandidates,
+  getJetbuiltLibraryCoverageSummary,
+  scoreJetbuiltDiscoveryCandidate,
+} from "../dist-tateside-api/tateside-api/src/jetbuiltLibraryDiscovery.js";
+import { createMcpLibraryTools } from "../dist-tateside-api/tateside-api/src/mcpLibrary.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 const fixture = JSON.parse(readFileSync(path.join(import.meta.dirname, "fixtures", "jetbuilt-history-project.json"), "utf8"));
@@ -635,6 +644,202 @@ test("phase 2 classification and dual fingerprints preserve full source and filt
     const again = getCommonRoomBomPatterns(history.db, { minimumOccurrence: 2, fingerprintMode: "full-source" });
     assert.deepEqual(again.items.map((item) => item.fingerprint), fullRoomPatterns.items.map((item) => item.fingerprint));
   } finally {
+    history.close();
+  }
+});
+
+test("phase 3 jetbuilt library discovery ranks real devices without quantity domination", () => {
+  const history = tempDb();
+  const canonicalDir = mkdtempSync(path.join(tmpdir(), "jetbuilt-discovery-canonical-"));
+  const canonical = openDatabase(path.join(canonicalDir, "canonical.db"));
+  try {
+    runMigrations(canonical);
+    saveTemplates(canonical, { templates: [
+      { label: "Logitech Rally", manufacturer: "Logitech", modelNumber: "Rally", deviceType: "camera", category: "video", ports: [] },
+      { label: "Acme Display", manufacturer: "Acme", modelNumber: "Display-55", deviceType: "display", category: "video", ports: [] },
+    ] });
+
+    const run = createSyncRun(history.db, "fixture", {});
+    const now = Date.parse("2026-07-01T00:00:00Z");
+
+    // High quantity cable-like identity in one estimate project only — must not dominate.
+    ingestHistoryProject(history.db, run, {
+      project: { id: "P-cable", client: { id: "c-cable" }, stage: "estimate", created_at: "2024-01-01T00:00:00Z", updated_at: "2024-01-01T00:00:00Z" },
+      rooms: [{ id: "R-cable", created_at: "2024-01-01T00:00:00Z", updated_at: "2024-01-01T00:00:00Z" }],
+      systems: [{ id: "S-cable", created_at: "2024-01-01T00:00:00Z", updated_at: "2024-01-01T00:00:00Z" }],
+      items: [{ id: "L-cable", manufacturer_name: "Tateside", model: "CAT6 cable", quantity: 2310, room: { id: "R-cable" }, system: { id: "S-cable" }, created_at: "2024-01-01T00:00:00Z" }],
+    });
+
+    // Known non-schematic installation lines across multiple completed projects — excluded by default.
+    for (const [projectId, roomId, systemId, clientId] of [
+      ["P-inst-1", "R-inst-1", "S-inst-1", "c1"],
+      ["P-inst-2", "R-inst-2", "S-inst-2", "c2"],
+      ["P-inst-3", "R-inst-3", "S-inst-3", "c3"],
+    ]) {
+      ingestHistoryProject(history.db, run, internalOnlyBundle({
+        projectId, clientId, stage: "completed", roomId, systemId, createdAt: "2025-06-01T00:00:00Z",
+        manufacturer: "Tateside -", model: "Installation", quantity: 5,
+      }));
+    }
+
+    // Real unmatched device across delivered projects and rooms.
+    for (const [projectId, roomId, systemId, clientId, stage, createdAt] of [
+      ["P-logi-1", "R-logi-1", "S-logi-1", "c-l1", "completed", "2025-11-01T00:00:00Z"],
+      ["P-logi-2", "R-logi-2", "S-logi-2", "c-l2", "install", "2025-12-01T00:00:00Z"],
+      ["P-logi-3", "R-logi-3a", "S-logi-3", "c-l3", "completed", "2026-01-15T00:00:00Z"],
+    ]) {
+      ingestHistoryProject(history.db, run, {
+        project: { id: projectId, client: { id: clientId }, stage, created_at: createdAt, updated_at: createdAt },
+        rooms: [{ id: roomId, created_at: createdAt, updated_at: createdAt }],
+        systems: [{ id: systemId, created_at: createdAt, updated_at: createdAt }],
+        items: [
+          { id: `${projectId}-meetup`, manufacturer_name: "Logitech", model: "Meetup", quantity: 1, room: { id: roomId }, system: { id: systemId }, created_at: createdAt },
+          { id: `${projectId}-mic`, manufacturer_name: "Logitech", model: "Expansion Mic for Meetup", quantity: 1, room: { id: roomId }, system: { id: systemId }, created_at: createdAt },
+        ],
+      });
+    }
+    // Extra room for meetup in third project to raise room count.
+    history.db.prepare("INSERT INTO rooms(jetbuilt_id, project_id, name_raw, last_seen_run_id) VALUES ('R-logi-3b','P-logi-3','extra',?)").run(run);
+    history.db.prepare("INSERT INTO line_items(jetbuilt_id, project_id, room_id, system_id, manufacturer_raw, model_raw, quantity_raw, quantity_numeric, quantity_state, last_seen_run_id, source_created_at) VALUES ('P-logi-3-meetup-b','P-logi-3','R-logi-3b','S-logi-3','Logitech','Meetup','1',1,'valid',?,'2026-01-15T00:00:00Z')").run(run);
+
+    // Exact-matched Acme display — excluded from default unmatched candidates.
+    ingestHistoryProject(history.db, run, intelligenceBundle({
+      projectId: "P-matched", clientId: "c-matched", stage: "completed", roomId: "R-matched", systemId: "S-matched",
+      displayQuantity: 1, createdAt: "2026-02-01T00:00:00Z",
+    }));
+    history.db.prepare("INSERT INTO canonical_template_links(project_id, line_item_id, canonical_template_id, match_method, confidence, matched_at, matcher_version) VALUES ('P-matched','P-matched-display','template-display','exact_normalized_manufacturer_model','deterministic','2026-07-11T00:00:00Z','exact-v1')").run();
+
+    // Formatting-equivalent manufacturer forms share candidate key.
+    ingestHistoryProject(history.db, run, {
+      project: { id: "P-neat", client: { id: "c-neat" }, stage: "completed", created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z" },
+      rooms: [{ id: "R-neat", created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z" }],
+      systems: [{ id: "S-neat", created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z" }],
+      items: [{ id: "L-neat", manufacturer_name: "Neat", model: "Neat Center SE", quantity: 1, room: { id: "R-neat" }, system: { id: "S-neat" }, created_at: "2026-03-01T00:00:00Z" }],
+    });
+
+    const summary = getJetbuiltLibraryCoverageSummary(history.db, {}, now);
+    assert.equal(summary.classificationVersion, "jetbuilt-schematic-relevance-v1");
+    assert.equal(summary.canonicalMatcherVersion, "exact-v1");
+    assert.ok(summary.knownNonSchematicLines >= 3);
+    assert.ok(summary.unmatchedLines > summary.eligibleUnmatchedCandidateLines);
+    assert.ok(summary.distinctEligibleCandidateIdentities >= 3);
+
+    const ranked = getJetbuiltLibraryCandidates(history.db, { limit: 25 }, now);
+    assert.equal(ranked.filtersApplied.excludeKnownNonSchematic, true);
+    assert.equal(ranked.filtersApplied.exactCanonicalMatch, false);
+    assert.ok(ranked.items.every((item) => item.classification.schematicRelevant !== false));
+    assert.ok(ranked.items.every((item) => item.exactCanonicalMatch === false));
+    assert.ok(!ranked.items.some((item) => item.candidateKey === "tateside::installation"));
+    assert.ok(!ranked.items.some((item) => item.candidateKey === "acme::display55"));
+
+    const meetup = ranked.items.find((item) => item.candidateKey === "logitech::meetup");
+    assert.ok(meetup);
+    assert.equal(meetup.projectCount, 3);
+    assert.equal(meetup.roomCount, 4);
+    assert.equal(meetup.completedProjectCount, 2);
+    assert.equal(meetup.installProjectCount, 1);
+    assert.equal(meetup.deliveredOrInstalledProjectCount, 3);
+    assert.ok(meetup.priorityReasons.some((reason) => reason.includes("delivered-or-installed")));
+    assert.ok(meetup.priorityScore > 0);
+
+    const cable = getJetbuiltLibraryCandidates(history.db, { excludeKnownNonSchematic: true, exactCanonicalMatch: false, minimumProjectCount: 1 }, now)
+      .items.find((item) => item.candidateKey === "tateside::cat6cable");
+    assert.ok(cable);
+    assert.ok(cable.validQuantityTotal >= 2310);
+    assert.ok(meetup.priorityScore > cable.priorityScore);
+
+    // No fuzzy merge: meetup and expansion mic remain distinct.
+    assert.ok(ranked.items.some((item) => item.candidateKey === "logitech::expansionmicformeetup"));
+    assert.notEqual(meetup.candidateKey, "logitech::expansionmicformeetup");
+
+    // Include known non-schematic when explicitly requested.
+    const withInternal = getJetbuiltLibraryCandidates(history.db, { excludeKnownNonSchematic: false, exactCanonicalMatch: false }, now);
+    assert.ok(withInternal.items.some((item) => item.candidateKey === "tateside::installation"));
+
+    // Manufacturer filter.
+    const logitechOnly = getJetbuiltLibraryCandidates(history.db, { manufacturer: "Logitech" }, now);
+    assert.ok(logitechOnly.items.length >= 1);
+    assert.ok(logitechOnly.items.every((item) => item.normalizedManufacturer === "logitech"));
+
+    // Cohort filter.
+    const completedOnly = getJetbuiltLibraryCandidates(history.db, { cohort: "completed" }, now);
+    assert.ok(completedOnly.items.every((item) => item.cohortCounts.completed >= 1 || item.projectCount >= 1));
+
+    // Pagination deterministic.
+    const page1 = getJetbuiltLibraryCandidates(history.db, { limit: 1, offset: 0 }, now);
+    const page2 = getJetbuiltLibraryCandidates(history.db, { limit: 1, offset: 1 }, now);
+    assert.equal(page1.count, 1);
+    assert.equal(page1.hasMore, page1.total > 1);
+    if (page1.total > 1) assert.notEqual(page1.items[0].candidateKey, page2.items[0].candidateKey);
+    const again = getJetbuiltLibraryCandidates(history.db, { limit: 10 }, now);
+    assert.deepEqual(
+      getJetbuiltLibraryCandidates(history.db, { limit: 10 }, now).items.map((item) => item.candidateKey),
+      again.items.map((item) => item.candidateKey),
+    );
+
+    // Detail + usage + co-occurrence.
+    const detail = getJetbuiltLibraryCandidate(history.db, "logitech::meetup", undefined, { canonicalDb: canonical, nowMs: now });
+    assert.equal(detail.candidate.candidateKey, "logitech::meetup");
+    assert.ok(detail.canonicalCorrelation.manufacturerPresentInLibrary);
+    assert.ok(Array.isArray(detail.canonicalCorrelation.possibleRelatedTemplates));
+    assert.ok(detail.canonicalCorrelation.possibleRelatedTemplates.every((row) => row.authority === "candidate-review-evidence-only"));
+    assert.equal(detail.canonicalCorrelation.exactCanonicalTemplates.length, 0);
+
+    const usage = getJetbuiltCandidateUsage(history.db, "Logitech", "Meetup");
+    assert.equal(usage.lineItemOccurrences, 4);
+    assert.equal(usage.projectCount, 3);
+    assert.equal(usage.roomCount, 4);
+    assert.ok(usage.byStage.some((row) => row.stage === "completed"));
+    assert.ok(usage.cohortProjectCounts["delivered-or-installed"] >= 3);
+
+    const co = getJetbuiltCandidateCooccurrence(history.db, { candidateKey: "logitech::meetup", minimumRoomCount: 1 });
+    const mic = co.items.find((item) => item.candidateKey === "logitech::expansionmicformeetup");
+    assert.ok(mic);
+    assert.equal(mic.roomCount, 3);
+    assert.equal(mic.projectCount, 3);
+    assert.ok(mic.lineItemOccurrences >= 3);
+
+    // Ranking function: quantity not used.
+    const highQtyLowProjects = scoreJetbuiltDiscoveryCandidate({
+      deliveredOrInstalledProjectCount: 0, completedProjectCount: 0, installProjectCount: 0,
+      projectCount: 1, roomCount: 1, lastSeen: "2024-01-01T00:00:00Z", hasManufacturerAndModel: true,
+    }, now);
+    const multiDelivered = scoreJetbuiltDiscoveryCandidate({
+      deliveredOrInstalledProjectCount: 3, completedProjectCount: 2, installProjectCount: 1,
+      projectCount: 3, roomCount: 4, lastSeen: "2026-01-15T00:00:00Z", hasManufacturerAndModel: true,
+    }, now);
+    assert.ok(multiDelivered.priorityScore > highQtyLowProjects.priorityScore);
+
+    // No mutations.
+    const beforeLinks = history.db.prepare("SELECT count(*) count FROM canonical_template_links").get().count;
+    const beforeDevices = canonical.prepare("SELECT count(*) count FROM devices").get().count;
+    const beforeTaxonomy = canonical.prepare("SELECT count(*) count FROM taxonomy_registry_values").get().count;
+    getJetbuiltLibraryCandidates(history.db, {}, now);
+    getJetbuiltLibraryCandidate(history.db, "logitech::meetup", undefined, { canonicalDb: canonical, nowMs: now });
+    assert.equal(history.db.prepare("SELECT count(*) count FROM canonical_template_links").get().count, beforeLinks);
+    assert.equal(canonical.prepare("SELECT count(*) count FROM devices").get().count, beforeDevices);
+    assert.equal(canonical.prepare("SELECT count(*) count FROM taxonomy_registry_values").get().count, beforeTaxonomy);
+
+    // Thin MCP adapter remains read-only for discovery.
+    const tools = createMcpLibraryTools({
+      db: canonical,
+      config: { mcpLibraryEnabled: true, dynamicTaxonomyEnabled: true, libraryAuditEnabled: true, libraryDoctorEnabled: true },
+      historyDb: history.db,
+    });
+    const mcpCandidates = tools.execute("get_jetbuilt_library_candidates", { limit: 5 });
+    assert.equal(mcpCandidates.success, true);
+    assert.equal(mcpCandidates.readOnly, true);
+    assert.ok(mcpCandidates.items.some((item) => item.candidateKey === "logitech::meetup"));
+    const mcpDetail = tools.execute("get_jetbuilt_library_candidate", { candidateKey: "logitech::meetup" });
+    assert.equal(mcpDetail.success, true);
+    assert.equal(mcpDetail.readOnly, true);
+    assert.throws(() => createMcpLibraryTools({
+      db: canonical,
+      config: { mcpLibraryEnabled: true, dynamicTaxonomyEnabled: true, libraryAuditEnabled: true, libraryDoctorEnabled: true },
+    }).execute("get_jetbuilt_library_candidates", {}), /history database is not configured/);
+  } finally {
+    canonical.close();
+    rmSync(canonicalDir, { recursive: true, force: true });
     history.close();
   }
 });
