@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { DeviceTemplate } from "../../src/types.js";
 import { listCurrentTemplates } from "./deviceStore.js";
+import { getHistoryRoomDeviceCooccurrence, type DeviceCooccurrenceInput } from "./jetbuiltHistoryIntelligence.js";
 import { normalizedLookupKey } from "./quoteImport.js";
 
 const SOURCE_MIGRATIONS = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "jetbuilt-history-migrations");
@@ -335,23 +336,8 @@ export function getRoomBom(db: DatabaseSync, projectId: string, roomId: string):
     .all(projectId, roomId);
 }
 
-export function getRoomDeviceCooccurrence(db: DatabaseSync, input: { manufacturer?: string; model?: string; canonicalTemplateId?: string; limit?: number }): unknown[] {
-  if (!input.canonicalTemplateId && !(input.manufacturer && input.model)) throw new Error("manufacturer/model or canonicalTemplateId is required");
-  const target = input.canonicalTemplateId
-    ? "EXISTS (SELECT 1 FROM line_items t JOIN canonical_template_links tc ON tc.project_id=t.project_id AND tc.line_item_id=t.jetbuilt_id WHERE t.project_id=l.project_id AND t.room_id=l.room_id AND tc.canonical_template_id=?)"
-    : "EXISTS (SELECT 1 FROM line_items t WHERE t.project_id=l.project_id AND t.room_id=l.room_id AND lower(t.manufacturer_raw)=lower(?) AND lower(t.model_raw)=lower(?))";
-  const values = input.canonicalTemplateId ? [input.canonicalTemplateId] : [input.manufacturer as string, input.model as string];
-  const excludeTarget = input.canonicalTemplateId
-    ? "NOT EXISTS (SELECT 1 FROM canonical_template_links lc WHERE lc.project_id=l.project_id AND lc.line_item_id=l.jetbuilt_id AND lc.canonical_template_id=?)"
-    : "NOT (lower(coalesce(l.manufacturer_raw,''))=lower(?) AND lower(coalesce(l.model_raw,''))=lower(?))";
-  const exclusionValues = input.canonicalTemplateId ? [input.canonicalTemplateId] : [input.manufacturer as string, input.model as string];
-  return db.prepare(`SELECT l.manufacturer_raw, l.model_raw, count(*) cooccurrenceCount,
-    count(DISTINCT l.project_id || ':' || l.room_id) roomCount, count(DISTINCT l.project_id) projectCount,
-    min(l.project_id) exampleProjectId, min(l.room_id) exampleRoomId
-    FROM line_items l WHERE l.room_id IS NOT NULL AND ${target} AND ${excludeTarget}
-    GROUP BY lower(l.manufacturer_raw), lower(l.model_raw)
-    ORDER BY roomCount DESC, cooccurrenceCount DESC, lower(l.manufacturer_raw), lower(l.model_raw) LIMIT ?`)
-    .all(...values, ...exclusionValues, Math.min(100, Math.max(1, input.limit ?? 25)));
+export function getRoomDeviceCooccurrence(db: DatabaseSync, input: DeviceCooccurrenceInput): unknown[] {
+  return getHistoryRoomDeviceCooccurrence(db, input).items as unknown[];
 }
 
 export function getUnmatchedHistoryLines(db: DatabaseSync, limit = 25, offset = 0): Record<string, unknown> {

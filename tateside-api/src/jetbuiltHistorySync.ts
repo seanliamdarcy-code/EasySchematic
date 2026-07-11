@@ -11,6 +11,7 @@ import {
   incrementSyncRequestCount,
   ingestHistoryProject,
 } from "./jetbuiltHistoryStore.js";
+import { normalizeJetbuiltStage } from "./jetbuiltHistoryCohorts.js";
 
 export interface JetbuiltHistoryBounds {
   projectIds?: string[];
@@ -19,6 +20,36 @@ export interface JetbuiltHistoryBounds {
   minUpdatedAt?: string;
   maxUpdatedAt?: string;
   maxProjectCount?: number;
+}
+
+export interface JetbuiltHistorySampleProject {
+  id: string;
+  stage?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export function selectStratifiedHistoryProjectIds(
+  projects: readonly JetbuiltHistorySampleProject[],
+  quotas: Record<string, number>,
+  maxProjectCount = 100,
+): string[] {
+  if (!Number.isInteger(maxProjectCount) || maxProjectCount < 1 || maxProjectCount > 100) throw new Error("maxProjectCount must be an integer from 1 to 100");
+  const selected: string[] = [];
+  for (const stage of Object.keys(quotas).sort()) {
+    const quota = quotas[stage];
+    if (!Number.isInteger(quota) || quota < 0) throw new Error(`quota for ${stage} must be a non-negative integer`);
+    const candidates = projects
+      .filter((project) => normalizeJetbuiltStage(project.stage) === normalizeJetbuiltStage(stage))
+      .sort((left, right) => `${left.updatedAt ?? left.createdAt ?? ""}:${left.id}`.localeCompare(`${right.updatedAt ?? right.createdAt ?? ""}:${right.id}`));
+    if (quota === 0 || candidates.length === 0) continue;
+    if (quota >= candidates.length) selected.push(...candidates.map((project) => project.id));
+    else if (quota === 1) selected.push(candidates[Math.floor(candidates.length / 2)].id);
+    else selected.push(...Array.from({ length: quota }, (_, index) => candidates[Math.round(index * (candidates.length - 1) / (quota - 1))].id));
+  }
+  const unique = [...new Set(selected)];
+  if (unique.length > maxProjectCount) throw new Error("stratified sample exceeds maxProjectCount");
+  return unique;
 }
 
 function validateDate(value: string | undefined, name: string): void {
