@@ -31,6 +31,11 @@ export interface JetbuiltClientOptions {
   baseUrl?: string;
   indexPath: string;
   refreshMs: number;
+  maxRetries?: number;
+  retryBaseMs?: number;
+  fetchImpl?: typeof fetch;
+  sleepImpl?: (ms: number) => Promise<void>;
+  onRequest?: () => void;
 }
 
 interface JetbuiltRawProject {
@@ -234,43 +239,67 @@ function toClientSearchResult(client: JetbuiltRawClient, projectCount: number): 
   };
 }
 
-async function requestJson<T>(url: string, options: JetbuiltClientOptions): Promise<T> {
-  const elapsed = Date.now() - lastRequestAt;
-  if (elapsed < REQUEST_GAP_MS) {
-    await sleep(REQUEST_GAP_MS - elapsed);
+export function createJetbuiltGetOnlyFetch(fetchImpl: typeof fetch = fetch): typeof fetch {
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+    if (method !== "GET") throw new Error(`Jetbuilt history importer only permits GET requests, received ${method}`);
+    return fetchImpl(input, { ...init, method: "GET" });
+  }) as typeof fetch;
+}
+
+async function fetchResponse(url: string, options: JetbuiltClientOptions): Promise<Response> {
+  if (!options.apiKey.trim()) throw new Error("JETBUILT_API_KEY is not configured");
+  const wait = options.sleepImpl ?? sleep;
+  const getOnlyFetch = createJetbuiltGetOnlyFetch(options.fetchImpl ?? fetch);
+  const maxRetries = options.maxRetries ?? 3;
+  const retryBaseMs = options.retryBaseMs ?? 750;
+  let bearerFallbackUsed = false;
+
+  for (let attempt = 0; ; attempt += 1) {
+    const elapsed = Date.now() - lastRequestAt;
+    if (elapsed < REQUEST_GAP_MS) await wait(REQUEST_GAP_MS - elapsed);
+    lastRequestAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new Error(`Jetbuilt request timed out after ${REQUEST_TIMEOUT_MS}ms`)), REQUEST_TIMEOUT_MS);
+    options.onRequest?.();
+    let response: Response;
+    try {
+      response = await getOnlyFetch(url, {
+        headers: {
+          ...DEFAULT_HEADERS,
+          Authorization: authMode === "Bearer" ? `Bearer ${options.apiKey}` : `Token token=${options.apiKey}`,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (response.status === 401 && authMode === "Bearer" && !bearerFallbackUsed) {
+      authMode = "Token";
+      bearerFallbackUsed = true;
+      continue;
+    }
+    if ((response.status === 429 || response.status >= 500) && attempt < maxRetries) {
+      const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
+      await wait(Math.max(retryAfter, Math.min(retryBaseMs * (2 ** attempt), 30_000)));
+      continue;
+    }
+    return response;
   }
-  lastRequestAt = Date.now();
+}
 
-  const headers = {
-    ...DEFAULT_HEADERS,
-    Authorization: authMode === "Bearer" ? `Bearer ${options.apiKey}` : `Token token=${options.apiKey}`,
-  };
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error(`Jetbuilt request timed out after ${REQUEST_TIMEOUT_MS}ms`)), REQUEST_TIMEOUT_MS);
-  const response = await fetch(url, {
-    headers,
-    signal: controller.signal,
-  });
-  clearTimeout(timeout);
-
-  if (response.status === 401 && authMode === "Bearer") {
-    authMode = "Token";
-    return requestJson<T>(url, options);
-  }
-
-  if (response.status === 429 || response.status >= 500) {
-    const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
-    await sleep(Math.max(retryAfter, 750));
-    return requestJson<T>(url, options);
-  }
-
+export async function jetbuiltGetJson<T>(url: string, options: JetbuiltClientOptions): Promise<T> {
+  const response = await fetchResponse(url, options);
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`Jetbuilt request failed (${response.status})${text ? `: ${text}` : ""}`);
   }
-
-  return response.json() as Promise<T>;
+  try {
+    return await response.json() as T;
+  } catch {
+    throw new Error(`Jetbuilt request returned malformed JSON (${response.status})`);
+  }
 }
 
 function extractCollectionItems(json: unknown): unknown[] {
@@ -281,52 +310,27 @@ function extractCollectionItems(json: unknown): unknown[] {
     if (Array.isArray(record.clients)) return record.clients;
     if (Array.isArray(record.items)) return record.items;
     if (Array.isArray(record.line_items)) return record.line_items;
+    if (Array.isArray(record.rooms)) return record.rooms;
+    if (Array.isArray(record.systems)) return record.systems;
+    if (Array.isArray(record.versions)) return record.versions;
     if (Array.isArray(record.data)) return record.data;
   }
   return [];
 }
 
-async function fetchPagedCollection(startUrl: string, options: JetbuiltClientOptions): Promise<unknown[]> {
+export async function fetchJetbuiltPagedCollection(startUrl: string, options: JetbuiltClientOptions, maxItems = Number.POSITIVE_INFINITY): Promise<unknown[]> {
   const all: unknown[] = [];
   let url: string | null = startUrl;
   while (url) {
-    const elapsed = Date.now() - lastRequestAt;
-    if (elapsed < REQUEST_GAP_MS) {
-      await sleep(REQUEST_GAP_MS - elapsed);
-    }
-    lastRequestAt = Date.now();
-
-    const headers = {
-      ...DEFAULT_HEADERS,
-      Authorization: authMode === "Bearer" ? `Bearer ${options.apiKey}` : `Token token=${options.apiKey}`,
-    };
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(new Error(`Jetbuilt request timed out after ${REQUEST_TIMEOUT_MS}ms`)), REQUEST_TIMEOUT_MS);
-    const response = await fetch(url, {
-      headers,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    if (response.status === 401 && authMode === "Bearer") {
-      authMode = "Token";
-      continue;
-    }
-
-    if (response.status === 429 || response.status >= 500) {
-      const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
-      await sleep(Math.max(retryAfter, 750));
-      continue;
-    }
-
+    const response = await fetchResponse(url, options);
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new Error(`Jetbuilt collection fetch failed (${response.status})${text ? `: ${text}` : ""}`);
     }
 
     const json = await response.json() as unknown;
-    all.push(...extractCollectionItems(json));
+    all.push(...extractCollectionItems(json).slice(0, Math.max(0, maxItems - all.length)));
+    if (all.length >= maxItems) break;
     url = getLinkHeaderNextUrl(response.headers.get("link"));
   }
   return all;
@@ -390,8 +394,8 @@ function sortByUpdatedDesc<T extends { updatedAt: string | null }>(items: T[]): 
 async function refreshIndex(options: JetbuiltClientOptions): Promise<void> {
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
   const [rawClients, rawProjects] = await Promise.all([
-    fetchPagedCollection(`${baseUrl}/clients`, options),
-    fetchPagedCollection(`${baseUrl}/projects`, options),
+    fetchJetbuiltPagedCollection(`${baseUrl}/clients`, options),
+    fetchJetbuiltPagedCollection(`${baseUrl}/projects`, options),
   ]);
 
   const projects = rawProjects
@@ -857,8 +861,8 @@ export async function importJetbuiltProject(
   options: JetbuiltClientOptions,
 ): Promise<QuoteImportExtractionResponse> {
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
-  const project = await requestJson<JetbuiltRawProject>(`${baseUrl}/projects/${encodeURIComponent(projectId)}`, options).catch(() => null);
-  const items = await fetchPagedCollection(`${baseUrl}/projects/${encodeURIComponent(projectId)}/items`, options);
+  const project = await jetbuiltGetJson<JetbuiltRawProject>(`${baseUrl}/projects/${encodeURIComponent(projectId)}`, options).catch(() => null);
+  const items = await fetchJetbuiltPagedCollection(`${baseUrl}/projects/${encodeURIComponent(projectId)}/items`, options);
   const extracted = extractJetbuiltImportData(db, items as JetbuiltRawItem[]);
   const devices = extracted.devices;
   const results = inspectQuoteDevicesAgainstLibrary(db, devices);

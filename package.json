@@ -34,6 +34,8 @@
     "jetbuilt:spec-enrich": "node scripts/jetbuilt-spec-enrich.mjs",
     "jetbuilt:finalize": "node scripts/jetbuilt-finalize.mjs",
     "tateside:seed:jetbuilt": "node tateside-api/scripts/seed-jetbuilt-library.mjs",
+    "jetbuilt:history:sync": "npm run tateside:api:build && node dist-tateside-api/tateside-api/src/jetbuiltHistoryCli.js",
+    "jetbuilt:history:test": "npm run tateside:api:build && node --test tateside-api/jetbuiltHistory.local.test.mjs",
     "build": "npm run generate-fallback && tsc -b && vite build",
     "build:dev-reference": "typedoc",
     "lint": "eslint src tateside-api --max-warnings=0",
