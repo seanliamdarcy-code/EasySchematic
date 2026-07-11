@@ -5,7 +5,7 @@ import { createRemoteJWKSet } from "jose/jwks/remote";
 import { jwtVerify } from "jose/jwt/verify";
 import { getConfig, type ApiConfig } from "./config.js";
 import { McpLibraryError, type McpLibraryContext } from "./mcpLibrary.js";
-import { createTateSideMcpServer, openMcpDatabase } from "./mcpServer.js";
+import { createTateSideMcpServer, openMcpDatabase, openOptionalHistoryDatabase } from "./mcpServer.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const CLOUDFLARE_ACCESS_JWT_HEADER = "cf-access-jwt-assertion";
@@ -18,6 +18,7 @@ type CloudflareAccessVerifier = (assertion: string) => Promise<boolean>;
 export interface McpHttpHandle {
   server: Server;
   db: DatabaseSync;
+  historyDb?: DatabaseSync | null;
   endpoint: string;
   close(): Promise<void>;
 }
@@ -33,7 +34,9 @@ export async function startMcpHttpServer(
   const verifyCloudflareAccess = createCloudflareAccessVerifier(config);
 
   const db = openMcpDatabase(config.dbPath);
-  const context: McpLibraryContext = { db, config };
+  // Optional read-only Jetbuilt history DB for Phase 3 discovery tools.
+  const historyDb = openOptionalHistoryDatabase();
+  const context: McpLibraryContext = { db, config, historyDb };
   const server = createServer(async (request, response) => {
     if (new URL(request.url ?? "/", "http://localhost").pathname !== "/mcp") {
       response.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "Not found" }));
@@ -71,6 +74,7 @@ export async function startMcpHttpServer(
       server.listen(config.mcpHttpPort, config.mcpHttpHost, () => { server.off("error", reject); resolve(); });
     });
   } catch (error) {
+    historyDb?.close();
     db.close();
     throw error;
   }
@@ -78,9 +82,10 @@ export async function startMcpHttpServer(
   const port = typeof address === "object" && address ? address.port : config.mcpHttpPort;
   const endpoint = `http://${config.mcpHttpHost.includes(":") ? `[${config.mcpHttpHost}]` : config.mcpHttpHost}:${port}/mcp`;
   return {
-    server, db, endpoint,
+    server, db, historyDb, endpoint,
     close: async () => {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      historyDb?.close();
       db.close();
     },
   };

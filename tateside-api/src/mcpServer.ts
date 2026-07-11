@@ -97,7 +97,8 @@ export function createTateSideMcpServer(context: McpLibraryContext): McpServer {
   return server;
 }
 
-function openOptionalHistoryDatabase(): DatabaseSync | null {
+/** Open Jetbuilt history DB for read-only discovery tools when TATESIDE_JETBUILT_HISTORY_DB_PATH is set. */
+export function openOptionalHistoryDatabase(): DatabaseSync | null {
   const historyPath = process.env.TATESIDE_JETBUILT_HISTORY_DB_PATH?.trim();
   if (!historyPath) return null;
   if (!existsSync(historyPath)) {
