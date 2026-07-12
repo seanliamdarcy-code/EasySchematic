@@ -12,6 +12,7 @@ import {
 } from "./jetbuiltLibraryDiscovery.js";
 import { auditLibraryTemplates } from "./libraryAudit.js";
 import { createLibraryDoctorProposal } from "./libraryDoctorStore.js";
+import { createLibraryDoctorNewTemplateProposal } from "./libraryDoctorNewTemplate.js";
 import { LibraryIntelligence } from "./mcpLibraryIntelligence.js";
 import { previewTemplateTaxonomy } from "./taxonomy.js";
 import {
@@ -313,6 +314,15 @@ export function createMcpLibraryTools(context: McpLibraryContext) {
         } as Parameters<typeof createLibraryDoctorProposal>[1]);
         return { success: true, readOnly: false, proposal, warnings: ["Proposal created only; source template was not modified."] };
       }
+      case "create_library_doctor_new_template_proposal":
+        requireDoctor(context);
+        requireTaxonomy(context);
+        return createLibraryDoctorNewTemplateProposal(context.db, {
+          ...input,
+          createdBy: input.createdBy == null ? undefined : text(input.createdBy, "createdBy"),
+          supersedesProposalId: input.supersedesProposalId == null ? undefined : text(input.supersedesProposalId, "supersedesProposalId"),
+          generationKey: input.generationKey == null ? undefined : text(input.generationKey, "generationKey"),
+        } as Parameters<typeof createLibraryDoctorNewTemplateProposal>[1]);
       case "preview_taxonomy_registry_change": {
         requireTaxonomy(context);
         const preview = previewTaxonomyRegistryChange(context.db, listCurrentTemplates(context.db), { operation: text(input.operation, "operation", true)!, payload: object(input.payload) });
@@ -437,6 +447,7 @@ export const MCP_LIBRARY_TOOL_DESCRIPTIONS: Record<string, string> = {
   get_suspicious_templates: "Read a deterministic, explainable triage ranking based on audit findings, taxonomy conflicts, and labelled anomaly signals. Never writes.",
   get_template_triage_bundle: "Read a bounded template, audit, taxonomy, related-template, manufacturer, conflict, and proposal-status bundle. Never writes.",
   create_library_doctor_proposal: "Create one validated Library Doctor queue proposal for an existing template. This creates a proposal only and never applies or changes the template.",
+  create_library_doctor_new_template_proposal: "Create one validated whole-new-template Library Doctor proposal. Proposal-only: never creates or applies a canonical template, alias, taxonomy value, schematic change, or Jetbuilt write.",
   preview_taxonomy_registry_change: "Read-only preview of a taxonomy registry change. Returns readOnly true and a deterministic changeKey; never commits registry data.",
   create_taxonomy_registry_change_proposal: "Create a Library Doctor taxonomy-registry-change proposal from a current preview's changeKey. It never commits or applies the registry change.",
   get_jetbuilt_library_coverage_summary: "Read Jetbuilt historical library-discovery coverage summary from the configured history database. Defaults exclude nothing here; use candidates for ranked triage. Never writes, never backfills, never mutates templates/taxonomy/schematics.",

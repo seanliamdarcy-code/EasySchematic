@@ -521,6 +521,7 @@ export type LibraryDoctorConfidence = "low" | "medium" | "high";
 export type LibraryDoctorRisk = "low" | "medium" | "high";
 export type LibraryDoctorProposalType =
   | "field-value-change"
+  | "new-template"
   | "taxonomy-classification"
   | "taxonomy-registry-change"
   | "alias-normalization"

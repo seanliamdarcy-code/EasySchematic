@@ -14,6 +14,7 @@ export type LibraryDoctorRisk = "low" | "medium" | "high";
 
 export type LibraryDoctorProposalType =
   | "field-value-change"
+  | "new-template"
   | "taxonomy-classification"
   | "taxonomy-registry-change"
   | "alias-normalization"
@@ -101,6 +102,8 @@ export interface CreateLibraryDoctorProposalInput {
   supersedesProposalId?: unknown;
   /** Deterministic generation identity; unique across all proposal statuses when set. */
   generationKey?: unknown;
+  /** Internal proof that a new-template payload passed canonical/taxonomy/collision validation. */
+  validatedNewTemplate?: boolean;
 }
 
 export interface LibraryDoctorProposalFilters {
@@ -138,6 +141,7 @@ const CONFIDENCES = new Set<LibraryDoctorConfidence>(["low", "medium", "high"]);
 const RISKS = new Set<LibraryDoctorRisk>(["low", "medium", "high"]);
 const PROPOSAL_TYPES = new Set<LibraryDoctorProposalType>([
   "field-value-change",
+  "new-template",
   "taxonomy-classification",
   "taxonomy-registry-change",
   "alias-normalization",
@@ -437,6 +441,9 @@ function prepareCreateInput(input: CreateLibraryDoctorProposalInput): {
   supersedesProposalId: string | null;
   generationKey: string | null;
 } {
+  if (input.proposalType === "new-template" && input.validatedNewTemplate !== true) {
+    throw new LibraryDoctorStoreError(400, "new-template proposals must use the validated new-template workflow");
+  }
   return {
     templateId: requireNonEmptyString(input.templateId, "templateId"),
     manufacturer: optionalString(input.manufacturer, "manufacturer"),

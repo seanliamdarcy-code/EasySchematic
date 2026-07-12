@@ -122,10 +122,11 @@ test("Streamable HTTP discovers and invokes real tools without read side effects
     await client.connect(transport);
     const discovered = await client.listTools();
     const names = discovered.tools.map(({ name }) => name);
-    for (const name of ["get_library_coverage", "list_manufacturers", "search_templates", "get_suspicious_templates"]) assert.ok(names.includes(name));
+    for (const name of ["get_library_coverage", "list_manufacturers", "search_templates", "get_suspicious_templates", "create_library_doctor_new_template_proposal"]) assert.ok(names.includes(name));
     assert.ok(!names.some((name) => name.toLowerCase().includes("apply")));
     assert.equal(discovered.tools.find(({ name }) => name === "search_templates").annotations.readOnlyHint, true);
     assert.notEqual(discovered.tools.find(({ name }) => name === "create_library_doctor_proposal").annotations.readOnlyHint, true);
+    assert.notEqual(discovered.tools.find(({ name }) => name === "create_library_doctor_new_template_proposal").annotations.readOnlyHint, true);
 
     assert.equal(value(await client.callTool({ name: "get_library_coverage", arguments: {} })).totalTemplates, 3);
     assert.equal(value(await client.callTool({ name: "list_manufacturers", arguments: { limit: 1 } })).count, 1);
@@ -152,6 +153,19 @@ test("Streamable HTTP discovers and invokes real tools without read side effects
     const proposal = value(await client.callTool({ name: "create_library_doctor_proposal", arguments: { templateId: saved[0].id, field: "category", currentValue: "Video", proposedValue: "Audio", proposalType: "taxonomy-classification" } }));
     assert.equal(proposal.proposal.status, "pending");
     assert.equal(listLibraryDoctorProposals(handle.db).length, before.proposals + 1);
+    assert.equal(JSON.stringify(listCurrentTemplates(handle.db)), before.templates);
+    assert.equal(JSON.stringify(listRegistryValues(handle.db)), before.taxonomy);
+
+    const newTemplate = value(await client.callTool({ name: "create_library_doctor_new_template_proposal", arguments: {
+      proposedTemplate: { manufacturer: "HTTP Fixture", modelNumber: "HTTP-NEW-1", label: "HTTP New Device", category: "Sources", deviceType: "camera", ports: [] },
+      evidenceRefs: [{ type: "test", title: "Local fixture" }],
+      generationKey: "http-new-template-fixture",
+    } }));
+    assert.equal(newTemplate.success, true);
+    assert.equal(newTemplate.proposalOnly, true);
+    assert.equal(newTemplate.applied, false);
+    assert.equal(newTemplate.proposal.status, "pending");
+    assert.equal(listLibraryDoctorProposals(handle.db).length, before.proposals + 2);
     assert.equal(JSON.stringify(listCurrentTemplates(handle.db)), before.templates);
     assert.equal(JSON.stringify(listRegistryValues(handle.db)), before.taxonomy);
   } finally {
