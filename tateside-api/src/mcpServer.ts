@@ -37,8 +37,19 @@ export function createTateSideMcpServer(context: McpLibraryContext): McpServer {
   const register = (name: keyof typeof MCP_LIBRARY_TOOL_DESCRIPTIONS, inputSchema: z.ZodObject<z.ZodRawShape>) => server.registerTool(name, {
     description: MCP_LIBRARY_TOOL_DESCRIPTIONS[name], inputSchema,
     annotations: { readOnlyHint: !name.startsWith("create_") },
-  }, (input) => {
+  }, async (input) => {
     try {
+      if (name === "create_library_doctor_new_template_proposal" && context.config.mcpLibraryDoctorProposalApiUrl) {
+        if (!context.config.mcpLibraryDoctorProposalApiToken) throw new McpLibraryError("Proposal API token is required when the shared proposal API is configured");
+        const response = await fetch(context.config.mcpLibraryDoctorProposalApiUrl, {
+          method: "POST",
+          headers: { "authorization": `Bearer ${context.config.mcpLibraryDoctorProposalApiToken}`, "content-type": "application/json" },
+          body: JSON.stringify(input),
+        });
+        const value = await response.json() as Record<string, unknown>;
+        if (!response.ok) throw new McpLibraryError(typeof value.error === "string" ? value.error : `Proposal API returned ${response.status}`);
+        return result(value);
+      }
       return result(tools.execute(name, input));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected MCP tool error";

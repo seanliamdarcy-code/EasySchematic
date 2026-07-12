@@ -901,6 +901,49 @@ test("library doctor routes are hidden when feature flag is off", async () => {
   }
 });
 
+test("proposal-only new-template route authenticates, validates, and never mutates canonical devices", async () => {
+  const token = "route-test-proposal-token";
+  const server = await startServer({
+    TATESIDE_LIBRARY_DOCTOR_ENABLED: "1",
+    TATESIDE_DYNAMIC_TAXONOMY_ENABLED: "1",
+    TATESIDE_LIBRARY_DOCTOR_PROPOSAL_TOKEN: token,
+  });
+  const url = new URL("/api/tateside/library-doctor/proposals/new-template", server.baseUrl);
+  const input = {
+    proposedTemplate: { manufacturer: "Neat", modelNumber: "Neat Center", label: "Neat Center", category: "Sources", deviceType: "camera", roleTags: ["conferencing"], deviceCapabilities: ["poe-powered"], protocols: [], ports: [] },
+    identityAliases: ["NEATCENTER-SE"],
+    evidenceRefs: [{ type: "official-product-page", url: "https://neat.no/center/" }],
+    rationale: "Validated route fixture",
+    classificationConfidence: "high",
+    risk: "medium",
+    generationKey: "route-test:neat-center:v1",
+  };
+
+  try {
+    assert.equal((await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status, 401);
+    assert.equal((await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" })).status, 400);
+
+    const db = new DatabaseSync(path.join(server.dataDir, "tateside.db"), { readOnly: true });
+    const before = db.prepare("SELECT COUNT(*) AS count FROM devices").get().count;
+    db.close();
+    const create = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(input) });
+    assert.equal(create.status, 201);
+    const created = await readJson(create);
+    assert.equal(created.proposalOnly, true);
+    assert.equal(created.applied, false);
+    assert.equal(created.proposal.status, "pending");
+    assert.equal(created.proposal.proposalType, "new-template");
+    const duplicate = await readJson(await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(input) }));
+    assert.equal(duplicate.proposal.id, created.proposal.id);
+    const afterDb = new DatabaseSync(path.join(server.dataDir, "tateside.db"), { readOnly: true });
+    assert.equal(afterDb.prepare("SELECT COUNT(*) AS count FROM devices").get().count, before);
+    assert.equal(afterDb.prepare("SELECT COUNT(*) AS count FROM library_doctor_proposals").get().count, 1);
+    afterDb.close();
+  } finally {
+    await server.stop();
+  }
+});
+
 test("library doctor proposal queue create, list, filter, review, history, and no apply path", async () => {
   const server = await startServer({
     TATESIDE_LIBRARY_DOCTOR_ENABLED: "1",

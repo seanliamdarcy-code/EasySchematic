@@ -50,6 +50,7 @@
     "tateside:mcp:library": "node dist-tateside-api/tateside-api/src/mcpServer.js",
     "tateside:mcp:http": "node dist-tateside-api/tateside-api/src/mcpHttpServer.js",
     "tateside:mcp:prepare-dev-db": "node dist-tateside-api/tateside-api/src/prepareMcpDevDb.js",
+    "library-doctor:refresh-research-db": "node scripts/refresh-library-doctor-research-db.mjs",
     "tateside:api:watch": "tsc -p tateside-api/tsconfig.json --watch --preserveWatchOutput",
     "tateside:api:watch:serve": "node --watch --watch-preserve-output dist-tateside-api/tateside-api/src/server.js",
     "tateside:api:smoke": "node tateside-api/smoke.mjs",

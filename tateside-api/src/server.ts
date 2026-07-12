@@ -25,6 +25,7 @@ import {
   reviewLibraryDoctorProposal,
   supersedeLibraryDoctorProposal,
 } from "./libraryDoctorStore.js";
+import { createLibraryDoctorNewTemplateProposal } from "./libraryDoctorNewTemplate.js";
 import { getTaxonomyVocabularies, inspectTemplateTaxonomy, listTaxonomyAliases, previewTemplateTaxonomy } from "./taxonomy.js";
 import {
   TaxonomyRegistryError,
@@ -559,6 +560,21 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
   if (path.startsWith("/api/tateside/library-doctor/proposals")) {
     if (!config.libraryDoctorEnabled) {
       sendJson(ctx.res, 404, { error: "Library Doctor is not enabled" }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/library-doctor/proposals/new-template") {
+      const supplied = ctx.req.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      if (!config.libraryDoctorProposalToken || supplied !== config.libraryDoctorProposalToken) {
+        sendJson(ctx.res, 401, { error: "Invalid proposal service credential" }, corsHeaders);
+        return;
+      }
+      const body = await readJsonObject(ctx.req);
+      const result = createLibraryDoctorNewTemplateProposal(db, {
+        ...body,
+        createdBy: "chatgpt-mcp",
+      } as Parameters<typeof createLibraryDoctorNewTemplateProposal>[1]);
+      sendJson(ctx.res, result.success ? 201 : 400, result, corsHeaders);
       return;
     }
 

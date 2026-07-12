@@ -36,7 +36,7 @@ export class McpLibraryError extends Error {
 
 export interface McpLibraryContext {
   db: DatabaseSync;
-  config: Pick<ApiConfig, "mcpLibraryEnabled" | "dynamicTaxonomyEnabled" | "libraryAuditEnabled" | "libraryDoctorEnabled">;
+  config: Pick<ApiConfig, "mcpLibraryEnabled" | "dynamicTaxonomyEnabled" | "libraryAuditEnabled" | "libraryDoctorEnabled"> & Partial<Pick<ApiConfig, "mcpLibraryDoctorProposalApiUrl" | "mcpLibraryDoctorProposalApiToken">>;
   /**
    * Optional separate Jetbuilt history database for read-only discovery tools.
    * Never mutates history, templates, taxonomy, or schematics.

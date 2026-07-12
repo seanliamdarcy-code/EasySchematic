@@ -20,6 +20,7 @@ export interface ApiConfig {
   libraryAuditEnabled: boolean;
   libraryDoctorEnabled: boolean;
   libraryDoctorGenerationEnabled: boolean;
+  libraryDoctorProposalToken: string | null;
   dynamicTaxonomyEnabled: boolean;
   dynamicTaxonomyWriteEnabled: boolean;
   mcpLibraryEnabled: boolean;
@@ -27,6 +28,8 @@ export interface ApiConfig {
   mcpHttpHost: string;
   mcpHttpPort: number;
   mcpHttpAllowNonLoopback: boolean;
+  mcpLibraryDoctorProposalApiUrl: string | null;
+  mcpLibraryDoctorProposalApiToken: string | null;
   mcpHttpCloudflareAccessEnabled: boolean;
   mcpHttpCloudflareAccessIssuer: string | null;
   mcpHttpCloudflareAccessAudience: string | null;
@@ -228,6 +231,7 @@ export function getConfig(): ApiConfig {
     libraryAuditEnabled: process.env.TATESIDE_LIBRARY_AUDIT_ENABLED === "1",
     libraryDoctorEnabled: process.env.TATESIDE_LIBRARY_DOCTOR_ENABLED === "1",
     libraryDoctorGenerationEnabled: process.env.TATESIDE_LIBRARY_DOCTOR_GENERATION_ENABLED === "1",
+    libraryDoctorProposalToken: stringFromEnv(process.env.TATESIDE_LIBRARY_DOCTOR_PROPOSAL_TOKEN),
     dynamicTaxonomyEnabled: process.env.TATESIDE_DYNAMIC_TAXONOMY_ENABLED === "1",
     dynamicTaxonomyWriteEnabled: process.env.TATESIDE_DYNAMIC_TAXONOMY_WRITE_ENABLED === "1",
     mcpLibraryEnabled: process.env.TATESIDE_MCP_LIBRARY_ENABLED === "1",
@@ -235,6 +239,8 @@ export function getConfig(): ApiConfig {
     mcpHttpHost: process.env.TATESIDE_MCP_HTTP_HOST || "127.0.0.1",
     mcpHttpPort: integerFromEnv(process.env.TATESIDE_MCP_HTTP_PORT, 8790, "TATESIDE_MCP_HTTP_PORT", 1),
     mcpHttpAllowNonLoopback: process.env.TATESIDE_MCP_HTTP_ALLOW_NON_LOOPBACK === "1",
+    mcpLibraryDoctorProposalApiUrl: stringFromEnv(process.env.TATESIDE_LIBRARY_DOCTOR_PROPOSAL_API_URL),
+    mcpLibraryDoctorProposalApiToken: stringFromEnv(process.env.TATESIDE_LIBRARY_DOCTOR_PROPOSAL_API_TOKEN),
     ...getMcpHttpCloudflareAccessConfig(),
     sharePoint: getSharePointConfig(),
   };
