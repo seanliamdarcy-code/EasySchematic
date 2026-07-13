@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { openDatabase, runMigrations } from "../dist-tateside-api/tateside-api/src/db.js";
 import { saveTemplates } from "../dist-tateside-api/tateside-api/src/deviceStore.js";
 import {
@@ -55,6 +57,7 @@ import {
   scoreJetbuiltDiscoveryCandidate,
 } from "../dist-tateside-api/tateside-api/src/jetbuiltLibraryDiscovery.js";
 import { createMcpLibraryTools } from "../dist-tateside-api/tateside-api/src/mcpLibrary.js";
+import { createTateSideMcpServer } from "../dist-tateside-api/tateside-api/src/mcpServer.js";
 import { createLibraryDoctorNewTemplateProposal } from "../dist-tateside-api/tateside-api/src/libraryDoctorNewTemplate.js";
 import {
   getJetbuiltProjectLibraryGapAnalysis,
@@ -923,6 +926,18 @@ test("phase 5 project gap lookup assembles one full BOM and classifies exact ide
     const viaMcp = await tools.executeAsync("get_jetbuilt_project_library_gap_analysis", { projectNumber: "P-12345", allowOnDemandAcquisition: false });
     assert.equal(viaMcp.runKey, analysis.runKey);
     assert.equal(viaMcp.queryCounts.canonicalDatabase, 3);
+    const server = createTateSideMcpServer({ db: canonical, historyDb: history.db, config: { mcpLibraryEnabled: true, dynamicTaxonomyEnabled: true, libraryAuditEnabled: true, libraryDoctorEnabled: true } });
+    const client = new Client({ name: "project-gap-output-schema-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+      const viaClient = await client.callTool({ name: "get_jetbuilt_project_library_gap_analysis", arguments: { projectNumber: "P-12345", allowOnDemandAcquisition: false } });
+      assert.notEqual(viaClient.isError, true, viaClient.content[0]?.text);
+      assert.equal(viaClient.structuredContent.runKey, analysis.runKey);
+    } finally {
+      await client.close();
+      await server.close();
+    }
     assert.equal(JSON.stringify({ devices: canonical.prepare("SELECT * FROM devices ORDER BY id").all(), versions: canonical.prepare("SELECT * FROM device_versions ORDER BY id").all(), proposals: canonical.prepare("SELECT * FROM library_doctor_proposals ORDER BY id").all() }), canonicalBefore);
     assert.equal(JSON.stringify({ projects: history.db.prepare("SELECT * FROM projects ORDER BY jetbuilt_id").all(), lines: history.db.prepare("SELECT * FROM line_items ORDER BY project_id, jetbuilt_id").all(), runs: history.db.prepare("SELECT * FROM sync_runs ORDER BY id").all() }), historyBefore);
 
