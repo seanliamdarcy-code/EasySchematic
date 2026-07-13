@@ -916,6 +916,7 @@ test("proposal-only new-template route authenticates, validates, and never mutat
     rationale: "Validated route fixture",
     classificationConfidence: "high",
     risk: "medium",
+    qualityGates: { identityVerifiedByCaller: true, officialEvidenceDeclaredByCaller: true, physicalPortsDeclaration: "not-applicable", dimensionsDeclaration: "unavailable", noValidDataOmittedConfirmedByCaller: true },
     generationKey: "route-test:neat-center:v1",
   };
 
@@ -933,6 +934,11 @@ test("proposal-only new-template route authenticates, validates, and never mutat
     assert.equal(created.applied, false);
     assert.equal(created.proposal.status, "pending");
     assert.equal(created.proposal.proposalType, "new-template");
+    const identities = await readJson(await fetch(new URL("/api/tateside/library-doctor/proposals/identities?projectNumber=P-TEST", server.baseUrl), {
+      headers: { Authorization: `Bearer ${token}` },
+    }));
+    assert.equal(identities.proposals.length, 1);
+    assert.equal(identities.proposals[0].id, created.proposal.id);
     const duplicate = await readJson(await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(input) }));
     assert.equal(duplicate.proposal.id, created.proposal.id);
     const afterDb = new DatabaseSync(path.join(server.dataDir, "tateside.db"), { readOnly: true });

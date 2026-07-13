@@ -122,11 +122,12 @@ test("Streamable HTTP discovers and invokes real tools without read side effects
     await client.connect(transport);
     const discovered = await client.listTools();
     const names = discovered.tools.map(({ name }) => name);
-    for (const name of ["get_library_coverage", "list_manufacturers", "search_templates", "get_suspicious_templates", "create_library_doctor_new_template_proposal"]) assert.ok(names.includes(name));
+    for (const name of ["get_library_coverage", "list_manufacturers", "search_templates", "get_suspicious_templates", "create_library_doctor_new_template_proposal", "get_jetbuilt_project_library_gap_analysis"]) assert.ok(names.includes(name));
     assert.ok(!names.some((name) => name.toLowerCase().includes("apply")));
     assert.equal(discovered.tools.find(({ name }) => name === "search_templates").annotations.readOnlyHint, true);
     assert.notEqual(discovered.tools.find(({ name }) => name === "create_library_doctor_proposal").annotations.readOnlyHint, true);
     assert.notEqual(discovered.tools.find(({ name }) => name === "create_library_doctor_new_template_proposal").annotations.readOnlyHint, true);
+    assert.equal(discovered.tools.find(({ name }) => name === "get_jetbuilt_project_library_gap_analysis").annotations.readOnlyHint, true);
 
     assert.equal(value(await client.callTool({ name: "get_library_coverage", arguments: {} })).totalTemplates, 3);
     assert.equal(value(await client.callTool({ name: "list_manufacturers", arguments: { limit: 1 } })).count, 1);
@@ -158,7 +159,9 @@ test("Streamable HTTP discovers and invokes real tools without read side effects
 
     const newTemplate = value(await client.callTool({ name: "create_library_doctor_new_template_proposal", arguments: {
       proposedTemplate: { manufacturer: "HTTP Fixture", modelNumber: "HTTP-NEW-1", label: "HTTP New Device", category: "Sources", deviceType: "camera", ports: [] },
-      evidenceRefs: [{ type: "test", title: "Local fixture" }],
+      evidenceRefs: [{ type: "official-manufacturer-page", title: "Local fixture", url: "https://manufacturer.example/http-new-1" }],
+      classificationConfidence: "high",
+      qualityGates: { identityVerifiedByCaller: true, officialEvidenceDeclaredByCaller: true, physicalPortsDeclaration: "not-applicable", dimensionsDeclaration: "unavailable", noValidDataOmittedConfirmedByCaller: true },
       generationKey: "http-new-template-fixture",
     } }));
     assert.equal(newTemplate.success, true);

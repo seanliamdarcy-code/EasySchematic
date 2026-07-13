@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -55,6 +55,12 @@ import {
   scoreJetbuiltDiscoveryCandidate,
 } from "../dist-tateside-api/tateside-api/src/jetbuiltLibraryDiscovery.js";
 import { createMcpLibraryTools } from "../dist-tateside-api/tateside-api/src/mcpLibrary.js";
+import { createLibraryDoctorNewTemplateProposal } from "../dist-tateside-api/tateside-api/src/libraryDoctorNewTemplate.js";
+import {
+  getJetbuiltProjectLibraryGapAnalysis,
+  getJetbuiltProjectLibraryGapAnalysisWithAcquisition,
+  JetbuiltProjectGapError,
+} from "../dist-tateside-api/tateside-api/src/jetbuiltProjectLibraryGap.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 const fixture = JSON.parse(readFileSync(path.join(import.meta.dirname, "fixtures", "jetbuilt-history-project.json"), "utf8"));
@@ -841,5 +847,205 @@ test("phase 3 jetbuilt library discovery ranks real devices without quantity dom
     canonical.close();
     rmSync(canonicalDir, { recursive: true, force: true });
     history.close();
+  }
+});
+
+test("phase 5 project gap lookup assembles one full BOM and classifies exact identities deterministically", async () => {
+  const history = tempDb();
+  const canonicalRoot = mkdtempSync(path.join(tmpdir(), "jetbuilt-project-gap-"));
+  const canonical = openDatabase(path.join(canonicalRoot, "canonical.db"));
+  try {
+    runMigrations(canonical);
+    saveTemplates(canonical, { templates: [
+      { label: "Display D-1", manufacturer: "Acme", modelNumber: "D-1", category: "Displays", deviceType: "display", ports: [] },
+      { label: "Gamma Base", manufacturer: "Gamma", modelNumber: "BASE", category: "Sources", deviceType: "camera", searchTerms: ["SKU-UK"], ports: [] },
+    ] });
+    const proposal = createLibraryDoctorNewTemplateProposal(canonical, {
+      proposedTemplate: { manufacturer: "Neat", modelNumber: "Neat Center", label: "Neat Center", category: "Sources", deviceType: "camera", ports: [] },
+      identityAliases: ["Neat Center SE"],
+      evidenceRefs: [{ type: "official-product-page", url: "https://neat.no/center/" }],
+      classificationConfidence: "high",
+      qualityGates: { identityVerifiedByCaller: true, officialEvidenceDeclaredByCaller: true, physicalPortsDeclaration: "not-applicable", dimensionsDeclaration: "unavailable", noValidDataOmittedConfirmedByCaller: true },
+      generationKey: "jetbuilt:neat::neatcenterse:new-template:v1",
+    });
+    assert.equal(proposal.success, true);
+
+    const run = createSyncRun(history.db, "fixture", {});
+    ingestHistoryProject(history.db, run, {
+      project: { id: "jb-12345", custom_id: "P-12345", name: "Redacted fixture project", stage: "completed", active: true },
+      rooms: [{ id: "R1", name: "Room 1" }, { id: "R2", name: "Room 2" }],
+      systems: [{ id: "S1", name: "System 1" }, { id: "S2", name: "System 2" }],
+      items: [
+        { id: "L1", manufacturer_name: "Acme", model: "D-1", quantity: 1, room: { id: "R1" }, system: { id: "S1" } },
+        { id: "L2", manufacturer_name: "Tateside", model: "Installation", quantity: 1, room: { id: "R1" }, system: { id: "S1" } },
+        { id: "L3", manufacturer_name: "Neat", model: "Neat Center SE", quantity: 1, room: { id: "R1" }, system: { id: "S1" } },
+        { id: "L4", manufacturer_name: "Beta", model: "CAM-X", quantity: 2, room: { id: "R1" }, system: { id: "S1" } },
+        { id: "L5", manufacturer_name: " beta ", model: "CAM X", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
+        { id: "L6", manufacturer_name: "Gamma", model: "SKU-UK", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
+        { id: "L7", manufacturer_name: "Incomplete", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
+      ],
+    });
+    const canonicalBefore = JSON.stringify({
+      devices: canonical.prepare("SELECT * FROM devices ORDER BY id").all(),
+      versions: canonical.prepare("SELECT * FROM device_versions ORDER BY id").all(),
+      proposals: canonical.prepare("SELECT * FROM library_doctor_proposals ORDER BY id").all(),
+    });
+    const historyBefore = JSON.stringify({
+      projects: history.db.prepare("SELECT * FROM projects ORDER BY jetbuilt_id").all(),
+      lines: history.db.prepare("SELECT * FROM line_items ORDER BY project_id, jetbuilt_id").all(),
+      runs: history.db.prepare("SELECT * FROM sync_runs ORDER BY id").all(),
+    });
+
+    const analysis = getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "p12345");
+    assert.equal(analysis.matchedProjectId, "jb-12345");
+    assert.equal(analysis.lineItemCount, 7);
+    assert.equal(analysis.distinctCandidateIdentityCount, 5);
+    assert.equal(analysis.rooms.length, 2);
+    assert.equal(analysis.systems.length, 2);
+    assert.equal(analysis.summary.exactCanonicalMatches, 1);
+    assert.equal(analysis.summary.knownNonSchematic, 1);
+    assert.equal(analysis.summary.alreadyProposed, 1);
+    assert.equal(analysis.summary.possibleIdentityVariants, 1);
+    assert.equal(analysis.summary.unmatchedEligible, 1);
+    assert.equal(analysis.insufficientIdentityLines.length, 1);
+    const beta = analysis.candidates.find((candidate) => candidate.candidateKey === "beta::camx");
+    assert.equal(beta.status, "unmatched-hardware-candidate");
+    assert.equal(beta.projectUsage.lineItemCount, 2);
+    assert.equal(beta.projectUsage.validQuantityTotal, 3);
+    assert.equal(beta.projectUsage.rooms.length, 2);
+    const neat = analysis.candidates.find((candidate) => candidate.candidateKey === "neat::neatcenterse");
+    assert.equal(neat.status, "already-proposed");
+    assert.equal(neat.existingProposals[0].id, proposal.proposal.id);
+    assert.equal(analysis.versions.schematicRelevance, "jetbuilt-schematic-relevance-v1");
+    assert.equal(analysis.queryCounts.historyDatabase, 5);
+    assert.equal(getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345").runKey, analysis.runKey);
+    const tools = createMcpLibraryTools({ db: canonical, historyDb: history.db, config: { mcpLibraryEnabled: true, dynamicTaxonomyEnabled: true, libraryAuditEnabled: true, libraryDoctorEnabled: true } });
+    const viaMcp = await tools.executeAsync("get_jetbuilt_project_library_gap_analysis", { projectNumber: "P-12345", allowOnDemandAcquisition: false });
+    assert.equal(viaMcp.runKey, analysis.runKey);
+    assert.equal(viaMcp.queryCounts.canonicalDatabase, 3);
+    assert.equal(JSON.stringify({ devices: canonical.prepare("SELECT * FROM devices ORDER BY id").all(), versions: canonical.prepare("SELECT * FROM device_versions ORDER BY id").all(), proposals: canonical.prepare("SELECT * FROM library_doctor_proposals ORDER BY id").all() }), canonicalBefore);
+    assert.equal(JSON.stringify({ projects: history.db.prepare("SELECT * FROM projects ORDER BY jetbuilt_id").all(), lines: history.db.prepare("SELECT * FROM line_items ORDER BY project_id, jetbuilt_id").all(), runs: history.db.prepare("SELECT * FROM sync_runs ORDER BY id").all() }), historyBefore);
+
+    assert.match(analysis.projectSourceFingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(analysis.proposalStateSemantics, "live-overlay-excluded-from-run-key");
+    canonical.prepare(`INSERT INTO jetbuilt_project_gap_candidate_results
+      (run_key, candidate_key, project_number, analysis_version, canonical_snapshot_identity, status, attempted_payload_json, validation_issues_json, proposal_id, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'validation-failed', '{}', '["fixture failure"]', NULL, '2026-01-01T00:00:00.000Z')`).run(
+      analysis.runKey, "beta::camx", analysis.projectNumber, analysis.analysisVersion, analysis.canonicalSnapshotIdentity,
+    );
+    assert.equal(getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345").candidates.find((candidate) => candidate.candidateKey === "beta::camx").status, "needs-manual-review");
+
+    history.db.prepare("UPDATE line_items SET quantity_raw='3', quantity_numeric=3 WHERE project_id='jb-12345' AND jetbuilt_id='L4'").run();
+    const quantityChanged = getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345");
+    assert.notEqual(quantityChanged.runKey, analysis.runKey);
+    assert.notEqual(quantityChanged.projectSourceFingerprint, analysis.projectSourceFingerprint);
+    assert.equal(quantityChanged.candidates.find((candidate) => candidate.candidateKey === "beta::camx").status, "unmatched-hardware-candidate");
+    assert.equal(quantityChanged.candidates.find((candidate) => candidate.candidateKey === "beta::camx").previousResult, null);
+    history.db.prepare("UPDATE line_items SET quantity_raw='2', quantity_numeric=2 WHERE project_id='jb-12345' AND jetbuilt_id='L4'").run();
+    assert.equal(getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345").runKey, analysis.runKey);
+
+    history.db.prepare(`INSERT INTO line_items
+      (jetbuilt_id, project_id, manufacturer_raw, model_raw, quantity_raw, quantity_numeric, quantity_state, replacement_ids_json, last_seen_run_id)
+      VALUES ('L8', 'jb-12345', 'Delta', 'NEW-1', '1', 1, 'valid', '[]', ?)` ).run(run);
+    const lineAdded = getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345");
+    assert.notEqual(lineAdded.runKey, analysis.runKey);
+    history.db.prepare("DELETE FROM line_items WHERE project_id='jb-12345' AND jetbuilt_id='L8'").run();
+    const lineRemoved = getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345");
+    assert.notEqual(lineRemoved.runKey, lineAdded.runKey);
+    assert.equal(lineRemoved.runKey, analysis.runKey);
+
+    history.db.prepare("UPDATE line_items SET room_id='R2', system_id='S2' WHERE project_id='jb-12345' AND jetbuilt_id='L4'").run();
+    const relationshipChanged = getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345");
+    assert.notEqual(relationshipChanged.runKey, analysis.runKey);
+    history.db.prepare("UPDATE line_items SET room_id='R1', system_id='S1' WHERE project_id='jb-12345' AND jetbuilt_id='L4'").run();
+    assert.equal(getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345").runKey, analysis.runKey);
+
+    saveTemplates(canonical, { templates: [{ label: "Canonical Snapshot Fixture", manufacturer: "Snapshot", modelNumber: "ONLY-1", category: "Sources", deviceType: "camera", ports: [] }] });
+    const canonicalChanged = getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345");
+    assert.equal(canonicalChanged.projectSourceFingerprint, analysis.projectSourceFingerprint);
+    assert.notEqual(canonicalChanged.canonicalSnapshotIdentity, analysis.canonicalSnapshotIdentity);
+    assert.notEqual(canonicalChanged.runKey, analysis.runKey);
+
+    const beforeProposalOverlay = canonicalChanged;
+    const betaProposal = createLibraryDoctorNewTemplateProposal(canonical, {
+      proposedTemplate: { manufacturer: "Beta", modelNumber: "CAM-X", label: "CAM-X", category: "Sources", deviceType: "camera", ports: [] },
+      evidenceRefs: [{ type: "official-page-declared-by-caller", url: "https://manufacturer.example/cam-x" }],
+      classificationConfidence: "high",
+      qualityGates: { identityVerifiedByCaller: true, officialEvidenceDeclaredByCaller: true, physicalPortsDeclaration: "not-applicable", dimensionsDeclaration: "unavailable", noValidDataOmittedConfirmedByCaller: true },
+      generationKey: "jetbuilt:beta::camx:new-template:v1",
+    });
+    assert.equal(betaProposal.success, true);
+    const afterProposalOverlay = getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345");
+    assert.equal(afterProposalOverlay.runKey, beforeProposalOverlay.runKey);
+    assert.equal(afterProposalOverlay.projectSourceFingerprint, beforeProposalOverlay.projectSourceFingerprint);
+    assert.equal(afterProposalOverlay.canonicalSnapshotIdentity, beforeProposalOverlay.canonicalSnapshotIdentity);
+    assert.notEqual(afterProposalOverlay.proposalStateIdentity, beforeProposalOverlay.proposalStateIdentity);
+    assert.equal(afterProposalOverlay.candidates.find((candidate) => candidate.candidateKey === "beta::camx").status, "already-proposed");
+
+    assert.throws(() => getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-99999"), (error) => error instanceof JetbuiltProjectGapError && error.code === "project-not-found");
+
+    ingestHistoryProject(history.db, run, { project: { id: "jb-duplicate", custom_id: "P 12345", stage: "estimate" }, rooms: [], systems: [], items: [] });
+    assert.throws(() => getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345"), (error) => error instanceof JetbuiltProjectGapError && error.code === "ambiguous-project");
+  } finally {
+    canonical.close();
+    history.close();
+    rmSync(canonicalRoot, { recursive: true, force: true });
+  }
+});
+
+test("phase 5 exact-project acquisition is GET-only, bounded, idempotent, and resumable after interruption", async () => {
+  const history = tempDb();
+  const canonicalRoot = mkdtempSync(path.join(tmpdir(), "jetbuilt-project-acquire-"));
+  const canonical = openDatabase(path.join(canonicalRoot, "canonical.db"));
+  const indexPath = path.join(canonicalRoot, "jetbuilt-index.json");
+  writeFileSync(indexPath, JSON.stringify({ projects: [{ id: "9001", customId: "P-54321" }, { id: "9002", customId: "P-FAIL" }] }));
+  try {
+    runMigrations(canonical);
+    const requests = [];
+    const makeFetch = (failSystems = false) => async (input, init) => {
+      assert.equal(init?.method, "GET");
+      const url = new URL(String(input));
+      requests.push(url.pathname);
+      if (failSystems && url.pathname === "/api/projects/9002/systems") return response("temporary failure", 500);
+      const match = url.pathname.match(/^\/api\/projects\/(9001|9002)(?:\/(rooms|systems|items|versions))?$/);
+      if (!match) return response({ error: "not found" }, 404);
+      const [projectId, resource] = [match[1], match[2]];
+      if (!resource) return response({ id: projectId, custom_id: projectId === "9001" ? "P-54321" : "P-FAIL", name: "Redacted", stage: "estimate" });
+      if (resource === "rooms") return response({ rooms: [{ id: `R-${projectId}`, name: "Room" }] });
+      if (resource === "systems") return response({ systems: [{ id: `S-${projectId}`, name: "System" }] });
+      if (resource === "items") return response({ items: [{ id: `L-${projectId}`, manufacturer_name: "Beta", model: `CAM-${projectId}`, quantity: 1, room: { id: `R-${projectId}` }, system: { id: `S-${projectId}` } }] });
+      return response({ versions: [] });
+    };
+    const acquisition = { apiKey: "test-key", baseUrl: "https://jetbuilt.test/api", indexPath, fetchImpl: makeFetch(), sleepImpl: async () => {} };
+    await assert.rejects(
+      getJetbuiltProjectLibraryGapAnalysisWithAcquisition(history.db, canonical, "P-NOT-CACHED", undefined, acquisition),
+      (error) => error instanceof JetbuiltProjectGapError
+        && error.code === "project-not-found-in-cached-index"
+        && /absence from Jetbuilt is not established/.test(error.message),
+    );
+    assert.equal(requests.length, 0);
+    const first = await getJetbuiltProjectLibraryGapAnalysisWithAcquisition(history.db, canonical, "P-54321", undefined, acquisition);
+    assert.equal(first.acquisition.performed, true);
+    assert.equal(first.acquisition.jetbuiltGetRequests, 5);
+    assert.equal(first.queryCounts.jetbuiltWriteRequests, 0);
+    assert.equal(requests.length, 5);
+    const second = await getJetbuiltProjectLibraryGapAnalysisWithAcquisition(history.db, canonical, "P-54321", undefined, acquisition);
+    assert.equal(second.runKey, first.runKey);
+    assert.equal(second.queryCounts.jetbuiltGetRequests, 0);
+    assert.equal(requests.length, 5);
+
+    await assert.rejects(
+      getJetbuiltProjectLibraryGapAnalysisWithAcquisition(history.db, canonical, "P-FAIL", undefined, { ...acquisition, fetchImpl: makeFetch(true) }),
+      /Jetbuilt collection fetch failed/,
+    );
+    assert.equal(history.db.prepare("SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1").get().status, "failed");
+    const resumed = await getJetbuiltProjectLibraryGapAnalysisWithAcquisition(history.db, canonical, "P-FAIL", undefined, { ...acquisition, fetchImpl: makeFetch(false) });
+    assert.equal(resumed.projectNumber, "P-FAIL");
+    assert.equal(resumed.candidates.length, 1);
+    assert.equal(history.db.prepare("SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1").get().status, "completed");
+  } finally {
+    canonical.close();
+    history.close();
+    rmSync(canonicalRoot, { recursive: true, force: true });
   }
 });

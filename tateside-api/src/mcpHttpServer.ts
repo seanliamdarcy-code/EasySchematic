@@ -24,7 +24,7 @@ export interface McpHttpHandle {
 }
 
 export async function startMcpHttpServer(
-  config: Pick<ApiConfig, "dbPath" | "mcpLibraryEnabled" | "dynamicTaxonomyEnabled" | "libraryAuditEnabled" | "libraryDoctorEnabled" | "mcpHttpEnabled" | "mcpHttpHost" | "mcpHttpPort" | "mcpHttpAllowNonLoopback" | "mcpHttpCloudflareAccessEnabled" | "mcpHttpCloudflareAccessIssuer" | "mcpHttpCloudflareAccessAudience">,
+  config: Pick<ApiConfig, "dbPath" | "jetbuiltApiBaseUrl" | "jetbuiltIndexPath" | "mcpLibraryEnabled" | "dynamicTaxonomyEnabled" | "libraryAuditEnabled" | "libraryDoctorEnabled" | "mcpHttpEnabled" | "mcpHttpHost" | "mcpHttpPort" | "mcpHttpAllowNonLoopback" | "mcpLibraryDoctorProposalApiUrl" | "mcpLibraryDoctorProposalApiToken" | "mcpHttpCloudflareAccessEnabled" | "mcpHttpCloudflareAccessIssuer" | "mcpHttpCloudflareAccessAudience">,
 ): Promise<McpHttpHandle> {
   if (!config.mcpLibraryEnabled) throw new McpLibraryError("Set TATESIDE_MCP_LIBRARY_ENABLED=1 to enable MCP library tools");
   if (!config.mcpHttpEnabled) throw new McpLibraryError("Set TATESIDE_MCP_HTTP_ENABLED=1 to start the MCP HTTP server");
@@ -36,7 +36,7 @@ export async function startMcpHttpServer(
   const db = openMcpDatabase(config.dbPath);
   // Optional read-only Jetbuilt history DB for Phase 3 discovery tools.
   const historyDb = openOptionalHistoryDatabase();
-  const context: McpLibraryContext = { db, config, historyDb };
+  const context: McpLibraryContext = { db, config, historyDb, jetbuiltApiKey: process.env.JETBUILT_API_KEY?.trim() || null };
   const server = createServer(async (request, response) => {
     if (new URL(request.url ?? "/", "http://localhost").pathname !== "/mcp") {
       response.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "Not found" }));

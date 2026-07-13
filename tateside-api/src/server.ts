@@ -26,6 +26,7 @@ import {
   supersedeLibraryDoctorProposal,
 } from "./libraryDoctorStore.js";
 import { createLibraryDoctorNewTemplateProposal } from "./libraryDoctorNewTemplate.js";
+import { listProjectGapCandidateResults, listProjectGapProposalIdentities } from "./jetbuiltProjectLibraryGap.js";
 import { getTaxonomyVocabularies, inspectTemplateTaxonomy, listTaxonomyAliases, previewTemplateTaxonomy } from "./taxonomy.js";
 import {
   TaxonomyRegistryError,
@@ -575,6 +576,20 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
         createdBy: "chatgpt-mcp",
       } as Parameters<typeof createLibraryDoctorNewTemplateProposal>[1]);
       sendJson(ctx.res, result.success ? 201 : 400, result, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/library-doctor/proposals/identities") {
+      const supplied = ctx.req.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      if (!config.libraryDoctorProposalToken || supplied !== config.libraryDoctorProposalToken) {
+        sendJson(ctx.res, 401, { error: "Invalid proposal service credential" }, corsHeaders);
+        return;
+      }
+      const projectNumber = ctx.url.searchParams.get("projectNumber") ?? undefined;
+      sendJson(ctx.res, 200, {
+        proposals: listProjectGapProposalIdentities(db),
+        candidateResults: listProjectGapCandidateResults(db, projectNumber),
+      }, corsHeaders);
       return;
     }
 

@@ -89,6 +89,13 @@ function neat(overrides = {}) {
     rationale: "Official identity and bounded historical evidence show a missing canonical device.",
     classificationConfidence: "high",
     risk: "medium",
+    qualityGates: {
+      identityVerifiedByCaller: true,
+      officialEvidenceDeclaredByCaller: true,
+      physicalPortsDeclaration: "complete",
+      dimensionsDeclaration: "complete",
+      noValidDataOmittedConfirmedByCaller: true,
+    },
     historicalUsageEvidence: { candidateKey: "neat::neatcenterse", occurrences: 7, quantity: 7, projects: 1, rooms: 7, completedProjects: 1, priorityScore: 62.5 },
     operationalNotes: ["Pairs over the wired subnet.", "USB-C is debug only.", "Do not model future-use Wi-Fi as active."],
     createdBy: "phase4-test",
@@ -206,4 +213,82 @@ test("MCP adapter exposes one proposal-only new-template tool and no apply path"
     historyDb.close();
     rmSync(historyRoot, { recursive: true, force: true });
   }
+}));
+
+test("new-template quality gates distinguish backend checks from caller declarations", () => withDb((db) => {
+  const legacyNames = neat({
+    generationKey: "legacy-misleading-quality-gates",
+    qualityGates: {
+      identityVerified: true,
+      officialEvidenceVerified: true,
+      physicalPorts: "complete",
+      dimensions: "complete",
+      noValidDataOmitted: true,
+    },
+  });
+  const rejected = createLibraryDoctorNewTemplateProposal(db, legacyNames);
+  assert.equal(rejected.success, false);
+  assert.match(rejected.validationIssues.join("\n"), /caller declaration, not independent backend verification/);
+  assert.match(rejected.validationIssues.join("\n"), /backend validates URL shape but not manufacturer ownership/);
+  assert.match(rejected.validationIssues.join("\n"), /completeness is caller-confirmed/);
+
+  const declared = createLibraryDoctorNewTemplateProposal(db, neat({
+    proposedTemplate: { ...neat().proposedTemplate, manufacturer: "Caller Declared", modelNumber: "DECLARED-1", label: "Declared Fixture" },
+    evidenceRefs: [{ type: "official-manufacturer-page", url: "https://manufacturer.example/declared-1" }],
+    generationKey: "caller-declared-quality-gates",
+  }));
+  assert.equal(declared.success, true);
+  assert.equal(declared.proposalOnly, true);
+  assert.equal(declared.proposal.evidenceRefs[0].url, "https://manufacturer.example/declared-1");
+}));
+
+test("Epson-style complete payload failure is preserved and never stripped to force insertion", () => withDb((db) => {
+  const attempted = {
+    proposedTemplate: {
+      manufacturer: "Epson", modelNumber: "EB-810E", label: "EB-810E", category: "Video",
+      deviceType: "projector", heightMm: 172, widthMm: 695, depthMm: 341,
+      ports: [
+        { id: "hdmi-1", label: "HDMI 1", signalType: "hdmi", direction: "input", connectorType: "hdmi" },
+        { id: "audio-out", label: "Audio Out", signalType: "analog-audio", direction: "output", connectorType: "3.5mm" },
+      ],
+    },
+    evidenceRefs: [{ type: "official-manufacturer-datasheet", url: "https://www.epson.example/eb-810e.pdf" }],
+    classificationConfidence: "high",
+    qualityGates: { identityVerifiedByCaller: true, officialEvidenceDeclaredByCaller: true, physicalPortsDeclaration: "complete", dimensionsDeclaration: "complete", noValidDataOmittedConfirmedByCaller: true },
+    generationKey: "local-regression:epson-eb-810e",
+    projectGapContext: {
+      runKey: "jetbuilt-project-gap:epson-regression", candidateKey: "epson::eb810e", projectNumber: "P-TEST",
+      analysisVersion: "jetbuilt-project-library-gap-v2", projectSourceFingerprint: "fixture-source", canonicalSnapshotIdentity: "fixture-snapshot",
+    },
+  };
+  const original = structuredClone(attempted.proposedTemplate);
+  const result = createLibraryDoctorNewTemplateProposal(db, attempted);
+  assert.equal(result.success, false);
+  assert.equal(result.candidateStatus, "needs-manual-review");
+  assert.match(result.validationIssues.join("\n"), /Unknown connectorType: 3\.5mm/);
+  assert.deepEqual(result.attemptedTemplate, original);
+  assert.deepEqual(attempted.proposedTemplate, original);
+  assert.equal(listLibraryDoctorProposals(db).length, 0);
+  const recorded = db.prepare("SELECT status, attempted_payload_json, validation_issues_json FROM jetbuilt_project_gap_candidate_results").get();
+  assert.equal(recorded.status, "validation-failed");
+  assert.deepEqual(JSON.parse(recorded.attempted_payload_json).proposedTemplate.ports, original.ports);
+  assert.match(recorded.validation_issues_json, /3\.5mm/);
+
+  const noEvidence = createLibraryDoctorNewTemplateProposal(db, neat({ evidenceRefs: [], generationKey: "missing-evidence" }));
+  assert.equal(noEvidence.success, false);
+  assert.match(noEvidence.validationIssues.join("\n"), /marked official by the caller/);
+  const incompletePorts = createLibraryDoctorNewTemplateProposal(db, neat({
+    proposedTemplate: { ...neat().proposedTemplate, manufacturer: "Acme", modelNumber: "PORTLESS", label: "Portless", ports: [] },
+    generationKey: "incomplete-ports",
+  }));
+  assert.equal(incompletePorts.success, false);
+  assert.match(incompletePorts.validationIssues.join("\n"), /caller-declared complete physical port set cannot be empty/);
+
+  const independent = createLibraryDoctorNewTemplateProposal(db, neat({
+    proposedTemplate: { ...neat().proposedTemplate, manufacturer: "Acme", modelNumber: "CAM-OK", label: "CAM-OK" },
+    generationKey: "independent-complete-candidate",
+  }));
+  assert.equal(independent.success, true);
+  assert.equal(independent.proposal.evidenceRefs.length, 1);
+  assert.equal(listLibraryDoctorProposals(db).length, 1);
 }));

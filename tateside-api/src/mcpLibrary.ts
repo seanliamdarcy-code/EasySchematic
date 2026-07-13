@@ -10,6 +10,12 @@ import {
   getJetbuiltLibraryCandidates,
   getJetbuiltLibraryCoverageSummary,
 } from "./jetbuiltLibraryDiscovery.js";
+import {
+  getJetbuiltProjectLibraryGapAnalysisWithAcquisition,
+  listProjectGapCandidateResults,
+  listProjectGapProposalIdentities,
+  type ProjectGapProposalState,
+} from "./jetbuiltProjectLibraryGap.js";
 import { auditLibraryTemplates } from "./libraryAudit.js";
 import { createLibraryDoctorProposal } from "./libraryDoctorStore.js";
 import { createLibraryDoctorNewTemplateProposal } from "./libraryDoctorNewTemplate.js";
@@ -36,12 +42,14 @@ export class McpLibraryError extends Error {
 
 export interface McpLibraryContext {
   db: DatabaseSync;
-  config: Pick<ApiConfig, "mcpLibraryEnabled" | "dynamicTaxonomyEnabled" | "libraryAuditEnabled" | "libraryDoctorEnabled"> & Partial<Pick<ApiConfig, "mcpLibraryDoctorProposalApiUrl" | "mcpLibraryDoctorProposalApiToken">>;
+  config: Pick<ApiConfig, "mcpLibraryEnabled" | "dynamicTaxonomyEnabled" | "libraryAuditEnabled" | "libraryDoctorEnabled"> & Partial<Pick<ApiConfig, "jetbuiltApiBaseUrl" | "jetbuiltIndexPath" | "mcpLibraryDoctorProposalApiUrl" | "mcpLibraryDoctorProposalApiToken">>;
   /**
-   * Optional separate Jetbuilt history database for read-only discovery tools.
-   * Never mutates history, templates, taxonomy, or schematics.
+   * Optional separate Jetbuilt history database. Analysis is read-only; an exact
+   * explicitly requested missing project may be cached through the GET-only importer.
+   * Never mutates Jetbuilt, templates, taxonomy, or schematics.
    */
   historyDb?: DatabaseSync | null;
+  jetbuiltApiKey?: string | null;
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -131,6 +139,35 @@ function optionalNumber(value: unknown, label: string): number | undefined {
   if (value == null) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value)) throw new McpLibraryError(`${label} must be a number`);
   return value;
+}
+
+async function projectGapProposalState(context: McpLibraryContext, projectNumber: string): Promise<ProjectGapProposalState> {
+  const proposalUrl = context.config.mcpLibraryDoctorProposalApiUrl;
+  if (!proposalUrl) {
+    return {
+      proposals: listProjectGapProposalIdentities(context.db),
+      candidateResults: listProjectGapCandidateResults(context.db, projectNumber),
+      source: "local",
+      requestCount: 0,
+    };
+  }
+  const token = context.config.mcpLibraryDoctorProposalApiToken;
+  if (!token) throw new McpLibraryError("Proposal API token is required to check existing project-gap proposals");
+  const url = new URL(proposalUrl);
+  const identityPath = url.pathname.replace(/\/new-template\/?$/, "/identities");
+  if (identityPath === url.pathname) throw new McpLibraryError("Proposal API URL must end with /new-template");
+  url.pathname = identityPath;
+  url.searchParams.set("projectNumber", projectNumber);
+  const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  const value = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) throw new McpLibraryError(typeof value.error === "string" ? value.error : `Proposal identity API returned ${response.status}`);
+  if (!Array.isArray(value.proposals) || !Array.isArray(value.candidateResults)) throw new McpLibraryError("Proposal identity API returned an invalid payload");
+  return {
+    proposals: value.proposals as ProjectGapProposalState["proposals"],
+    candidateResults: value.candidateResults as ProjectGapProposalState["candidateResults"],
+    source: "proposal-service",
+    requestCount: 1,
+  };
 }
 
 function templateForId(db: DatabaseSync, id: string): DeviceTemplate {
@@ -425,7 +462,29 @@ export function createMcpLibraryTools(context: McpLibraryContext) {
         throw new McpLibraryError(`Unknown MCP tool: ${name}`);
     }
   };
-  return { execute };
+  const executeAsync = async (name: string, rawInput: unknown = {}) => {
+    if (name !== "get_jetbuilt_project_library_gap_analysis") return execute(name, rawInput);
+    const input = object(rawInput);
+    requireEnabled(context);
+    const historyDb = requireHistoryDiscovery(context);
+    const projectNumber = text(input.projectNumber, "projectNumber", true)!;
+    const proposalState = await projectGapProposalState(context, projectNumber);
+    const allowAcquisition = optionalBool(input.allowOnDemandAcquisition, "allowOnDemandAcquisition") !== false;
+    const acquisition = allowAcquisition && context.config.jetbuiltIndexPath ? {
+      apiKey: context.jetbuiltApiKey ?? "",
+      baseUrl: context.config.jetbuiltApiBaseUrl,
+      indexPath: context.config.jetbuiltIndexPath,
+    } : null;
+    const result = await getJetbuiltProjectLibraryGapAnalysisWithAcquisition(historyDb, context.db, projectNumber, proposalState, acquisition);
+    return {
+      ...result,
+      queryCounts: {
+        ...result.queryCounts,
+        canonicalDatabase: result.queryCounts.canonicalDatabase + (proposalState.source === "local" ? 2 : 0),
+      },
+    };
+  };
+  return { execute, executeAsync };
 }
 
 export const MCP_LIBRARY_TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -455,4 +514,5 @@ export const MCP_LIBRARY_TOOL_DESCRIPTIONS: Record<string, string> = {
   get_jetbuilt_library_candidate: "Read one Jetbuilt discovery candidate evidence bundle with usage, co-occurrence, and non-authoritative possible related canonical templates. Inputs: candidateKey or manufacturer+model. Never writes or auto-links.",
   get_jetbuilt_candidate_usage: "Read stage/cohort/time usage for one Jetbuilt discovery candidate. Distinguishes projects, rooms, and line occurrences. Never writes.",
   get_jetbuilt_candidate_cooccurrence: "Read what commonly appears in the same rooms as one Jetbuilt discovery candidate. Distinguishes line occurrences, distinct rooms, and distinct projects. Never writes.",
+  get_jetbuilt_project_library_gap_analysis: "Analyze one exact Jetbuilt project number in a bounded operation: full BOM identities, exact current canonical matches, schematic-relevance exclusions, exact proposal/alias duplicates, possible exact identity variants, and unresolved candidates. Returns a stable project-source/canonical run identity plus a separate live proposal-state identity. If locally absent, may fetch only an exact cached-index match with GET requests; a cached-index miss does not prove Jetbuilt absence. Never writes Jetbuilt, templates, taxonomy, schematics, or proposal status.",
 };

@@ -50,7 +50,7 @@ export function createTateSideMcpServer(context: McpLibraryContext): McpServer {
         if (!response.ok) throw new McpLibraryError(typeof value.error === "string" ? value.error : `Proposal API returned ${response.status}`);
         return result(value);
       }
-      return result(tools.execute(name, input));
+      return result(await tools.executeAsync(name, input));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected MCP tool error";
       return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: message }) }], isError: true };
@@ -75,7 +75,7 @@ export function createTateSideMcpServer(context: McpLibraryContext): McpServer {
   register("get_suspicious_templates", z.object({ manufacturer: z.string().optional(), category: z.string().optional(), deviceType: z.string().optional(), issueCode: z.string().optional(), severity: z.enum(["error", "warning", "info"]).optional(), limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).max(1_000_000).optional() }));
   register("get_template_triage_bundle", z.object({ templateId: z.string() }));
   register("create_library_doctor_proposal", z.object({ templateId: z.string(), field: z.string(), proposedValue: z.unknown().optional(), currentValue: z.unknown().optional(), proposalType: z.string(), confidence: z.string().optional(), risk: z.string().optional(), sourceIssueCode: z.string().optional(), sourceIssueGroup: z.string().optional(), sourceCurrentValue: z.unknown().optional(), evidenceRefs: z.array(z.unknown()).optional(), rationale: z.string().optional(), createdBy: z.string().optional(), supersedesProposalId: z.string().optional(), generationKey: z.string().optional() }));
-  register("create_library_doctor_new_template_proposal", z.object({ proposedTemplate: z.record(z.string(), z.unknown()), identityAliases: z.array(z.string()).optional(), evidenceRefs: z.array(z.unknown()).optional(), rationale: z.string().optional(), classificationConfidence: z.enum(["low", "medium", "high"]).optional(), risk: z.enum(["low", "medium", "high"]).optional(), historicalUsageEvidence: z.record(z.string(), z.unknown()).optional(), operationalNotes: z.array(z.string()).optional(), createdBy: z.string().optional(), supersedesProposalId: z.string().optional(), generationKey: z.string().optional() }));
+  register("create_library_doctor_new_template_proposal", z.object({ proposedTemplate: z.record(z.string(), z.unknown()), identityAliases: z.array(z.string()).optional(), evidenceRefs: z.array(z.unknown()).optional(), rationale: z.string().optional(), classificationConfidence: z.enum(["low", "medium", "high"]).optional(), risk: z.enum(["low", "medium", "high"]).optional(), historicalUsageEvidence: z.record(z.string(), z.unknown()).optional(), operationalNotes: z.array(z.string()).optional(), createdBy: z.string().optional(), supersedesProposalId: z.string().optional(), generationKey: z.string().optional(), qualityGates: z.record(z.string(), z.unknown()).optional(), projectGapContext: z.record(z.string(), z.unknown()).optional() }));
   register("preview_taxonomy_registry_change", z.object({ operation: z.string(), payload: z.record(z.string(), z.unknown()) }));
   register("create_taxonomy_registry_change_proposal", z.object({ operation: z.string(), payload: z.record(z.string(), z.unknown()), changeKey: z.string(), rationale: z.string().optional(), createdBy: z.string().optional() }));
   // Read-only Jetbuilt historical discovery (requires optional historyDb on context).
@@ -106,6 +106,9 @@ export function createTateSideMcpServer(context: McpLibraryContext): McpServer {
     limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).max(1_000_000).optional(),
     minimumRoomCount: z.number().int().min(1).max(1_000_000).optional(),
   }));
+  register("get_jetbuilt_project_library_gap_analysis", z.object({
+    projectNumber: z.string(), allowOnDemandAcquisition: z.boolean().optional(),
+  }));
   return server;
 }
 
@@ -126,7 +129,7 @@ async function main(): Promise<void> {
   if (!config.mcpLibraryEnabled) throw new McpLibraryError("Set TATESIDE_MCP_LIBRARY_ENABLED=1 to start the MCP library server");
   const db = openMcpDatabase(config.dbPath);
   const historyDb = openOptionalHistoryDatabase();
-  const server = createTateSideMcpServer({ db, config, historyDb });
+  const server = createTateSideMcpServer({ db, config, historyDb, jetbuiltApiKey: process.env.JETBUILT_API_KEY?.trim() || null });
   await server.connect(new StdioServerTransport());
 }
 

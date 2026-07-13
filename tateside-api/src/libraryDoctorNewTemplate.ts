@@ -9,6 +9,7 @@ import {
 } from "./libraryDoctorStore.js";
 import { getTaxonomyVocabularies } from "./taxonomy.js";
 import { listRegistryValues, type TaxonomyRegistryKind } from "./taxonomyRegistryStore.js";
+import { JETBUILT_PROJECT_LIBRARY_GAP_ANALYSIS_VERSION } from "./jetbuiltProjectLibraryGap.js";
 
 const DIRECTIONS = new Set(["input", "output", "bidirectional", "passthrough"]);
 const RACK_FORMS = new Set(["full", "half", "shelf-only"]);
@@ -34,6 +35,17 @@ export interface CreateNewTemplateProposalInput {
   createdBy?: string | null;
   supersedesProposalId?: unknown;
   generationKey?: unknown;
+  qualityGates?: unknown;
+  projectGapContext?: unknown;
+}
+
+interface ProjectGapContext {
+  runKey: string;
+  candidateKey: string;
+  projectNumber: string;
+  analysisVersion: string;
+  projectSourceFingerprint: string;
+  canonicalSnapshotIdentity: string;
 }
 
 function normalize(value: string): string {
@@ -156,6 +168,81 @@ function validateTemplate(db: DatabaseSync, value: unknown) {
   return { proposedTemplate, issues, taxonomyValidation };
 }
 
+function validateQualityGates(input: CreateNewTemplateProposalInput, proposed: DeviceTemplate | null, issues: string[]): void {
+  if (!input.qualityGates || typeof input.qualityGates !== "object" || Array.isArray(input.qualityGates)) {
+    issues.push("qualityGates is required");
+    return;
+  }
+  const gates = input.qualityGates as Record<string, unknown>;
+  if (gates.identityVerifiedByCaller !== true) issues.push("qualityGates.identityVerifiedByCaller must be true; this is a caller declaration, not independent backend verification");
+  if (gates.officialEvidenceDeclaredByCaller !== true) issues.push("qualityGates.officialEvidenceDeclaredByCaller must be true; the backend validates URL shape but not manufacturer ownership");
+  if (gates.noValidDataOmittedConfirmedByCaller !== true) issues.push("qualityGates.noValidDataOmittedConfirmedByCaller must be true; completeness is caller-confirmed");
+  if (gates.dimensionsDeclaration !== "complete" && gates.dimensionsDeclaration !== "unavailable") {
+    issues.push("qualityGates.dimensionsDeclaration must be complete or unavailable");
+  }
+  if (gates.dimensionsDeclaration === "complete" && proposed && !(proposed.heightMm && proposed.widthMm && proposed.depthMm)) {
+    issues.push("Caller-declared complete dimensions require heightMm, widthMm, and depthMm");
+  }
+  if (gates.physicalPortsDeclaration !== "complete" && gates.physicalPortsDeclaration !== "not-applicable") {
+    issues.push("qualityGates.physicalPortsDeclaration must be complete or not-applicable");
+  } else if (proposed && gates.physicalPortsDeclaration === "complete" && proposed.ports.length === 0) {
+    issues.push("A caller-declared complete physical port set cannot be empty");
+  } else if (proposed && gates.physicalPortsDeclaration === "not-applicable" && proposed.ports.length > 0) {
+    issues.push("physicalPortsDeclaration not-applicable conflicts with supplied ports");
+  }
+  const hasOfficialEvidence = Array.isArray(input.evidenceRefs) && input.evidenceRefs.some((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const ref = entry as Record<string, unknown>;
+    if (typeof ref.type !== "string" || !ref.type.toLowerCase().includes("official")) return false;
+    if (typeof ref.url !== "string") return false;
+    try { return ["http:", "https:"].includes(new URL(ref.url).protocol); } catch { return false; }
+  });
+  if (!hasOfficialEvidence) issues.push("At least one evidence reference marked official by the caller with an HTTP(S) URL is required; the backend does not verify manufacturer-domain ownership");
+  if (input.classificationConfidence !== "high") issues.push("classificationConfidence must be high for new-template proposals");
+}
+
+function projectGapContext(input: CreateNewTemplateProposalInput, proposed: DeviceTemplate | null, issues: string[]): ProjectGapContext | null {
+  if (input.projectGapContext == null) return null;
+  if (!input.projectGapContext || typeof input.projectGapContext !== "object" || Array.isArray(input.projectGapContext)) {
+    issues.push("projectGapContext must be an object");
+    return null;
+  }
+  const raw = input.projectGapContext as Record<string, unknown>;
+  const contextIssues: string[] = [];
+  const context = {
+    runKey: string(raw.runKey, "projectGapContext.runKey", contextIssues, true) ?? "",
+    candidateKey: string(raw.candidateKey, "projectGapContext.candidateKey", contextIssues, true) ?? "",
+    projectNumber: string(raw.projectNumber, "projectGapContext.projectNumber", contextIssues, true) ?? "",
+    analysisVersion: string(raw.analysisVersion, "projectGapContext.analysisVersion", contextIssues, true) ?? "",
+    projectSourceFingerprint: string(raw.projectSourceFingerprint, "projectGapContext.projectSourceFingerprint", contextIssues, true) ?? "",
+    canonicalSnapshotIdentity: string(raw.canonicalSnapshotIdentity, "projectGapContext.canonicalSnapshotIdentity", contextIssues, true) ?? "",
+  };
+  issues.push(...contextIssues);
+  if (context.analysisVersion && context.analysisVersion !== JETBUILT_PROJECT_LIBRARY_GAP_ANALYSIS_VERSION) issues.push("projectGapContext.analysisVersion is unsupported");
+  const proposedIdentity = proposed ? `${normalize(proposed.manufacturer ?? "")}::${normalize(proposed.modelNumber ?? "")}` : null;
+  if (proposedIdentity && context.candidateKey && context.candidateKey !== proposedIdentity) issues.push("projectGapContext.candidateKey does not match the proposed manufacturer/model identity");
+  return contextIssues.length ? null : context;
+}
+
+function recordProjectGapResult(
+  db: DatabaseSync,
+  context: ProjectGapContext | null,
+  input: CreateNewTemplateProposalInput,
+  status: "proposal-created" | "validation-failed",
+  validationIssues: string[],
+  proposalId: string | null,
+): void {
+  if (!context) return;
+  db.prepare(`INSERT INTO jetbuilt_project_gap_candidate_results
+    (run_key, candidate_key, project_number, analysis_version, canonical_snapshot_identity, status, attempted_payload_json, validation_issues_json, proposal_id, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(run_key, candidate_key) DO UPDATE SET status=excluded.status, attempted_payload_json=excluded.attempted_payload_json,
+      validation_issues_json=excluded.validation_issues_json, proposal_id=excluded.proposal_id, updated_at=excluded.updated_at`).run(
+    context.runKey, context.candidateKey, context.projectNumber, context.analysisVersion, context.canonicalSnapshotIdentity,
+    status, JSON.stringify(input), JSON.stringify(validationIssues), proposalId, new Date().toISOString(),
+  );
+}
+
 export function createLibraryDoctorNewTemplateProposal(db: DatabaseSync, input: CreateNewTemplateProposalInput) {
   const validation = validateTemplate(db, input.proposedTemplate);
   const aliases = strings(input.identityAliases, "identityAliases", validation.issues);
@@ -165,6 +252,8 @@ export function createLibraryDoctorNewTemplateProposal(db: DatabaseSync, input: 
   }
   const templates = listCurrentTemplates(db);
   const proposed = validation.proposedTemplate;
+  validateQualityGates(input, proposed, validation.issues);
+  const runContext = projectGapContext(input, proposed, validation.issues);
   const exactCanonicalCollisions = proposed ? templates.filter((template) =>
     normalize(template.manufacturer ?? "") === normalize(proposed.manufacturer ?? "")
     && [template.modelNumber, template.label].filter(Boolean).some((value) => normalize(value!) === normalize(proposed.modelNumber ?? ""))) : [];
@@ -207,15 +296,24 @@ export function createLibraryDoctorNewTemplateProposal(db: DatabaseSync, input: 
     canonicalTemplateCountBefore: beforeTemplateCount,
     proposedTemplateSummary,
   };
-  if (!proposed || validation.issues.length) return { ...base, proposal: null, canonicalTemplateCountAfter: templates.length };
+  if (!proposed || validation.issues.length) {
+    recordProjectGapResult(db, runContext, input, "validation-failed", validation.issues, null);
+    return { ...base, success: false, proposal: null, candidateStatus: "needs-manual-review", attemptedTemplate: input.proposedTemplate, canonicalTemplateCountAfter: templates.length };
+  }
   const confidence = (input.classificationConfidence ?? "medium") as LibraryDoctorConfidence;
-  if (!new Set(["low", "medium", "high"]).has(confidence)) return { ...base, success: false, proposal: null, validationIssues: [...validation.issues, "classificationConfidence must be low, medium, or high"], canonicalTemplateCountAfter: templates.length };
+  if (!new Set(["low", "medium", "high"]).has(confidence)) {
+    const issues = [...validation.issues, "classificationConfidence must be low, medium, or high"];
+    recordProjectGapResult(db, runContext, input, "validation-failed", issues, null);
+    return { ...base, success: false, proposal: null, candidateStatus: "needs-manual-review", attemptedTemplate: input.proposedTemplate, validationIssues: issues, canonicalTemplateCountAfter: templates.length };
+  }
   const identity = `${normalize(proposed.manufacturer ?? "")}::${normalize(proposed.modelNumber ?? "")}`;
   const generationKey = typeof input.generationKey === "string" && input.generationKey.trim()
     ? input.generationKey.trim()
     : `new-template:${createHash("sha256").update(identity).digest("hex")}`;
   const existing = getLibraryDoctorProposalByGenerationKey(db, generationKey);
-  if (existing) return {
+  if (existing) {
+    recordProjectGapResult(db, runContext, input, "proposal-created", [], existing.id);
+    return {
     ...base,
     success: true,
     alreadyExisting: true,
@@ -225,8 +323,11 @@ export function createLibraryDoctorNewTemplateProposal(db: DatabaseSync, input: 
     proposalType: existing.proposalType,
     evidenceCount: existing.evidenceRefs.length,
     canonicalTemplateCountAfter: templates.length,
-  };
-  const proposal = createLibraryDoctorProposal(db, {
+    };
+  }
+  let proposal;
+  try {
+    proposal = createLibraryDoctorProposal(db, {
     templateId: `new-template:${createHash("sha256").update(identity).digest("hex").slice(0, 24)}`,
     manufacturer: proposed.manufacturer,
     modelNumber: proposed.modelNumber,
@@ -251,6 +352,12 @@ export function createLibraryDoctorNewTemplateProposal(db: DatabaseSync, input: 
     supersedesProposalId: input.supersedesProposalId,
     generationKey,
     validatedNewTemplate: true,
-  });
+    });
+  } catch (error) {
+    const issues = [error instanceof Error ? error.message : String(error)];
+    recordProjectGapResult(db, runContext, input, "validation-failed", issues, null);
+    return { ...base, success: false, proposal: null, candidateStatus: "needs-manual-review", attemptedTemplate: input.proposedTemplate, validationIssues: issues, canonicalTemplateCountAfter: templates.length };
+  }
+  recordProjectGapResult(db, runContext, input, "proposal-created", [], proposal.id);
   return { ...base, success: true, alreadyExisting: false, proposal, proposalId: proposal.id, status: proposal.status, proposalType: proposal.proposalType, evidenceCount: proposal.evidenceRefs.length, canonicalTemplateCountAfter: listCurrentTemplates(db).length };
 }

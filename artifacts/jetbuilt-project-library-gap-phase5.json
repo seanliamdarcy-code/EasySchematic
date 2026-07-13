@@ -1,0 +1,99 @@
+{
+  "generatedAt": "2026-07-13",
+  "redacted": true,
+  "toolNames": [
+    "get_jetbuilt_project_library_gap_analysis",
+    "create_library_doctor_new_template_proposal"
+  ],
+  "analysisVersion": "jetbuilt-project-library-gap-v2",
+  "projectLookupModes": [
+    "exact-normalized-project-number",
+    "exact-project-id",
+    "exact-cached-index-project-on-demand"
+  ],
+  "realLocalProjectValidation": {
+    "projectNumber": "P-4940",
+    "projectLineItemCount": 18,
+    "distinctIdentityCount": 17,
+    "canonicalMatchCount": 1,
+    "nonSchematicCount": 4,
+    "alreadyProposedCount": 0,
+    "possibleIdentityVariantCount": 0,
+    "unresolvedCandidateCount": 12,
+    "manualReviewCount": 0,
+    "roomCount": 10,
+    "systemCount": 1
+  },
+  "requestQueryCounts": {
+    "localHistoryQueries": 5,
+    "canonicalQueriesWithRemoteProposalState": 1,
+    "proposalIdentityRequests": 1,
+    "locallyPresentProjectJetbuiltRequests": 0,
+    "onDemandProjectJetbuiltRequestsMinimum": 5,
+    "jetbuiltWriteRequests": 0
+  },
+  "idempotencyBehaviour": {
+    "analysisRunIdentity": "stable exact-project/BOM source fingerprint + analysis version + canonical snapshot SHA-256",
+    "proposalStateIdentity": "separately versioned live overlay excluded from the analysis run key",
+    "proposalIdentity": "deterministic new-template generation key",
+    "existingProposalChecks": [
+      "exact normalized manufacturer/model",
+      "exact declared identity alias",
+      "deterministic generation key"
+    ],
+    "rerun": "Locally present projects make no Jetbuilt request; created proposals and preserved failures are returned instead of recreated."
+  },
+  "resumabilityBehaviour": {
+    "completedCandidates": "Detected from proposal identities and generation keys.",
+    "validationFailures": "Complete attempted payload and exact issues persist as validation-failed per run/candidate.",
+    "interruptedAcquisition": "Failed sync run is retained; a later exact-project rerun succeeds independently.",
+    "opaqueBatchTransaction": false
+  },
+  "qualityGates": [
+    "zero exact canonical collisions",
+    "no exact existing proposal or declared proposal alias",
+    "high classification confidence",
+    "caller-declared identity verification",
+    "at least one caller-marked official HTTP(S) evidence reference",
+    "caller-declared complete physical ports or explicit not-applicable",
+    "caller-declared complete dimensions or explicit unavailable",
+    "taxonomy validation",
+    "caller confirmation that no valid data was omitted"
+  ],
+  "evidenceRequirements": {
+    "minimumCallerMarkedOfficialReferences": 1,
+    "manufacturerDomainOwnershipVerifiedByBackend": false,
+    "preservedByMcp": true,
+    "preservedByProposalSink": true,
+    "displayedByReviewUi": true
+  },
+  "epsonFailureDiagnosis": {
+    "originalFailedBodyAvailable": false,
+    "originalExactCauseProved": false,
+    "representativeRegression": "A complete Epson EB-810E fixture with connectorType 3.5mm is rejected as Unknown connectorType; its full two-port payload is preserved unchanged and no proposal is created.",
+    "candidateStatus": "needs-manual-review",
+    "realProposalMutated": false
+  },
+  "mutationCounts": {
+    "jetbuiltWrites": 0,
+    "canonicalTemplates": { "before": 1108, "after": 1108 },
+    "taxonomyValues": { "before": 0, "after": 0 },
+    "taxonomyAliases": { "before": 0, "after": 0 },
+    "schematics": { "before": 19, "after": 19 },
+    "realProposalsCreated": 0,
+    "realProposalsAccepted": 0,
+    "realProposalsApplied": 0
+  },
+  "testResults": {
+    "tatesideApiBuild": "passed",
+    "npmTest": "188 passed",
+    "jetbuiltHistoryTest": "15 passed",
+    "focusedMcpLibraryRoutes": "29 passed",
+    "productionBuild": "passed with pre-existing chunk-size warning",
+    "changedFileEslint": "passed",
+    "gitDiffCheck": "passed"
+  },
+  "mcpToolCount": { "before": 26, "after": 27 },
+  "productionConfirmed": false,
+  "recommendedNextStep": "Review the diff, then deploy the API migration and proposal-identity endpoint through the normal reviewed release path before claiming production one-hit support."
+}
