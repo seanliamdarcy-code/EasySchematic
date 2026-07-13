@@ -13,11 +13,42 @@ import {
   summarizeProposalIdentity,
 } from "../libraryDoctorUi";
 import { TatesideApiError } from "../tatesideApi";
+import {
+  adaptTemplateForProposalPreview,
+  parseNewTemplateProposalValue,
+} from "../libraryDoctorProposalPreview";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ProposedTemplatePropertiesDialog from "../components/ProposedTemplatePropertiesDialog";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+const neatProposalValue = {
+  proposedTemplate: {
+    manufacturer: "Neat",
+    modelNumber: "Neat Center",
+    label: "Neat Center",
+    shortName: "Center",
+    category: "Sources",
+    deviceType: "camera",
+    roleTags: ["future-taxonomy-value"],
+    deviceCapabilities: ["poe-powered"],
+    ports: [
+      { id: "ethernet-poe", label: "PoE / Ethernet", signalType: "ethernet", direction: "bidirectional", connectorType: "rj45", section: "Network / Power" },
+      { id: "usb-c-debug", label: "USB-C Debug Only", signalType: "usb", direction: "bidirectional", connectorType: "usb-c", section: "Service" },
+    ],
+  },
+  proposalMetadata: {
+    identityAliases: ["NEATCENTER-SE"],
+    historicalUsageEvidence: { occurrences: 7, quantity: 7, projects: 1, rooms: 7, completedProjects: 1, priorityScore: 62.5 },
+    operationalNotes: ["USB-C is debug only."],
+    duplicateCheck: { exactCanonicalCollisions: [], exactAliasCollisions: [], possibleRelatedTemplates: [], searchTermCollisions: [] },
+    taxonomyValidation: [{ kind: "roleTag", values: ["future-taxonomy-value"], unknownValues: ["future-taxonomy-value"] }],
+  },
+};
 
 describe("libraryDoctorUi helpers", () => {
   it("formats values for review display without mutation", () => {
@@ -112,6 +143,80 @@ describe("libraryDoctorUi helpers", () => {
         createdProposals: [],
       }),
     ).toMatch(/Created: 1/);
+  });
+
+  it("safely parses the actual new-template proposal shape", () => {
+    const parsed = parseNewTemplateProposalValue(neatProposalValue);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.proposedTemplate.label).toBe("Neat Center");
+    expect(parsed.value.proposedTemplate.ports.map((port) => port.label)).toEqual([
+      "PoE / Ethernet",
+      "USB-C Debug Only",
+    ]);
+    expect(parsed.value.proposedTemplate.roleTags).toEqual(["future-taxonomy-value"]);
+    expect(parsed.value.proposalMetadata.historicalUsageEvidence.rooms).toBe(7);
+  });
+
+  it("rejects malformed new-template values without inventing a device", () => {
+    expect(parseNewTemplateProposalValue(null).ok).toBe(false);
+    expect(parseNewTemplateProposalValue({}).ok).toBe(false);
+    expect(parseNewTemplateProposalValue({ ...neatProposalValue, proposedTemplate: { ...neatProposalValue.proposedTemplate, label: "" } }).ok).toBe(false);
+    expect(parseNewTemplateProposalValue({ ...neatProposalValue, proposedTemplate: { ...neatProposalValue.proposedTemplate, ports: [{}] } }).ok).toBe(false);
+  });
+
+  it("builds a complete, full-label, store-independent preview", () => {
+    const parsed = parseNewTemplateProposalValue(neatProposalValue);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const adapted = adaptTemplateForProposalPreview(parsed.value.proposedTemplate);
+    expect(adapted.ok).toBe(true);
+    if (!adapted.ok) return;
+    expect(adapted.data.label).toBe("Neat Center");
+    expect(adapted.data.ports).toHaveLength(2);
+    expect(adapted.data).not.toHaveProperty("templateId");
+    expect(adapted.data).not.toHaveProperty("templateVersion");
+    expect(adapted.data).not.toHaveProperty("id");
+  });
+
+  it("allows missing optional dimensions and rejects invalid adapter input", () => {
+    const parsed = parseNewTemplateProposalValue(neatProposalValue);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(adaptTemplateForProposalPreview(parsed.value.proposedTemplate).ok).toBe(true);
+    expect(adaptTemplateForProposalPreview({ ...parsed.value.proposedTemplate, label: "" }).ok).toBe(false);
+  });
+
+  it("renders complete proposed-template properties with Close as the only action", () => {
+    const value = structuredClone(neatProposalValue);
+    Object.assign(value.proposedTemplate, { heightMm: 297, widthMm: 84, depthMm: 84, weightKg: 1.47 });
+    const parsed = parseNewTemplateProposalValue(value);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const html = renderToStaticMarkup(createElement(ProposedTemplatePropertiesDialog, {
+      value: parsed.value,
+      evidenceRefs: [{ type: "official-product-page", title: "Neat Center", url: "https://neat.no/center/" }],
+      rationale: "Canonical Neat Center is missing.",
+      onClose: () => undefined,
+    }));
+    for (const text of ["Proposed Template Properties", "PROPOSED TEMPLATE — NOT APPLIED", "Neat Center", "PoE / Ethernet", "USB-C Debug Only", "297 mm", "NEATCENTER-SE", "Occurrences", "Collision checks", "Taxonomy validation", "USB-C is debug only.", "Canonical Neat Center is missing."]) {
+      expect(html).toContain(text);
+    }
+    expect((html.match(/<button/g) ?? [])).toHaveLength(1);
+    expect(html).toContain(">Close</button>");
+    expect(html).not.toMatch(/<input|<textarea|<select/);
+    expect(html).not.toMatch(/>\s*(Save|Apply|Promote|Create|Delete)\b/i);
+  });
+
+  it("uses the shared block visual without schematic-store preview state", () => {
+    const nodeSource = readFileSync(path.resolve(here, "../components/DeviceNode.tsx"), "utf8");
+    const previewSource = readFileSync(path.resolve(here, "../components/ProposalDeviceBlockPreview.tsx"), "utf8");
+    const visualSource = readFileSync(path.resolve(here, "../components/DeviceBlockVisual.tsx"), "utf8");
+    expect(nodeSource).toMatch(/import DeviceBlockVisual/);
+    expect(previewSource).toMatch(/import DeviceBlockVisual/);
+    expect(previewSource).toMatch(/proposal-preview:\$\{proposalId\}/);
+    expect(previewSource).toMatch(/draggable:\s*false/);
+    expect(previewSource).toMatch(/connectable:\s*false/);
+    expect(previewSource).toMatch(/selectable:\s*false/);
+    expect(previewSource).not.toMatch(/useSchematicStore|addDevice|setEditingNodeId|localStorage/);
+    expect(visualSource).not.toMatch(/useSchematicStore|setEditingNodeId/);
   });
 
   it("Library Doctor dialog source never defines an Apply control", () => {

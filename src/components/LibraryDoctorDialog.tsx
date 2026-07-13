@@ -25,6 +25,7 @@ import {
   parseCommaSeparatedList,
   summarizeProposalIdentity,
 } from "../libraryDoctorUi";
+import NewTemplateProposalDetail from "./NewTemplateProposalDetail";
 
 type TabId = "candidates" | "queue";
 
@@ -786,6 +787,7 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                       <option value="taxonomy-classification">taxonomy-classification</option>
                       <option value="taxonomy-registry-change">taxonomy-registry-change</option>
                       <option value="field-value-change">field-value-change</option>
+                      <option value="new-template">new-template</option>
                       <option value="completeness-fill">completeness-fill</option>
                       <option value="other">other</option>
                     </select>
@@ -913,9 +915,11 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                       </span>
                     </div>
 
-                    <div className="rounded border border-emerald-200 bg-emerald-50/60 px-2 py-1.5 text-[10px] text-emerald-950">
-                      Accepting approves this proposal in the review queue. It does not change the
-                      device template.
+                    <div className={`rounded border px-2 py-1.5 text-[10px] ${selectedProposal.proposalType === "new-template" ? "border-amber-300 bg-amber-50 text-amber-950" : "border-emerald-200 bg-emerald-50/60 text-emerald-950"}`}>
+                      {selectedProposal.proposalType === "new-template" && <strong className="block">PROPOSED TEMPLATE — NOT APPLIED</strong>}
+                      {selectedProposal.proposalType === "new-template"
+                        ? "Accepting records review approval only. It does not create or modify a canonical device template."
+                        : "Accepting approves this proposal in the review queue. It does not change the device template."}
                     </div>
 
                     <div>
@@ -923,7 +927,7 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                         {summarizeProposalIdentity(selectedProposal)}
                       </div>
                       <div className="font-mono text-[10px] text-[var(--color-text-muted)]">
-                        templateId: {selectedProposal.templateId}
+                        {selectedProposal.proposalType === "new-template" ? "proposal identity" : "templateId"}: {selectedProposal.templateId}
                       </div>
                       <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
                         type {selectedProposal.proposalType}
@@ -932,31 +936,27 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded border border-[var(--color-border)] p-2">
-                        <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
-                          Current
+                    {selectedProposal.proposalType === "new-template" ? (
+                      <NewTemplateProposalDetail proposal={selectedProposal} />
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded border border-[var(--color-border)] p-2">
+                          <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] mb-1">Current</div>
+                          <div className="font-mono whitespace-pre-wrap break-words">{formatLibraryDoctorValue(selectedProposal.currentValue)}</div>
                         </div>
-                        <div className="font-mono whitespace-pre-wrap break-words">
-                          {formatLibraryDoctorValue(selectedProposal.currentValue)}
-                        </div>
-                      </div>
-                      <div className="rounded border border-blue-200 bg-blue-50/40 p-2">
-                        <div className="text-[10px] uppercase tracking-wide text-blue-800 mb-1">
-                          Proposed (not applied)
-                        </div>
-                        <div className="font-mono whitespace-pre-wrap break-words">
-                          {formatLibraryDoctorValue(selectedProposal.proposedValue)}
+                        <div className="rounded border border-blue-200 bg-blue-50/40 p-2">
+                          <div className="text-[10px] uppercase tracking-wide text-blue-800 mb-1">Proposed (not applied)</div>
+                          <div className="font-mono whitespace-pre-wrap break-words">{formatLibraryDoctorValue(selectedProposal.proposedValue)}</div>
                         </div>
                       </div>
-                    </div>
+                    )}
 
                     <div>
                       <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">Field</div>
                       <div className="font-mono">{selectedProposal.field}</div>
                     </div>
 
-                    {selectedProposal.rationale && (
+                    {selectedProposal.proposalType !== "new-template" && selectedProposal.rationale && (
                       <div>
                         <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
                           Rationale
@@ -1000,7 +1000,7 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                       )}
                     </div>
 
-                    <div>
+                    {selectedProposal.proposalType !== "new-template" && <div>
                       <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
                         Evidence
                       </div>
@@ -1021,7 +1021,7 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                           ))}
                         </ul>
                       )}
-                    </div>
+                    </div>}
 
                     <div>
                       <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
@@ -1044,6 +1044,17 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                         </ul>
                       )}
                     </div>
+
+                    {selectedProposal.proposalType === "new-template" && (
+                      <details className="rounded border border-[var(--color-border)] p-2">
+                        <summary className="cursor-pointer text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+                          Raw proposal JSON
+                        </summary>
+                        <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[10px]">
+                          {formatLibraryDoctorValue(selectedProposal.proposedValue)}
+                        </pre>
+                      </details>
+                    )}
 
                     {reviewActions.length > 0 && (
                       <div className="border-t border-[var(--color-border)] pt-3 space-y-2">
