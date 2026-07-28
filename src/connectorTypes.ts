@@ -150,6 +150,7 @@ export const DEFAULT_CONNECTOR: Record<SignalType, ConnectorType> = {
   cresnet: "terminal-block",
   dmnet: "terminal-block",
   sensor: "phoenix",
+  expansion: "proprietary",
   custom: "other",
 };
 
@@ -319,6 +320,7 @@ export const CONNECTOR_TO_CABLE: Record<ConnectorType, string> = {
   "d-hole-insert": "",
   "ground-lug": "Ground Bonding Conductor",
   "locking-dc": "Locking DC Power Cable",
+  proprietary: "Proprietary",
   none: "",
   other: "Other",
 };

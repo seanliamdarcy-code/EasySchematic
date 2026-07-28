@@ -19,7 +19,7 @@ export type ConnectorType =
   | "lemo-2pin" | "lemo-4pin" | "lemo-5pin"
   | "wireless"
   | "solder-cup" | "punch-down-110" | "punch-down-66" | "krone-idc" | "d-hole-insert" | "ground-lug"
-  | "none" | "other";
+  | "proprietary" | "none" | "other";
 
 export interface PortNetworkConfig {
   ip?: string;
@@ -125,6 +125,7 @@ export type SignalType =
   | "cresnet"
   | "dmnet"
   | "sensor"
+  | "expansion"
   | "custom";
 
 export type LineStyle = "solid" | "dashed" | "dotted" | "dash-dot";
@@ -988,6 +989,7 @@ export const SIGNAL_COLORS: Record<SignalType, string> = {
   cresnet: "var(--color-cresnet)",
   dmnet: "var(--color-dmnet)",
   sensor: "var(--color-sensor)",
+  expansion: "var(--color-custom)",
   custom: "var(--color-custom)",
 };
 
@@ -1074,6 +1076,7 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "d-hole-insert": "D-Hole Insert",
   "ground-lug": "Chassis Ground Lug",
   "locking-dc": "Locking DC Power",
+  proprietary: "Proprietary",
   none: "None",
   other: "Other",
 };
@@ -1160,6 +1163,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   cresnet: "Cresnet",
   dmnet: "DMNet",
   sensor: "Sensor",
+  expansion: "Expansion",
   custom: "Custom",
 };
 
@@ -1173,7 +1177,7 @@ export const SIGNAL_GROUPS: Record<string, SignalType[]> = {
   "Sync / Clock": ["genlock", "wordclock", "timecode", "dars", "gps"],
   "Power": ["power", "power-l1", "power-l2", "power-l3", "power-neutral", "power-ground"],
   "Streaming": ["rtmp", "rtsp", "mpeg-ts", "rf"],
-  "Other": ["custom"],
+  "Other": ["expansion", "custom"],
 };
 
 /** Connector types organized by functional group (for searchable dropdowns) */
@@ -1187,5 +1191,5 @@ export const CONNECTOR_GROUPS: Record<string, ConnectorType[]> = {
   "Speaker": ["speakon", "banana", "binding-post", "binding-post-banana"],
   "Terminal": ["phoenix", "terminal-block", "multipin", "solder-cup", "punch-down-110", "punch-down-66", "krone-idc"],
   "RF": ["reverse-tnc", "sma", "f-connector"],
-  "Other": ["wireless", "digilink", "d-hole-insert", "ground-lug", "none", "other"],
+  "Other": ["wireless", "digilink", "d-hole-insert", "ground-lug", "proprietary", "none", "other"],
 };
