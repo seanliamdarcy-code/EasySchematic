@@ -15,7 +15,7 @@ export type ConnectorType =
   | "mini-hdmi" | "mini-displayport"
   | "rj11" | "rj12" | "usb-mini" | "usb-micro" | "trs-2.5mm"
   | "reverse-tnc" | "sma" | "db37"
-  | "d-tap" | "v-mount" | "f-connector" | "belling-lee" | "ci-slot" | "ops-80pin" | "iiyama-slot-pc"
+  | "d-tap" | "v-mount" | "f-connector" | "belling-lee" | "ci-slot" | "ops-80pin" | "iiyama-slot-pc" | "iiyama-wifi-module"
   | "lemo-2pin" | "lemo-4pin" | "lemo-5pin"
   | "wireless"
   | "solder-cup" | "punch-down-110" | "punch-down-66" | "krone-idc" | "d-hole-insert" | "ground-lug"
@@ -1074,6 +1074,7 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "ci-slot": "Common Interface (CI) Slot",
   "ops-80pin": "Intel OPS 80-pin",
   "iiyama-slot-pc": "iiyama Slot PC",
+  "iiyama-wifi-module": "iiyama Wi-Fi Module Slot",
   wireless: "Wireless",
   "solder-cup": "Solder Cup",
   "punch-down-110": "Punch-down (110)",
@@ -1198,5 +1199,5 @@ export const CONNECTOR_GROUPS: Record<string, ConnectorType[]> = {
   "Speaker": ["speakon", "banana", "binding-post", "binding-post-banana"],
   "Terminal": ["phoenix", "terminal-block", "multipin", "solder-cup", "punch-down-110", "punch-down-66", "krone-idc"],
   "RF": ["reverse-tnc", "sma", "f-connector", "belling-lee"],
-  "Other": ["ci-slot", "ops-80pin", "iiyama-slot-pc", "wireless", "digilink", "d-hole-insert", "ground-lug", "proprietary", "none", "other"],
+  "Other": ["ci-slot", "ops-80pin", "iiyama-slot-pc", "iiyama-wifi-module", "wireless", "digilink", "d-hole-insert", "ground-lug", "proprietary", "none", "other"],
 };
