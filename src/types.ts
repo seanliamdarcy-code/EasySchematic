@@ -15,7 +15,7 @@ export type ConnectorType =
   | "mini-hdmi" | "mini-displayport"
   | "rj11" | "rj12" | "usb-mini" | "usb-micro" | "trs-2.5mm"
   | "reverse-tnc" | "sma" | "db37"
-  | "d-tap" | "v-mount" | "f-connector"
+  | "d-tap" | "v-mount" | "f-connector" | "belling-lee" | "ci-slot"
   | "lemo-2pin" | "lemo-4pin" | "lemo-5pin"
   | "wireless"
   | "solder-cup" | "punch-down-110" | "punch-down-66" | "krone-idc" | "d-hole-insert" | "ground-lug"
@@ -1070,6 +1070,8 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "d-tap": "D-Tap",
   "v-mount": "V-Mount",
   "f-connector": "F-Connector",
+  "belling-lee": "Belling-Lee / IEC Coax",
+  "ci-slot": "Common Interface (CI) Slot",
   wireless: "Wireless",
   "solder-cup": "Solder Cup",
   "punch-down-110": "Punch-down (110)",
@@ -1193,6 +1195,6 @@ export const CONNECTOR_GROUPS: Record<string, ConnectorType[]> = {
   "Power": ["iec", "iec-c5", "iec-c7", "iec-c15", "iec-c20", "powercon", "powercon-true1", "edison", "barrel", "l5-20", "l6-20", "l6-30", "l21-30", "cam-lok", "socapex", "pcie-6pin", "lemo-2pin", "lemo-4pin", "d-tap", "v-mount"],
   "Speaker": ["speakon", "banana", "binding-post", "binding-post-banana"],
   "Terminal": ["phoenix", "terminal-block", "multipin", "solder-cup", "punch-down-110", "punch-down-66", "krone-idc"],
-  "RF": ["reverse-tnc", "sma", "f-connector"],
-  "Other": ["wireless", "digilink", "d-hole-insert", "ground-lug", "proprietary", "none", "other"],
+  "RF": ["reverse-tnc", "sma", "f-connector", "belling-lee"],
+  "Other": ["ci-slot", "wireless", "digilink", "d-hole-insert", "ground-lug", "proprietary", "none", "other"],
 };
