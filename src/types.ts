@@ -7,7 +7,7 @@ export type ConnectorType =
   | "rj45" | "ethercon" | "sfp" | "lc" | "sc"
   | "usb-a" | "usb-b" | "usb-c"
   | "db7w2" | "db9" | "db15" | "db25" | "din-5" | "phoenix" | "terminal-block" | "powercon" | "edison" | "iec" | "iec-c5" | "iec-c7" | "iec-c15" | "iec-c20"
-  | "speakon" | "socapex" | "multipin" | "rca" | "toslink" | "barrel"
+  | "speakon" | "socapex" | "multipin" | "rca" | "toslink" | "barrel" | "locking-dc"
   | "banana" | "binding-post" | "binding-post-banana" | "dvi" | "mini-xlr" | "opticalcon"
   | "l5-20" | "l6-20" | "l6-30" | "l21-30" | "cam-lok" | "powercon-true1"
   | "qsfp" | "qsfp28" | "mpo" | "digilink" | "pcie-6pin"
@@ -1072,6 +1072,7 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "krone-idc": "Krone IDC",
   "d-hole-insert": "D-Hole Insert",
   "ground-lug": "Chassis Ground Lug",
+  "locking-dc": "Locking DC Power",
   none: "None",
   other: "Other",
 };

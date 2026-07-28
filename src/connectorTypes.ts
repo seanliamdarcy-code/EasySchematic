@@ -316,6 +316,7 @@ export const CONNECTOR_TO_CABLE: Record<ConnectorType, string> = {
   "krone-idc": "Bulk Cable",
   "d-hole-insert": "",
   "ground-lug": "Ground Bonding Conductor",
+  "locking-dc": "Locking DC Power Cable",
   none: "",
   other: "Other",
 };
