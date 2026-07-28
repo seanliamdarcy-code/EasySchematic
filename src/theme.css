@@ -26,6 +26,7 @@
   --color-fiber: #d97706;     /* amber — industry standard for fiber */
   --color-displayport: #0d9488; /* dark teal — video alt */
   --color-hdbaset: #9333ea;   /* violet — HDMI-over-cat, distinct from HDMI red */
+  --color-dm-lite: #7c3aed;   /* violet — proprietary Crestron DM Lite link */
   --color-srt: #15803d;       /* forest green — streaming */
   --color-genlock: #475569;   /* slate — sync/timing */
   --color-wordclock: #64748b;  /* cool slate — audio clock reference */

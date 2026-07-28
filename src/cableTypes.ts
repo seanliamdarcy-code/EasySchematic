@@ -15,6 +15,7 @@ export const SIGNAL_TO_CABLE: Record<SignalType, string> = {
   ethernet: "Ethernet",
   srt: "Ethernet",
   hdbaset: "Ethernet",
+  "dm-lite": "Category Cable",
   "analog-audio": "Analog Audio",
   "speaker-level": "Speaker",
   bluetooth: "Wireless",

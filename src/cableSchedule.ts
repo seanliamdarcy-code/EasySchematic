@@ -56,6 +56,7 @@ const SIGNAL_PREFIX: Record<SignalType, string> = {
   fiber: "F",
   displayport: "DP",
   hdbaset: "HB",
+  "dm-lite": "DML",
   srt: "SR",
   genlock: "G",
   gpio: "GP",

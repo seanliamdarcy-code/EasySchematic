@@ -19,6 +19,7 @@ export const DEFAULT_SIGNAL_COLORS: Record<SignalType, string> = {
   fiber: "#d97706",
   displayport: "#0d9488",
   hdbaset: "#9333ea",
+  "dm-lite": "#7c3aed",
   srt: "#15803d",
   genlock: "#475569",
   gpio: "#78716c",

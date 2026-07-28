@@ -93,6 +93,7 @@ export const DEFAULT_CONNECTOR: Record<SignalType, ConnectorType> = {
   fiber: "lc",
   displayport: "displayport",
   hdbaset: "rj45",
+  "dm-lite": "rj45",
   srt: "rj45",
   genlock: "bnc",
   gpio: "phoenix",

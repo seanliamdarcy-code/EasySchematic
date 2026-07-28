@@ -68,6 +68,7 @@ export type SignalType =
   | "fiber"
   | "displayport"
   | "hdbaset"
+  | "dm-lite"
   | "srt"
   | "genlock"
   | "gpio"
@@ -930,6 +931,7 @@ export const SIGNAL_COLORS: Record<SignalType, string> = {
   fiber: "var(--color-fiber)",
   displayport: "var(--color-displayport)",
   hdbaset: "var(--color-hdbaset)",
+  "dm-lite": "var(--color-dm-lite)",
   srt: "var(--color-srt)",
   genlock: "var(--color-genlock)",
   gpio: "var(--color-gpio)",
@@ -1099,6 +1101,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   fiber: "Fiber",
   displayport: "DisplayPort",
   hdbaset: "HDBaseT",
+  "dm-lite": "DM Lite",
   srt: "SRT",
   genlock: "Genlock",
   gpio: "GPIO",
@@ -1161,7 +1164,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
 /** Signal types organized by functional group (for searchable dropdowns) */
 export const SIGNAL_GROUPS: Record<string, SignalType[]> = {
   "Video": ["sdi", "hdmi", "displayport", "dvi", "composite", "component-video", "s-video", "vga"],
-  "Video over IP": ["ndi", "srt", "hdbaset", "st2110"],
+  "Video over IP": ["ndi", "srt", "hdbaset", "dm-lite", "st2110"],
   "Audio": ["analog-audio", "speaker-level", "bluetooth", "aes", "dante", "avb", "aes67", "madi", "spdif", "adat", "ultranet", "aes50", "stageconnect", "ydif", "soundgrid", "gigaace", "dx5", "dsnake", "slink", "fibreace", "digilink", "extron-exp", "pots", "blu-link"],
   "Network": ["ethernet", "fiber"],
   "Control / Data": ["dmx", "artnet", "sacn", "rs422", "serial", "gpio", "contact-closure", "ir", "ir-serial", "midi", "tally", "usb", "thunderbolt", "dxlink", "ebus", "control-voltage", "cresnet", "dmnet", "sensor"],
