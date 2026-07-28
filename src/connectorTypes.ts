@@ -281,6 +281,8 @@ export const CONNECTOR_TO_CABLE: Record<ConnectorType, string> = {
   snapconnect: "Speaker Wire",
   fastcon: "Speaker Wire",
   "cable-clamp": "Speaker Wire",
+  "butt-splice": "Speaker Wire",
+  "lever-lock-connector": "Speaker Wire",
   socapex: "Socapex",
   multipin: "Multi-pin",
   rca: "RCA",
