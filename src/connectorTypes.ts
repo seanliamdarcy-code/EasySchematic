@@ -183,6 +183,7 @@ export const CONNECTOR_ACCEPTS: Partial<Record<ConnectorType, ConnectorAcceptanc
   "xlr-4":         { adapter: ["xlr-3"] },
   "trs-quarter":   { adapter: ["xlr-3", "trs-eighth"] },
   "trs-eighth":    { adapter: ["trs-quarter"] },
+  "ts-eighth":     { adapter: ["trs-eighth"] },
   "rca":           { adapter: ["xlr-3"] },
   "edison":        { adapter: ["iec", "iec-c5", "iec-c7", "iec-c15", "iec-c20", "powercon", "l5-20", "l6-20", "l6-30", "l21-30"] },
 };
@@ -245,6 +246,7 @@ export const CONNECTOR_TO_CABLE: Record<ConnectorType, string> = {
   "xlr-5": "XLR-5",
   "trs-quarter": '1/4" TRS',
   "trs-eighth": "3.5mm TRS",
+  "ts-eighth": "3.5mm TS",
   "combo-xlr-trs": "XLR",
   rj45: "Cat6",
   ethercon: "Cat6 (EtherCon)",
@@ -424,6 +426,7 @@ export const CONNECTOR_GENDER: Partial<Record<ConnectorType, Gender | { input: G
   db37: "female",
   "trs-quarter": "female",
   "trs-eighth": "female",
+  "ts-eighth": "female",
   "trs-2.5mm": "female",
   "combo-xlr-trs": "female",
   "f-connector": "female",
@@ -476,7 +479,7 @@ export const CONNECTORS_WITH_GENDER_VARIATION: Set<ConnectorType> = new Set([
   "cam-lok", "socapex", "multipin",
   "speakon", "banana", "binding-post", "binding-post-banana",
   "bnc",
-  "trs-quarter", "trs-eighth", "trs-2.5mm",
+  "trs-quarter", "trs-eighth", "ts-eighth", "trs-2.5mm",
 ]);
 
 /** Resolve a port's gender: explicit override → convention from connector + direction → undefined. */
