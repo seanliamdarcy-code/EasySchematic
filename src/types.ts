@@ -125,6 +125,7 @@ export type SignalType =
   | "cresnet"
   | "dmnet"
   | "sensor"
+  | "vch"
   | "expansion"
   | "custom";
 
@@ -989,6 +990,7 @@ export const SIGNAL_COLORS: Record<SignalType, string> = {
   cresnet: "var(--color-cresnet)",
   dmnet: "var(--color-dmnet)",
   sensor: "var(--color-sensor)",
+  vch: "var(--color-custom)",
   expansion: "var(--color-custom)",
   custom: "var(--color-custom)",
 };
@@ -1163,6 +1165,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   cresnet: "Cresnet",
   dmnet: "DMNet",
   sensor: "Sensor",
+  vch: "Yealink VCH",
   expansion: "Expansion",
   custom: "Custom",
 };
@@ -1177,7 +1180,7 @@ export const SIGNAL_GROUPS: Record<string, SignalType[]> = {
   "Sync / Clock": ["genlock", "wordclock", "timecode", "dars", "gps"],
   "Power": ["power", "power-l1", "power-l2", "power-l3", "power-neutral", "power-ground"],
   "Streaming": ["rtmp", "rtsp", "mpeg-ts", "rf"],
-  "Other": ["expansion", "custom"],
+  "Other": ["vch", "expansion", "custom"],
 };
 
 /** Connector types organized by functional group (for searchable dropdowns) */

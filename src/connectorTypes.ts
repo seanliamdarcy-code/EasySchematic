@@ -150,6 +150,7 @@ export const DEFAULT_CONNECTOR: Record<SignalType, ConnectorType> = {
   cresnet: "terminal-block",
   dmnet: "terminal-block",
   sensor: "phoenix",
+  vch: "rj45",
   expansion: "proprietary",
   custom: "other",
 };
