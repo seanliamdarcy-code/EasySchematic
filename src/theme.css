@@ -52,6 +52,7 @@
   --color-artnet: #f59e0b;    /* amber — lighting network protocol */
   --color-sacn: #eab308;      /* yellow — streaming ACN lighting */
   --color-ir: #f97316;        /* orange — infrared control */
+  --color-ir-serial: #ea580c; /* dark orange — combined IR / one-way serial */
   --color-timecode: #06b6d4;  /* cyan — timecode */
   --color-gigaace: #7c3aed;   /* violet — Allen & Heath GigaACE */
   --color-dx5: #8b5cf6;       /* lighter violet — Allen & Heath DX5 */
@@ -72,6 +73,7 @@
   --color-pots: #3f3f46;      /* zinc — POTS / analog telephony */
   --color-blu-link: #0284c7;  /* sky blue — BSS BLU link audio bus */
   --color-cresnet: #a21caf;   /* magenta — Crestron Cresnet control bus */
+  --color-dmnet: #c026d3;     /* fuchsia — Crestron DMNet control and power */
   --color-sensor: #71717a;    /* zinc gray — ambient sensor input */
   --color-custom: #64748b;    /* cool gray */
 }

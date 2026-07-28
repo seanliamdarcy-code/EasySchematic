@@ -52,6 +52,7 @@ export const DEFAULT_SIGNAL_COLORS: Record<SignalType, string> = {
   artnet: "#f59e0b",
   sacn: "#eab308",
   ir: "#f97316",
+  "ir-serial": "#ea580c",
   timecode: "#06b6d4",
   gigaace: "#7c3aed",
   dx5: "#8b5cf6",
@@ -71,6 +72,7 @@ export const DEFAULT_SIGNAL_COLORS: Record<SignalType, string> = {
   pots: "#3f3f46",
   "blu-link": "#0284c7",
   cresnet: "#a21caf",
+  dmnet: "#c026d3",
   sensor: "#71717a",
   custom: "#64748b",
 };

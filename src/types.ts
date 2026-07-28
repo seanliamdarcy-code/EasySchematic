@@ -18,7 +18,7 @@ export type ConnectorType =
   | "d-tap" | "v-mount" | "f-connector"
   | "lemo-2pin" | "lemo-4pin" | "lemo-5pin"
   | "wireless"
-  | "solder-cup" | "punch-down-110" | "punch-down-66" | "krone-idc" | "d-hole-insert"
+  | "solder-cup" | "punch-down-110" | "punch-down-66" | "krone-idc" | "d-hole-insert" | "ground-lug"
   | "none" | "other";
 
 export interface PortNetworkConfig {
@@ -100,6 +100,7 @@ export type SignalType =
   | "artnet"
   | "sacn"
   | "ir"
+  | "ir-serial"
   | "timecode"
   | "gigaace"
   | "dx5"
@@ -121,6 +122,7 @@ export type SignalType =
   | "pots"
   | "blu-link"
   | "cresnet"
+  | "dmnet"
   | "sensor"
   | "custom";
 
@@ -961,6 +963,7 @@ export const SIGNAL_COLORS: Record<SignalType, string> = {
   artnet: "var(--color-artnet)",
   sacn: "var(--color-sacn)",
   ir: "var(--color-ir)",
+  "ir-serial": "var(--color-ir-serial)",
   timecode: "var(--color-timecode)",
   gigaace: "var(--color-gigaace)",
   dx5: "var(--color-dx5)",
@@ -981,6 +984,7 @@ export const SIGNAL_COLORS: Record<SignalType, string> = {
   pots: "var(--color-pots)",
   "blu-link": "var(--color-blu-link)",
   cresnet: "var(--color-cresnet)",
+  dmnet: "var(--color-dmnet)",
   sensor: "var(--color-sensor)",
   custom: "var(--color-custom)",
 };
@@ -1065,6 +1069,7 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "punch-down-66": "Punch-down (66)",
   "krone-idc": "Krone IDC",
   "d-hole-insert": "D-Hole Insert",
+  "ground-lug": "Chassis Ground Lug",
   none: "None",
   other: "Other",
 };
@@ -1126,6 +1131,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   artnet: "Art-Net",
   sacn: "sACN",
   ir: "IR",
+  "ir-serial": "IR / 1-Way Serial",
   timecode: "Timecode",
   gigaace: "GigaACE",
   dx5: "DX5",
@@ -1147,6 +1153,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   pots: "POTS",
   "blu-link": "BLU link",
   cresnet: "Cresnet",
+  dmnet: "DMNet",
   sensor: "Sensor",
   custom: "Custom",
 };
@@ -1157,7 +1164,7 @@ export const SIGNAL_GROUPS: Record<string, SignalType[]> = {
   "Video over IP": ["ndi", "srt", "hdbaset", "st2110"],
   "Audio": ["analog-audio", "speaker-level", "bluetooth", "aes", "dante", "avb", "aes67", "madi", "spdif", "adat", "ultranet", "aes50", "stageconnect", "ydif", "soundgrid", "gigaace", "dx5", "dsnake", "slink", "fibreace", "digilink", "extron-exp", "pots", "blu-link"],
   "Network": ["ethernet", "fiber"],
-  "Control / Data": ["dmx", "artnet", "sacn", "rs422", "serial", "gpio", "contact-closure", "ir", "midi", "tally", "usb", "thunderbolt", "dxlink", "ebus", "control-voltage", "cresnet", "sensor"],
+  "Control / Data": ["dmx", "artnet", "sacn", "rs422", "serial", "gpio", "contact-closure", "ir", "ir-serial", "midi", "tally", "usb", "thunderbolt", "dxlink", "ebus", "control-voltage", "cresnet", "dmnet", "sensor"],
   "Sync / Clock": ["genlock", "wordclock", "timecode", "dars", "gps"],
   "Power": ["power", "power-l1", "power-l2", "power-l3", "power-neutral", "power-ground"],
   "Streaming": ["rtmp", "rtsp", "mpeg-ts", "rf"],
@@ -1175,5 +1182,5 @@ export const CONNECTOR_GROUPS: Record<string, ConnectorType[]> = {
   "Speaker": ["speakon", "banana", "binding-post", "binding-post-banana"],
   "Terminal": ["phoenix", "terminal-block", "multipin", "solder-cup", "punch-down-110", "punch-down-66", "krone-idc"],
   "RF": ["reverse-tnc", "sma", "f-connector"],
-  "Other": ["wireless", "digilink", "d-hole-insert", "none", "other"],
+  "Other": ["wireless", "digilink", "d-hole-insert", "ground-lug", "none", "other"],
 };

@@ -125,6 +125,7 @@ export const DEFAULT_CONNECTOR: Record<SignalType, ConnectorType> = {
   artnet: "rj45",
   sacn: "rj45",
   ir: "terminal-block",
+  "ir-serial": "terminal-block",
   timecode: "bnc",
   gigaace: "ethercon",
   dx5: "ethercon",
@@ -146,6 +147,7 @@ export const DEFAULT_CONNECTOR: Record<SignalType, ConnectorType> = {
   pots: "rj11",
   "blu-link": "rj45",
   cresnet: "terminal-block",
+  dmnet: "terminal-block",
   sensor: "phoenix",
   custom: "other",
 };
@@ -187,7 +189,7 @@ export const CONNECTOR_ACCEPTS: Partial<Record<ConnectorType, ConnectorAcceptanc
 /** Bare-wire connectors (no physical connector — cable goes straight in) are compatible with anything */
 export const BARE_WIRE_CONNECTORS: Set<ConnectorType> = new Set([
   "phoenix", "terminal-block",
-  "solder-cup", "punch-down-110", "punch-down-66", "krone-idc",
+  "solder-cup", "punch-down-110", "punch-down-66", "krone-idc", "ground-lug",
 ]);
 
 /** Signal pairs that physically share a connector and are interchangeable when both ports use it.
@@ -312,6 +314,7 @@ export const CONNECTOR_TO_CABLE: Record<ConnectorType, string> = {
   "punch-down-66": "Bulk Cable",
   "krone-idc": "Bulk Cable",
   "d-hole-insert": "",
+  "ground-lug": "Ground Bonding Conductor",
   none: "",
   other: "Other",
 };

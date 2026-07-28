@@ -54,6 +54,7 @@ export const SIGNAL_TO_CABLE: Record<SignalType, string> = {
   artnet: "Ethernet",
   sacn: "Ethernet",
   ir: "IR Emitter Cable",
+  "ir-serial": "IR / Serial Control",
   timecode: "BNC",
   gigaace: "Ethercon",
   dx5: "Ethercon",
@@ -73,6 +74,7 @@ export const SIGNAL_TO_CABLE: Record<SignalType, string> = {
   pots: "Phone (RJ11)",
   "blu-link": "BLU link",
   cresnet: "Cresnet",
+  dmnet: "DMNet",
   sensor: "Sensor",
   custom: "Other",
 };

@@ -89,6 +89,7 @@ const SIGNAL_PREFIX: Record<SignalType, string> = {
   artnet: "AN",
   sacn: "SC",
   ir: "IR",
+  "ir-serial": "IS",
   timecode: "TC",
   gigaace: "GA",
   dx5: "DX",
@@ -108,6 +109,7 @@ const SIGNAL_PREFIX: Record<SignalType, string> = {
   pots: "PT",
   "blu-link": "BL",
   cresnet: "CN",
+  dmnet: "DN",
   sensor: "SNS",
   custom: "X",
 };
