@@ -7,7 +7,7 @@ export type ConnectorType =
   | "rj45" | "ethercon" | "sfp" | "lc" | "sc"
   | "usb-a" | "usb-b" | "usb-c"
   | "db7w2" | "db9" | "db15" | "db25" | "din-5" | "phoenix" | "terminal-block" | "powercon" | "edison" | "iec" | "iec-c5" | "iec-c7" | "iec-c15" | "iec-c20"
-  | "speakon" | "socapex" | "multipin" | "rca" | "toslink" | "barrel" | "locking-dc"
+  | "speakon" | "spring-clamp" | "snapconnect" | "fastcon" | "cable-clamp" | "socapex" | "multipin" | "rca" | "toslink" | "barrel" | "locking-dc"
   | "banana" | "binding-post" | "binding-post-banana" | "dvi" | "mini-xlr" | "opticalcon"
   | "l5-20" | "l6-20" | "l6-30" | "l21-30" | "cam-lok" | "powercon-true1"
   | "qsfp" | "qsfp28" | "mpo" | "digilink" | "pcie-6pin"
@@ -1030,6 +1030,10 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "iec-c15": "IEC C15",
   "iec-c20": "IEC C20",
   speakon: "speakON",
+  "spring-clamp": "Spring Clamp",
+  snapconnect: "AUDAC SnapConnect",
+  fastcon: "AUDAC FastCon",
+  "cable-clamp": "Cable Clamp",
   socapex: "Socapex",
   multipin: "Multi-pin",
   rca: "RCA",
@@ -1197,7 +1201,7 @@ export const CONNECTOR_GROUPS: Record<string, ConnectorType[]> = {
   "USB": ["usb-a", "usb-b", "usb-c", "usb-mini", "usb-micro"],
   "D-Sub / Serial": ["db9", "db15", "db25", "db37", "db7w2", "lemo-5pin"],
   "Power": ["iec", "iec-c5", "iec-c7", "iec-c15", "iec-c20", "powercon", "powercon-true1", "edison", "barrel", "l5-20", "l6-20", "l6-30", "l21-30", "cam-lok", "socapex", "pcie-6pin", "lemo-2pin", "lemo-4pin", "d-tap", "v-mount"],
-  "Speaker": ["speakon", "banana", "binding-post", "binding-post-banana"],
+  "Speaker": ["speakon", "spring-clamp", "snapconnect", "fastcon", "cable-clamp", "banana", "binding-post", "binding-post-banana"],
   "Terminal": ["phoenix", "terminal-block", "multipin", "solder-cup", "punch-down-110", "punch-down-66", "krone-idc"],
   "RF": ["reverse-tnc", "sma", "f-connector", "belling-lee"],
   "Other": ["ci-slot", "ops-80pin", "iiyama-slot-pc", "iiyama-wifi-module", "micro-sd-slot", "wireless", "digilink", "d-hole-insert", "ground-lug", "proprietary", "none", "other"],
