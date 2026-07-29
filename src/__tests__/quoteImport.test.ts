@@ -161,4 +161,120 @@ describe("quote import matching", () => {
 
     db.close();
   });
+
+  it("resolves curated commercial SKUs via identityAliases only", () => {
+    const templates = [
+      { id: "yealink-a40", version: 1, ...createTemplate({
+        label: "MeetingBar A40 All-in-One Video Bar",
+        manufacturer: "Yealink",
+        modelNumber: "MeetingBar A40",
+        deviceType: "video-bar",
+        category: "Codecs",
+        identityAliases: ["A40-031"],
+        searchTerms: ["4k", "Teams", "A40"],
+      }) },
+      { id: "yealink-a50", version: 1, ...createTemplate({
+        label: "MeetingBar A50 All-in-One Video Bar",
+        manufacturer: "Yealink",
+        modelNumber: "MeetingBar A50",
+        deviceType: "video-bar",
+        category: "Codecs",
+        identityAliases: ["A50-031"],
+      }) },
+      { id: "shure-mxw1", version: 1, ...createTemplate({
+        label: "MXW1 Hybrid Bodypack Transmitter",
+        manufacturer: "Shure",
+        modelNumber: "MXW1",
+        deviceType: "wireless-mic-receiver",
+        identityAliases: ["MXW1/O"],
+      }) },
+      { id: "audac-wp225", version: 1, ...createTemplate({
+        label: "WP225 Universal Input Panel",
+        manufacturer: "AUDAC",
+        modelNumber: "WP225",
+        deviceType: "audio-interface",
+        category: "Audio I/O",
+        identityAliases: ["WP225/W"],
+      }) },
+      { id: "bose-dm5c", version: 1, ...createTemplate({
+        label: "DesignMax DM5C",
+        manufacturer: "Bose Professional",
+        modelNumber: "DM5C",
+        deviceType: "speaker",
+        category: "Speakers",
+      }) },
+    ];
+
+    const results = matchQuoteDevicesAgainstLibrary(
+      [
+        { manufacturer: "Yealink", model: "A40-031", description: null, quantity: 1, sourceLineText: null, normalizedLookupKey: normalizedLookupKey("Yealink", "A40-031") },
+        { manufacturer: "Yealink", model: "A50-031", description: null, quantity: 1, sourceLineText: null, normalizedLookupKey: normalizedLookupKey("Yealink", "A50-031") },
+        { manufacturer: "Shure", model: "MXW1/O", description: null, quantity: 1, sourceLineText: null, normalizedLookupKey: normalizedLookupKey("Shure", "MXW1/O") },
+        { manufacturer: "AUDAC", model: "WP225/W", description: null, quantity: 1, sourceLineText: null, normalizedLookupKey: normalizedLookupKey("AUDAC", "WP225/W") },
+        { manufacturer: "Bose", model: "DM5C", description: null, quantity: 1, sourceLineText: null, normalizedLookupKey: normalizedLookupKey("Bose", "DM5C") },
+        { manufacturer: "Yealink", model: "4k", description: null, quantity: 1, sourceLineText: null, normalizedLookupKey: normalizedLookupKey("Yealink", "4k") },
+      ],
+      templates,
+    );
+
+    expect(results[0]?.status).toBe("already_in_library");
+    expect(results[0]?.exactMatch?.id).toBe("yealink-a40");
+    expect(results[0]?.exactMatch?.matchReason).toMatch(/identity alias/i);
+
+    expect(results[1]?.status).toBe("already_in_library");
+    expect(results[1]?.exactMatch?.id).toBe("yealink-a50");
+
+    expect(results[2]?.status).toBe("already_in_library");
+    expect(results[2]?.exactMatch?.id).toBe("shure-mxw1");
+
+    expect(results[3]?.status).toBe("already_in_library");
+    expect(results[3]?.exactMatch?.id).toBe("audac-wp225");
+
+    expect(results[4]?.status).toBe("already_in_library");
+    expect(results[4]?.exactMatch?.id).toBe("bose-dm5c");
+    expect(results[4]?.exactMatch?.matchReason).toMatch(/manufacturer alias/i);
+
+    // searchTerms like "4k" must never exact-match
+    expect(results[5]?.status).not.toBe("already_in_library");
+  });
+
+  it("treats colliding identity aliases as possible_match with all candidates", () => {
+    const templates = [
+      { id: "left", version: 1, ...createTemplate({ label: "Left", manufacturer: "Acme", modelNumber: "L1", identityAliases: ["SHARED"] }) },
+      { id: "right", version: 1, ...createTemplate({ label: "Right", manufacturer: "Acme", modelNumber: "R1", identityAliases: ["SHARED"] }) },
+    ];
+    const results = matchQuoteDevicesAgainstLibrary(
+      [{ manufacturer: "Acme", model: "SHARED", description: null, quantity: 1, sourceLineText: null, normalizedLookupKey: normalizedLookupKey("Acme", "SHARED") }],
+      templates,
+    );
+    expect(results[0]?.status).toBe("possible_match");
+    expect(results[0]?.exactMatch).toBeNull();
+    expect(results[0]?.possibleMatches.map((m) => m.id).sort()).toEqual(["left", "right"]);
+    expect(results[0]?.possibleMatches.every((m) => m.matchReason === "Ambiguous library identity")).toBe(true);
+  });
+
+  it("does not exact-match Samsung QM75C to QM55C", () => {
+    const templates = [
+      { id: "samsung-qm55c", version: 1, ...createTemplate({
+        label: "Samsung QM55C",
+        manufacturer: "Samsung",
+        modelNumber: "QM55C",
+        deviceType: "display",
+        category: "Displays",
+        identityAliases: ["QM55C-SKU"],
+      }) },
+    ];
+    const results = matchQuoteDevicesAgainstLibrary(
+      [{
+        manufacturer: "Samsung",
+        model: "QM75C",
+        description: null,
+        quantity: 1,
+        sourceLineText: null,
+        normalizedLookupKey: normalizedLookupKey("Samsung", "QM75C"),
+      }],
+      templates,
+    );
+    expect(results[0]?.status).not.toBe("already_in_library");
+  });
 });

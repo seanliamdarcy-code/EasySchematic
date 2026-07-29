@@ -43,7 +43,10 @@ interface EditingDraftState {
   template: DeviceTemplate;
 }
 
-type PossibleMatchDecision = "use_library_match" | "research_missing";
+/** Candidate-specific possible-match resolution (never implicit possibleMatches[0]). */
+type PossibleMatchDecision =
+  | { kind: "use_library_match"; templateId: string }
+  | { kind: "research_missing" };
 type OutcomeReviewItem = QuoteImportResultItem | QuoteImportDraftReview;
 
 const STATUS_LABELS: Record<LibraryMatchStatus, string> = {
@@ -151,6 +154,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
   const unresolvedPossibleMatches = useMemo(
     () => activeImportResults.filter((item) => item.status === "possible_match" && !possibleMatchDecisions[keyForExtractedDevice(item)]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyForExtractedDevice is stable
     [activeImportResults, possibleMatchDecisions],
   );
 
@@ -159,7 +163,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     return activeImportResults.filter((item) => {
       const key = keyForExtractedDevice(item);
       if (item.status === "missing") return true;
-      if (item.status === "possible_match") return possibleMatchDecisions[key] === "research_missing";
+      if (item.status === "possible_match") return possibleMatchDecisions[key]?.kind === "research_missing";
       return false;
     });
   }, [extraction, activeImportResults, possibleMatchDecisions]);
@@ -183,7 +187,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     if (!extraction) return [];
     return activeImportResults.filter((item) => {
       const key = keyForExtractedDevice(item);
-      return item.status === "already_in_library" || possibleMatchDecisions[key] === "use_library_match";
+      return item.status === "already_in_library" || possibleMatchDecisions[key]?.kind === "use_library_match";
     });
   }, [extraction, activeImportResults, possibleMatchDecisions]);
 
@@ -599,9 +603,14 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     addToast(`Added ${selectedDraftTemplates.length} reviewed device draft${selectedDraftTemplates.length === 1 ? "" : "s"} locally`, "success");
   };
 
-  const setPossibleDecision = (item: QuoteImportResultItem, decision: PossibleMatchDecision) => {
+  const selectPossibleMatchCandidate = (item: QuoteImportResultItem, templateId: string) => {
     const key = keyForExtractedDevice(item);
-    setPossibleMatchDecisions((current) => ({ ...current, [key]: decision }));
+    setPossibleMatchDecisions((current) => ({ ...current, [key]: { kind: "use_library_match", templateId } }));
+  };
+
+  const researchPossibleAsMissing = (item: QuoteImportResultItem) => {
+    const key = keyForExtractedDevice(item);
+    setPossibleMatchDecisions((current) => ({ ...current, [key]: { kind: "research_missing" } }));
   };
 
   const toggleDraftSelected = (item: QuoteImportDraftReview) => {
@@ -735,11 +744,22 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     try {
       const templatesById = await ensureLibraryTemplatesLoaded();
       const schematicName = importSourceLabel ?? extraction.fileName;
-      const schematicItems = activeImportResults.map((item) => {
+      const schematicItems: QuoteImportResultItem[] = [];
+      for (const item of activeImportResults) {
         const key = keyForExtractedDevice(item);
-        const selectedMatch = possibleMatchDecisions[key] === "use_library_match" ? item.possibleMatches[0] : null;
-        return selectedMatch ? { ...item, status: "already_in_library" as const, exactMatch: selectedMatch } : item;
-      });
+        const decision = possibleMatchDecisions[key];
+        if (item.status === "possible_match" && decision?.kind === "use_library_match") {
+          const selectedMatch = item.possibleMatches.find((match) => match.id === decision.templateId) ?? null;
+          if (!selectedMatch) {
+            setError("A possible-match selection is no longer available. Re-select a library device before starting a schematic.");
+            setSaving(false);
+            return;
+          }
+          schematicItems.push({ ...item, status: "already_in_library", exactMatch: selectedMatch, possibleMatches: [] });
+          continue;
+        }
+        schematicItems.push(item);
+      }
       newSchematic(buildQuoteImportSchematic(schematicName, schematicItems, templatesById));
       setSchematicName(schematicName);
       addToast(`Started schematic from ${activeImportResults.length} imported device${activeImportResults.length === 1 ? "" : "s"}`, "success");
@@ -1061,8 +1081,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                                 key={keyForExtractedDevice(item)}
                                 item={item}
                                 decision={possibleMatchDecisions[keyForExtractedDevice(item)]}
-                                onUseLibraryMatch={() => setPossibleDecision(item, "use_library_match")}
-                                onResearchMissing={() => setPossibleDecision(item, "research_missing")}
+                                onSelectCandidate={(templateId) => selectPossibleMatchCandidate(item, templateId)}
+                                onResearchMissing={() => researchPossibleAsMissing(item)}
                               />
                             );
                           }
@@ -1097,8 +1117,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                           key={keyForExtractedDevice(item)}
                           item={item}
                           decision={possibleMatchDecisions[keyForExtractedDevice(item)]}
-                          onUseLibraryMatch={() => setPossibleDecision(item, "use_library_match")}
-                          onResearchMissing={() => setPossibleDecision(item, "research_missing")}
+                          onSelectCandidate={(templateId) => selectPossibleMatchCandidate(item, templateId)}
+                          onResearchMissing={() => researchPossibleAsMissing(item)}
                         />
                       ))
                   ) : (
@@ -1667,14 +1687,15 @@ function ExtractionRow({
 function PossibleMatchRow({
   item,
   decision,
-  onUseLibraryMatch,
+  onSelectCandidate,
   onResearchMissing,
 }: {
   item: QuoteImportResultItem;
   decision?: PossibleMatchDecision;
-  onUseLibraryMatch: () => void;
+  onSelectCandidate: (templateId: string) => void;
   onResearchMissing: () => void;
 }) {
+  const selectedTemplateId = decision?.kind === "use_library_match" ? decision.templateId : null;
   return (
     <div className="px-3 py-3 border-b text-xs" style={{ borderColor: "var(--color-border)" }}>
       <div className="flex flex-wrap items-center gap-2 mb-1.5">
@@ -1693,29 +1714,41 @@ function PossibleMatchRow({
         {item.sourceLineText && <div>Quote text: {item.sourceLineText}</div>}
       </div>
       <div className="mt-2 space-y-1">
-        {item.possibleMatches.map((match) => (
-          <div key={match.id} className="rounded border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800">
-            <div className="font-medium">{match.label}</div>
-            <div>{[match.manufacturer, match.modelNumber].filter(Boolean).join(" ")}</div>
-            <div className="opacity-80">{match.matchReason}</div>
-          </div>
-        ))}
+        {item.possibleMatches.map((match) => {
+          const selected = selectedTemplateId === match.id;
+          return (
+            <div
+              key={match.id}
+              className={`rounded border px-2.5 py-2 text-[11px] ${
+                selected
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                  : "border-amber-200 bg-amber-50 text-amber-800"
+              }`}
+            >
+              <div className="font-medium">{match.label}</div>
+              <div>{[match.manufacturer, match.modelNumber].filter(Boolean).join(" ")}</div>
+              <div className="opacity-80">{match.matchReason}</div>
+              <button
+                type="button"
+                onClick={() => onSelectCandidate(match.id)}
+                className={`mt-2 px-2.5 py-1 rounded text-[11px] border cursor-pointer ${
+                  selected
+                    ? "border-emerald-400 bg-emerald-100 text-emerald-900"
+                    : "border-[var(--color-border)] bg-white text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]"
+                }`}
+              >
+                {selected ? "Selected library device" : "Use this library device"}
+              </button>
+            </div>
+          );
+        })}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
-          onClick={onUseLibraryMatch}
-          className={`px-2.5 py-1 rounded text-[11px] border cursor-pointer ${
-            decision === "use_library_match"
-              ? "border-emerald-300 bg-emerald-100 text-emerald-800"
-              : "border-[var(--color-border)] bg-white text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]"
-          }`}
-        >
-          Use TateSide library match
-        </button>
-        <button
+          type="button"
           onClick={onResearchMissing}
           className={`px-2.5 py-1 rounded text-[11px] border cursor-pointer ${
-            decision === "research_missing"
+            decision?.kind === "research_missing"
               ? "border-blue-300 bg-blue-100 text-blue-800"
               : "border-[var(--color-border)] bg-white text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]"
           }`}

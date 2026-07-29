@@ -446,8 +446,8 @@ test("phase 2 classification and dual fingerprints preserve full source and filt
   const history = tempDb();
   try {
     assert.equal(JETBUILT_SCHEMATIC_RELEVANCE_VERSION, "jetbuilt-schematic-relevance-v1");
-    assert.equal(jetbuiltSchematicRelevanceV1RuleCount(), 10);
-    assert.equal(listJetbuiltSchematicRelevanceV1Rules().length, 10);
+    assert.equal(jetbuiltSchematicRelevanceV1RuleCount(), 14);
+    assert.equal(listJetbuiltSchematicRelevanceV1Rules().length, 14);
 
     const installation = classifyJetbuiltHistoryLine("Tateside", "Installation");
     assert.deepEqual({
@@ -481,6 +481,10 @@ test("phase 2 classification and dual fingerprints preserve full source and filt
     const generalSundries = classifyJetbuiltHistoryLine("Tateside", "General Fixings & Sundries");
     assert.equal(generalSundries.class, "sundries");
     assert.equal(generalSundries.schematicRelevant, false);
+    assert.equal(classifyJetbuiltHistoryLine("Tateside", "Rack sundries").class, "sundries");
+    assert.equal(classifyJetbuiltHistoryLine("Tateside", "Discount").class, "commercial");
+    assert.equal(classifyJetbuiltHistoryLine("Tateside", "ZHB215").class, "bulk-material");
+    assert.equal(classifyJetbuiltHistoryLine("QSC", "SLDAN-16-P").class, "software-license");
 
     const programming = classifyJetbuiltHistoryLine("Tateside", "Programming");
     assert.equal(programming.class, "labour-service");
@@ -861,7 +865,8 @@ test("phase 5 project gap lookup assembles one full BOM and classifies exact ide
     runMigrations(canonical);
     saveTemplates(canonical, { templates: [
       { label: "Display D-1", manufacturer: "Acme", modelNumber: "D-1", category: "Displays", deviceType: "display", ports: [] },
-      { label: "Gamma Base", manufacturer: "Gamma", modelNumber: "BASE", category: "Sources", deviceType: "camera", searchTerms: ["SKU-UK"], ports: [] },
+      { label: "Gamma Base", manufacturer: "Gamma", modelNumber: "BASE", category: "Sources", deviceType: "camera", identityAliases: ["SKU-UK"], searchTerms: ["4k", "dsp"], ports: [] },
+      { label: "Core 24f Processor", manufacturer: "Q-SYS", modelNumber: "Core 24f", category: "Audio", deviceType: "audio-dsp", searchTerms: ["dsp"], ports: [] },
     ] });
     const proposal = createLibraryDoctorNewTemplateProposal(canonical, {
       proposedTemplate: { manufacturer: "Neat", modelNumber: "Neat Center", label: "Neat Center", category: "Sources", deviceType: "camera", ports: [] },
@@ -886,8 +891,14 @@ test("phase 5 project gap lookup assembles one full BOM and classifies exact ide
         { id: "L5", manufacturer_name: " beta ", model: "CAM X", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
         { id: "L6", manufacturer_name: "Gamma", model: "SKU-UK", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
         { id: "L7", manufacturer_name: "Incomplete", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
+        { id: "L7A", manufacturer_name: "QSC", model: "Core 24f", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
+        { id: "L7B", manufacturer_name: "DSP", model: "Core 24f", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
       ],
     });
+    history.db.prepare(`INSERT INTO canonical_template_links
+      (project_id, line_item_id, canonical_template_id, match_method, confidence, matched_at, matcher_version)
+      VALUES (?, ?, ?, 'fixture-stale-link', 'deterministic', '2026-01-01T00:00:00.000Z', 'fixture')`)
+      .run("jb-12345", "L4", "deleted-template-id");
     const canonicalBefore = JSON.stringify({
       devices: canonical.prepare("SELECT * FROM devices ORDER BY id").all(),
       versions: canonical.prepare("SELECT * FROM device_versions ORDER BY id").all(),
@@ -901,25 +912,36 @@ test("phase 5 project gap lookup assembles one full BOM and classifies exact ide
 
     const analysis = getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "p12345");
     assert.equal(analysis.matchedProjectId, "jb-12345");
-    assert.equal(analysis.lineItemCount, 7);
-    assert.equal(analysis.distinctCandidateIdentityCount, 5);
+    assert.equal(analysis.lineItemCount, 9);
+    assert.equal(analysis.distinctCandidateIdentityCount, 7);
     assert.equal(analysis.rooms.length, 2);
     assert.equal(analysis.systems.length, 2);
-    assert.equal(analysis.summary.exactCanonicalMatches, 1);
+    // v5 identity resolver: explicit identityAliases + manufacturer groups are exact when unique.
+    // searchTerms never create identity hits (Gamma "4k"/"dsp" stay discovery-only).
+    assert.equal(analysis.summary.exactCanonicalMatches, 3); // Acme D-1, Gamma SKU-UK alias, QSC↔Q-SYS Core 24f
     assert.equal(analysis.summary.knownNonSchematic, 1);
     assert.equal(analysis.summary.alreadyProposed, 1);
-    assert.equal(analysis.summary.possibleIdentityVariants, 1);
-    assert.equal(analysis.summary.unmatchedEligible, 1);
+    assert.equal(analysis.summary.possibleIdentityVariants, 0);
+    assert.equal(analysis.summary.unmatchedEligible, 2);
     assert.equal(analysis.insufficientIdentityLines.length, 1);
     const beta = analysis.candidates.find((candidate) => candidate.candidateKey === "beta::camx");
     assert.equal(beta.status, "unmatched-hardware-candidate");
     assert.equal(beta.projectUsage.lineItemCount, 2);
     assert.equal(beta.projectUsage.validQuantityTotal, 3);
     assert.equal(beta.projectUsage.rooms.length, 2);
+    assert.deepEqual(beta.inactiveOrMissingStoredCanonicalTemplateIds, ["deleted-template-id"]);
     const neat = analysis.candidates.find((candidate) => candidate.candidateKey === "neat::neatcenterse");
     assert.equal(neat.status, "already-proposed");
     assert.equal(neat.existingProposals[0].id, proposal.proposal.id);
+    const gamma = analysis.candidates.find((candidate) => candidate.candidateKey === "gamma::skuuk");
+    assert.equal(gamma.status, "exact-canonical-match");
+    assert.equal(gamma.currentCanonicalCollisionEvidence[0].modelNumber, "BASE");
+    const qsc = analysis.candidates.find((candidate) => candidate.candidateKey === "qsc::core24f");
+    assert.equal(qsc.status, "exact-canonical-match");
+    assert.equal(qsc.currentCanonicalCollisionEvidence[0].manufacturer, "Q-SYS");
+    assert.equal(analysis.candidates.find((candidate) => candidate.candidateKey === "dsp::core24f").status, "unmatched-hardware-candidate");
     assert.equal(analysis.versions.schematicRelevance, "jetbuilt-schematic-relevance-v1");
+    assert.equal(analysis.analysisVersion, "jetbuilt-project-library-gap-v5");
     assert.equal(analysis.queryCounts.historyDatabase, 5);
     assert.equal(getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345").runKey, analysis.runKey);
     const tools = createMcpLibraryTools({ db: canonical, historyDb: history.db, config: { mcpLibraryEnabled: true, dynamicTaxonomyEnabled: true, libraryAuditEnabled: true, libraryDoctorEnabled: true } });

@@ -147,6 +147,10 @@ export function validateDeviceTemplate(input: unknown): ValidationResult {
     checkStringArray(errors, input, "searchTerms");
   }
 
+  if (input.identityAliases != null) {
+    checkStringArray(errors, input, "identityAliases");
+  }
+
   if (input.evidenceRefs != null) {
     if (!Array.isArray(input.evidenceRefs)) {
       errors.push("evidenceRefs must be an array");
@@ -180,6 +184,36 @@ export function normalizeDeviceTemplate(input: unknown): Omit<DeviceTemplate, "i
     ? input.deviceCapabilities.map((value) => String(value).trim()).filter(Boolean)
     : undefined;
   template.protocols = Array.isArray(input.protocols) ? input.protocols.map((value) => String(value).trim()).filter(Boolean) : undefined;
+  if (Array.isArray(input.searchTerms)) {
+    const seen = new Set<string>();
+    template.searchTerms = input.searchTerms
+      .map((value) => String(value).trim())
+      .filter((value) => {
+        if (!value) return false;
+        const key = value.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    if (template.searchTerms.length === 0) template.searchTerms = undefined;
+  } else {
+    template.searchTerms = undefined;
+  }
+  if (Array.isArray(input.identityAliases)) {
+    const seen = new Set<string>();
+    template.identityAliases = input.identityAliases
+      .map((value) => String(value).trim())
+      .filter((value) => {
+        if (!value) return false;
+        const key = value.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    if (template.identityAliases.length === 0) template.identityAliases = undefined;
+  } else {
+    template.identityAliases = undefined;
+  }
   template.reviewStatus = REVIEW_STATUSES.includes(input.reviewStatus as TaxonomyReviewStatus)
     ? input.reviewStatus as TaxonomyReviewStatus
     : undefined;

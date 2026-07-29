@@ -8,9 +8,13 @@ import { getJetbuiltCohortSemantics } from "./jetbuiltHistoryCohorts.js";
 import { JETBUILT_HISTORY_MATCHER_VERSION } from "./jetbuiltHistoryStore.js";
 import { syncJetbuiltHistory } from "./jetbuiltHistorySync.js";
 import { listLibraryDoctorProposals } from "./libraryDoctorStore.js";
-import { normalizedLookupKey } from "./quoteImport.js";
+import {
+  buildLibraryIdentityIndex,
+  normalizedLookupKey,
+  resolveLibraryIdentity,
+} from "./libraryIdentity.js";
 
-export const JETBUILT_PROJECT_LIBRARY_GAP_ANALYSIS_VERSION = "jetbuilt-project-library-gap-v2";
+export const JETBUILT_PROJECT_LIBRARY_GAP_ANALYSIS_VERSION = "jetbuilt-project-library-gap-v5";
 export const JETBUILT_PROJECT_LIBRARY_GAP_PROPOSAL_STATE_VERSION = "jetbuilt-project-gap-proposal-state-v1";
 const MAX_PROJECT_LINE_ITEMS = 5_000;
 
@@ -191,27 +195,12 @@ function findProject(db: DatabaseSync, requested: string): ProjectRow {
   return rows[0];
 }
 
-function canonicalIndexes(templates: DeviceTemplate[]) {
-  const exact = new Map<string, DeviceTemplate[]>();
-  const variants = new Map<string, DeviceTemplate[]>();
-  const add = (map: Map<string, DeviceTemplate[]>, key: string | null, template: DeviceTemplate) => {
-    if (!key) return;
-    map.set(key, [...(map.get(key) ?? []), template]);
-  };
-  for (const template of templates) {
-    add(exact, normalizedLookupKey(template.manufacturer, template.modelNumber || template.label), template);
-    if (template.modelNumber) add(exact, normalizedLookupKey(template.manufacturer, template.label), template);
-    for (const term of template.searchTerms ?? []) add(variants, normalizedLookupKey(template.manufacturer, term), template);
-  }
-  return { exact, variants };
-}
-
 function canonicalSnapshotIdentity(templates: DeviceTemplate[]): string {
   return hash(JSON.stringify(templates.map((template) => ({
     id: template.id ?? null,
     version: template.version ?? null,
     identity: normalizedLookupKey(template.manufacturer, template.modelNumber || template.label),
-    aliases: (template.searchTerms ?? []).map(normalize).sort(),
+    identityAliases: (template.identityAliases ?? []).map(normalize).sort(),
   })).sort((a, b) => String(a.id).localeCompare(String(b.id)))));
 }
 
@@ -327,7 +316,8 @@ export function getJetbuiltProjectLibraryGapAnalysis(
   if (lines.length > MAX_PROJECT_LINE_ITEMS) throw new JetbuiltProjectGapError("project-too-large", `Project has ${lines.length} line items; maximum bounded analysis is ${MAX_PROJECT_LINE_ITEMS}`);
 
   const templates = listCurrentTemplates(canonicalDb);
-  const canonical = canonicalIndexes(templates);
+  const activeTemplateIds = new Set(templates.map((template) => template.id).filter((id): id is string => Boolean(id)));
+  const identityIndex = buildLibraryIdentityIndex(templates);
   const snapshotIdentity = canonicalSnapshotIdentity(templates);
   const sourceFingerprint = projectSourceFingerprint(project, rooms, systems, lines);
   const normalizedProjectNumber = project.custom_id_raw?.trim() || requested;
@@ -358,19 +348,21 @@ export function getJetbuiltProjectLibraryGapAnalysis(
   const outsideUsage = historicalUsage(allHistoryRows, new Set(grouped.keys()), project.jetbuilt_id);
   const candidates = [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([candidateKey, identity]) => {
     const classification = classifyJetbuiltHistoryLine(identity.manufacturer, identity.model);
-    const exact = canonical.exact.get(candidateKey) ?? [];
-    const possibleVariants = exact.length ? [] : canonical.variants.get(candidateKey) ?? [];
+    const resolution = resolveLibraryIdentity(identityIndex, identity.manufacturer, identity.model);
+    const uniqueTemplates = resolution.kind === "unique" ? [resolution.template] : [];
+    const ambiguousTemplates = resolution.kind === "ambiguous" ? resolution.templates : [];
     const existingProposals = proposalMatches(candidateKey, identity.manufacturer, identity.model, state.proposals);
     const previousResult = resultByCandidate.get(candidateKey);
     let status: JetbuiltProjectGapStatus = "unmatched-hardware-candidate";
-    if (exact.length) status = "exact-canonical-match";
+    if (resolution.kind === "unique") status = "exact-canonical-match";
+    else if (resolution.kind === "ambiguous") status = "possible-identity-variant";
     else if (classification.schematicRelevant === false) status = "known-non-schematic";
     else if (existingProposals.length) status = "already-proposed";
     else if (previousResult?.status === "validation-failed") status = "needs-manual-review";
-    else if (possibleVariants.length) status = "possible-identity-variant";
     const usage = outsideUsage.get(candidateKey);
     const projectRooms = new Map(identity.lines.filter((line) => line.room_id).map((line) => [line.room_id!, line.room_name]));
     const projectSystems = new Map(identity.lines.filter((line) => line.system_id).map((line) => [line.system_id!, line.system_name]));
+    const storedHistoryCanonicalTemplateIds = [...new Set(identity.lines.map((line) => line.canonical_template_id).filter((id): id is string => Boolean(id)))].sort();
     return {
       candidateKey,
       status,
@@ -392,9 +384,10 @@ export function getJetbuiltProjectLibraryGapAnalysis(
         roomCount: usage?.rooms.size ?? 0,
         systemCount: usage?.systems.size ?? 0,
       },
-      currentCanonicalCollisionEvidence: templateRefs(exact),
-      possibleIdentityVariantEvidence: templateRefs(possibleVariants),
-      storedHistoryCanonicalTemplateIds: [...new Set(identity.lines.map((line) => line.canonical_template_id).filter(Boolean))].sort(),
+      currentCanonicalCollisionEvidence: templateRefs(uniqueTemplates),
+      possibleIdentityVariantEvidence: templateRefs(ambiguousTemplates),
+      storedHistoryCanonicalTemplateIds,
+      inactiveOrMissingStoredCanonicalTemplateIds: storedHistoryCanonicalTemplateIds.filter((id) => !activeTemplateIds.has(id)),
       existingProposals,
       previousResult: previousResult ?? null,
       generationKey: `new-template:${hash(candidateKey)}`,
@@ -463,7 +456,9 @@ export function getJetbuiltProjectLibraryGapAnalysis(
     },
     warnings: [
       "Unmatched is triage evidence, not proof that a canonical device is missing.",
-      "Possible identity variants are exact search-term matches only and are never silently merged.",
+      "Exact matches use canonical model/label, reviewed identityAliases, or reviewed manufacturer equivalence groups only; searchTerms never create exact identity hits.",
+      "Ambiguous identity collisions (multiple distinct templates for one key) are reported as possible-identity-variant and never auto-selected.",
+      "Stored history template IDs absent from the active canonical library are reported separately and never treated as current matches.",
       "Proposal creation still requires official research and all quality gates.",
     ],
   };

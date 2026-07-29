@@ -539,6 +539,12 @@ export interface DeviceTemplate {
   ports: Port[];
   color?: string;
   searchTerms?: string[];
+  /**
+   * Reviewed commercial SKU / regional / procurement spellings that are safe for
+   * exact library identity resolution (import + project gap). Not for UI discovery —
+   * use searchTerms for that.
+   */
+  identityAliases?: string[];
   manufacturer?: string;
   modelNumber?: string;
   imageUrl?: string;
