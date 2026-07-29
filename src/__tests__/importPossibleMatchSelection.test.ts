@@ -1,17 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { QuoteImportCandidateMatch, QuoteImportResultItem } from "../quoteImportTypes";
-
-/**
- * Mirrors ImportQuoteDevicesDialog schematic-start selection:
- * never fall back to possibleMatches[0]; require an explicit template id.
- */
-function resolveSelectedPossibleMatch(
-  item: QuoteImportResultItem,
-  decision: { kind: "use_library_match"; templateId: string } | { kind: "research_missing" } | undefined,
-): QuoteImportCandidateMatch | null {
-  if (item.status !== "possible_match" || decision?.kind !== "use_library_match") return null;
-  return item.possibleMatches.find((match) => match.id === decision.templateId) ?? null;
-}
+import {
+  resolveSelectedPossibleMatch,
+  type QuoteImportCandidateMatch,
+  type QuoteImportResultItem,
+} from "../quoteImportTypes";
 
 function candidate(id: string, label: string): QuoteImportCandidateMatch {
   return {

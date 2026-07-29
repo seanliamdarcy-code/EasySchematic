@@ -42,6 +42,18 @@ export interface QuoteImportResultItem extends ExtractedQuoteDevice {
   portReuseCandidates: QuoteImportCandidateMatch[];
 }
 
+export type PossibleMatchDecision =
+  | { kind: "use_library_match"; templateId: string }
+  | { kind: "research_missing" };
+
+export function resolveSelectedPossibleMatch(
+  item: QuoteImportResultItem,
+  decision: PossibleMatchDecision | undefined,
+): QuoteImportCandidateMatch | null {
+  if (item.status !== "possible_match" || decision?.kind !== "use_library_match") return null;
+  return item.possibleMatches.find((match) => match.id === decision.templateId) ?? null;
+}
+
 export type BundleResolutionState = "known_catalogue" | "suggested" | "unresolved" | "manual";
 
 /**

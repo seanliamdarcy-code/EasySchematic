@@ -127,6 +127,7 @@ describe("effective taxonomy", () => {
       label: "Ceiling Mic 1",
       manufacturer: "Generic",
       deviceType: "ceiling-mic",
+      identityAliases: ["CM-1/UK"],
       ports: [
         {
           label: "Audio Out",
@@ -138,6 +139,7 @@ describe("effective taxonomy", () => {
     }), options);
 
     expect(jsonResult.templates[0].template.category).toBe("Audio");
+    expect(jsonResult.templates[0].template.identityAliases).toEqual(["CM-1/UK"]);
     expect(jsonResult.templates[0].validation.ok).toBe(true);
     expect(validateTemplate(jsonResult.templates[0].template, options.allowedDeviceTypes).ok).toBe(true);
 

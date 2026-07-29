@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSchematicStore } from "../store";
 import type { DeviceTemplate } from "../types";
-import type {
-  ExtractedQuoteDevice,
-  QuoteImportCandidateMatch,
-  JetbuiltClientSearchResult,
-  JetbuiltIndexStatus,
-  JetbuiltProjectSearchResult,
-  LibraryMatchStatus,
-  ProductBundleComponent,
-  QuoteImportDraftReview,
-  QuoteImportBundleGroup,
-  QuoteImportExtractionResponse,
-  QuoteImportResultItem,
+import {
+  resolveSelectedPossibleMatch,
+  type ExtractedQuoteDevice,
+  type QuoteImportCandidateMatch,
+  type JetbuiltClientSearchResult,
+  type JetbuiltIndexStatus,
+  type JetbuiltProjectSearchResult,
+  type LibraryMatchStatus,
+  type PossibleMatchDecision,
+  type ProductBundleComponent,
+  type QuoteImportDraftReview,
+  type QuoteImportBundleGroup,
+  type QuoteImportExtractionResponse,
+  type QuoteImportResultItem,
 } from "../quoteImportTypes";
 import {
   fetchTatesideDeviceTemplates,
@@ -43,10 +45,6 @@ interface EditingDraftState {
   template: DeviceTemplate;
 }
 
-/** Candidate-specific possible-match resolution (never implicit possibleMatches[0]). */
-type PossibleMatchDecision =
-  | { kind: "use_library_match"; templateId: string }
-  | { kind: "research_missing" };
 type OutcomeReviewItem = QuoteImportResultItem | QuoteImportDraftReview;
 
 const STATUS_LABELS: Record<LibraryMatchStatus, string> = {
@@ -154,7 +152,6 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
   const unresolvedPossibleMatches = useMemo(
     () => activeImportResults.filter((item) => item.status === "possible_match" && !possibleMatchDecisions[keyForExtractedDevice(item)]),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyForExtractedDevice is stable
     [activeImportResults, possibleMatchDecisions],
   );
 
@@ -749,7 +746,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
         const key = keyForExtractedDevice(item);
         const decision = possibleMatchDecisions[key];
         if (item.status === "possible_match" && decision?.kind === "use_library_match") {
-          const selectedMatch = item.possibleMatches.find((match) => match.id === decision.templateId) ?? null;
+          const selectedMatch = resolveSelectedPossibleMatch(item, decision);
           if (!selectedMatch) {
             setError("A possible-match selection is no longer available. Re-select a library device before starting a schematic.");
             setSaving(false);

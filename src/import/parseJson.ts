@@ -57,6 +57,9 @@ export function normalizeTemplateJson(raw: Record<string, unknown>): Partial<Dev
   if (hasOwn(raw, "searchTerms") && Array.isArray(raw.searchTerms)) {
     template.searchTerms = raw.searchTerms.filter((term): term is string => typeof term === "string");
   }
+  if (hasOwn(raw, "identityAliases") && Array.isArray(raw.identityAliases)) {
+    template.identityAliases = raw.identityAliases.filter((alias): alias is string => typeof alias === "string");
+  }
 
   for (const field of [
     "powerDrawW",
@@ -146,6 +149,7 @@ function normalizeTemplate(raw: Record<string, unknown>, taxonomy: ImportTaxonom
     searchTerms: Array.isArray(raw.searchTerms)
       ? raw.searchTerms.filter((s): s is string => typeof s === "string")
       : undefined,
+    identityAliases: template.identityAliases,
     powerDrawW: num(raw.powerDrawW),
     powerCapacityW: num(raw.powerCapacityW),
     voltage: str(raw.voltage),
