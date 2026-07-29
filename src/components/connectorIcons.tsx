@@ -506,6 +506,25 @@ const CONNECTOR_SPECS: Partial<Record<ConnectorType, ConnectorSpec>> = {
       );
     },
   },
+  "mini-din-6": {
+    widthMm: 12.0, heightMm: 12.0,
+    render: (p) => {
+      const outline = renderCircleWithNotch(12.0, 3.5, 1.5, "bottom", p);
+      if (p.detail < 2) return outline;
+      const pr = 0.65;
+      return (
+        <g>
+          {outline}
+          <circle cx={-2} cy={-1.2} r={pr} fill={p.color} />
+          <circle cx={0} cy={-1.2} r={pr} fill={p.color} />
+          <circle cx={2} cy={-1.2} r={pr} fill={p.color} />
+          <circle cx={-2} cy={1.2} r={pr} fill={p.color} />
+          <circle cx={0} cy={1.2} r={pr} fill={p.color} />
+          <circle cx={2} cy={1.2} r={pr} fill={p.color} />
+        </g>
+      );
+    },
+  },
   "mini-din-7": {
     widthMm: 12.0, heightMm: 12.0,
     render: (p) => {
@@ -524,6 +543,102 @@ const CONNECTOR_SPECS: Partial<Record<ConnectorType, ConnectorSpec>> = {
           <circle cx={-0.8} cy={1} r={pr} fill={p.color} />
           <circle cx={0.8} cy={1} r={pr} fill={p.color} />
           <circle cx={2.5} cy={1} r={pr} fill={p.color} />
+        </g>
+      );
+    },
+  },
+  "mini-din-8": {
+    widthMm: 12.0, heightMm: 12.0,
+    render: (p) => {
+      const outline = renderCircleWithNotch(12.0, 3.5, 1.5, "bottom", p);
+      if (p.detail < 2) return outline;
+      const pr = 0.55;
+      return (
+        <g>
+          {outline}
+          <circle cx={-2.2} cy={-1.8} r={pr} fill={p.color} />
+          <circle cx={0} cy={-1.8} r={pr} fill={p.color} />
+          <circle cx={2.2} cy={-1.8} r={pr} fill={p.color} />
+          <circle cx={-2.8} cy={0.1} r={pr} fill={p.color} />
+          <circle cx={-0.9} cy={0.1} r={pr} fill={p.color} />
+          <circle cx={0.9} cy={0.1} r={pr} fill={p.color} />
+          <circle cx={2.8} cy={0.1} r={pr} fill={p.color} />
+          <circle cx={0} cy={1.8} r={pr} fill={p.color} />
+        </g>
+      );
+    },
+  },
+  "mini-din-9": {
+    widthMm: 12.0, heightMm: 12.0,
+    render: (p) => {
+      const outline = renderCircleWithNotch(12.0, 3.5, 1.5, "bottom", p);
+      if (p.detail < 2) return outline;
+      const pr = 0.55;
+      return (
+        <g>
+          {outline}
+          <circle cx={-2.2} cy={-1.8} r={pr} fill={p.color} />
+          <circle cx={0} cy={-1.8} r={pr} fill={p.color} />
+          <circle cx={2.2} cy={-1.8} r={pr} fill={p.color} />
+          <circle cx={-2.8} cy={0.1} r={pr} fill={p.color} />
+          <circle cx={-0.9} cy={0.1} r={pr} fill={p.color} />
+          <circle cx={0.9} cy={0.1} r={pr} fill={p.color} />
+          <circle cx={2.8} cy={0.1} r={pr} fill={p.color} />
+          <circle cx={-1.2} cy={1.8} r={pr} fill={p.color} />
+          <circle cx={1.2} cy={1.8} r={pr} fill={p.color} />
+        </g>
+      );
+    },
+  },
+  lightning: {
+    widthMm: 8.0, heightMm: 3.5,
+    render: (p) => {
+      if (p.detail === 0) return <rect x={-4} y={-1.75} width={8} height={3.5} rx={0.6} fill={p.color} />;
+      return (
+        <g>
+          <rect x={-4} y={-1.75} width={8} height={3.5} rx={0.6} fill="none" stroke={p.color} strokeWidth={p.strokeWidth} />
+          {p.detail >= 2 && (
+            <>
+              <line x1={-2.5} y1={-0.6} x2={2.5} y2={-0.6} stroke={p.color} strokeWidth={0.4} />
+              <line x1={-2.5} y1={0.6} x2={2.5} y2={0.6} stroke={p.color} strokeWidth={0.4} />
+            </>
+          )}
+        </g>
+      );
+    },
+  },
+  rj50: {
+    widthMm: 12.5, heightMm: 10.0,
+    render: (p) => {
+      // Same footprint family as RJ45 with denser pin hint
+      if (p.detail === 0) return <rect x={-6.25} y={-5} width={12.5} height={10} rx={1} fill={p.color} />;
+      return (
+        <g>
+          <rect x={-6.25} y={-5} width={12.5} height={10} rx={1} fill="none" stroke={p.color} strokeWidth={p.strokeWidth} />
+          {p.detail >= 2 &&
+            Array.from({ length: 10 }, (_, i) => (
+              <line
+                key={i}
+                x1={-4.5 + i * 1.0}
+                y1={-2.5}
+                x2={-4.5 + i * 1.0}
+                y2={2.5}
+                stroke={p.color}
+                strokeWidth={0.35}
+              />
+            ))}
+        </g>
+      );
+    },
+  },
+  "sd-card-slot": {
+    widthMm: 14.0, heightMm: 10.0,
+    render: (p) => {
+      if (p.detail === 0) return <rect x={-7} y={-5} width={14} height={10} rx={0.8} fill={p.color} />;
+      return (
+        <g>
+          <rect x={-7} y={-5} width={14} height={10} rx={0.8} fill="none" stroke={p.color} strokeWidth={p.strokeWidth} />
+          {p.detail >= 2 && <rect x={-5.5} y={-3.5} width={11} height={7} rx={0.4} fill="none" stroke={p.color} strokeWidth={0.4} />}
         </g>
       );
     },

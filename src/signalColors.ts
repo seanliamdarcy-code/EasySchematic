@@ -75,6 +75,7 @@ export const DEFAULT_SIGNAL_COLORS: Record<SignalType, string> = {
   cresnet: "#a21caf",
   dmnet: "#c026d3",
   sensor: "#71717a",
+  can: "#0f766e",
   vch: "#0f766e",
   expansion: "#64748b",
   custom: "#64748b",

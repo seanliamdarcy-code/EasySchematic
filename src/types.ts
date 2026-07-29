@@ -11,12 +11,13 @@ export type ConnectorType =
   | "banana" | "binding-post" | "binding-post-banana" | "dvi" | "mini-xlr" | "opticalcon"
   | "l5-20" | "l6-20" | "l6-30" | "l21-30" | "cam-lok" | "powercon-true1"
   | "qsfp" | "qsfp28" | "mpo" | "digilink" | "pcie-6pin"
-  | "mini-din-4" | "mini-din-7"
+  | "mini-din-4" | "mini-din-6" | "mini-din-7" | "mini-din-8" | "mini-din-9"
   | "mini-hdmi" | "mini-displayport"
-  | "rj11" | "rj12" | "usb-mini" | "usb-micro" | "trs-2.5mm"
+  | "rj11" | "rj12" | "rj50" | "usb-mini" | "usb-micro" | "trs-2.5mm"
   | "reverse-tnc" | "sma" | "db37"
-  | "d-tap" | "v-mount" | "f-connector" | "belling-lee" | "ci-slot" | "ops-80pin" | "iiyama-slot-pc" | "iiyama-wifi-module" | "micro-sd-slot"
+  | "d-tap" | "v-mount" | "f-connector" | "belling-lee" | "ci-slot" | "ops-80pin" | "iiyama-slot-pc" | "iiyama-wifi-module" | "micro-sd-slot" | "sd-card-slot"
   | "lemo-2pin" | "lemo-4pin" | "lemo-5pin"
+  | "lightning"
   | "wireless"
   | "solder-cup" | "punch-down-110" | "punch-down-66" | "krone-idc" | "d-hole-insert" | "ground-lug"
   | "proprietary" | "none" | "other";
@@ -125,6 +126,7 @@ export type SignalType =
   | "cresnet"
   | "dmnet"
   | "sensor"
+  | "can"
   | "vch"
   | "expansion"
   | "custom";
@@ -996,6 +998,7 @@ export const SIGNAL_COLORS: Record<SignalType, string> = {
   cresnet: "var(--color-cresnet)",
   dmnet: "var(--color-dmnet)",
   sensor: "var(--color-sensor)",
+  can: "var(--color-can)",
   vch: "var(--color-custom)",
   expansion: "var(--color-custom)",
   custom: "var(--color-custom)",
@@ -1052,7 +1055,13 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "binding-post-banana": "Binding Post (Banana)",
   dvi: "DVI",
   "mini-din-4": "Mini-DIN 4-pin",
+  "mini-din-6": "Mini-DIN 6-pin",
   "mini-din-7": "Mini-DIN 7-pin",
+  "mini-din-8": "Mini-DIN 8-pin",
+  "mini-din-9": "Mini-DIN 9-pin",
+  lightning: "Lightning",
+  rj50: "RJ50",
+  "sd-card-slot": "SD Card Slot",
   "mini-hdmi": "Mini HDMI",
   "mini-displayport": "Mini DisplayPort",
   "mini-xlr": "Mini XLR",
@@ -1183,6 +1192,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   cresnet: "Cresnet",
   dmnet: "DMNet",
   sensor: "Sensor",
+  can: "CAN Bus",
   vch: "Yealink VCH",
   expansion: "Expansion",
   custom: "Custom",
@@ -1194,7 +1204,7 @@ export const SIGNAL_GROUPS: Record<string, SignalType[]> = {
   "Video over IP": ["ndi", "srt", "hdbaset", "dm-lite", "st2110"],
   "Audio": ["analog-audio", "speaker-level", "bluetooth", "aes", "dante", "avb", "aes67", "madi", "spdif", "adat", "ultranet", "aes50", "stageconnect", "ydif", "soundgrid", "gigaace", "dx5", "dsnake", "slink", "fibreace", "digilink", "extron-exp", "pots", "blu-link"],
   "Network": ["ethernet", "fiber"],
-  "Control / Data": ["dmx", "artnet", "sacn", "rs422", "serial", "gpio", "contact-closure", "ir", "ir-serial", "midi", "tally", "usb", "thunderbolt", "dxlink", "ebus", "control-voltage", "cresnet", "dmnet", "sensor"],
+  "Control / Data": ["dmx", "artnet", "sacn", "rs422", "serial", "can", "gpio", "contact-closure", "ir", "ir-serial", "midi", "tally", "usb", "thunderbolt", "dxlink", "ebus", "control-voltage", "cresnet", "dmnet", "sensor"],
   "Sync / Clock": ["genlock", "wordclock", "timecode", "dars", "gps"],
   "Power": ["power", "power-l1", "power-l2", "power-l3", "power-neutral", "power-ground"],
   "Streaming": ["rtmp", "rtsp", "mpeg-ts", "rf"],
@@ -1204,13 +1214,13 @@ export const SIGNAL_GROUPS: Record<string, SignalType[]> = {
 /** Connector types organized by functional group (for searchable dropdowns) */
 export const CONNECTOR_GROUPS: Record<string, ConnectorType[]> = {
   "Video": ["bnc", "hdmi", "mini-hdmi", "displayport", "mini-displayport", "dvi", "vga"],
-  "Audio": ["xlr-3", "xlr-4", "xlr-5", "mini-xlr", "combo-xlr-trs", "trs-quarter", "trs-eighth", "ts-eighth", "trs-2.5mm", "rca", "din-5", "mini-din-4", "mini-din-7", "toslink"],
-  "Network / Data": ["rj45", "ethercon", "sfp", "lc", "sc", "opticalcon", "qsfp", "qsfp28", "mpo", "rj11", "rj12"],
-  "USB": ["usb-a", "usb-b", "usb-c", "usb-mini", "usb-micro"],
+  "Audio": ["xlr-3", "xlr-4", "xlr-5", "mini-xlr", "combo-xlr-trs", "trs-quarter", "trs-eighth", "ts-eighth", "trs-2.5mm", "rca", "din-5", "mini-din-4", "mini-din-6", "mini-din-7", "mini-din-8", "mini-din-9", "toslink"],
+  "Network / Data": ["rj45", "rj50", "ethercon", "sfp", "lc", "sc", "opticalcon", "qsfp", "qsfp28", "mpo", "rj11", "rj12"],
+  "USB": ["usb-a", "usb-b", "usb-c", "usb-mini", "usb-micro", "lightning"],
   "D-Sub / Serial": ["db9", "db15", "db25", "db37", "db7w2", "lemo-5pin"],
   "Power": ["iec", "iec-c5", "iec-c7", "iec-c15", "iec-c20", "powercon", "powercon-true1", "edison", "barrel", "l5-20", "l6-20", "l6-30", "l21-30", "cam-lok", "socapex", "pcie-6pin", "lemo-2pin", "lemo-4pin", "d-tap", "v-mount"],
   "Speaker": ["speakon", "spring-clamp", "snapconnect", "fastcon", "cable-clamp", "butt-splice", "lever-lock-connector", "banana", "binding-post", "binding-post-banana"],
   "Terminal": ["phoenix", "terminal-block", "multipin", "solder-cup", "punch-down-110", "punch-down-66", "krone-idc"],
   "RF": ["reverse-tnc", "sma", "f-connector", "belling-lee"],
-  "Other": ["ci-slot", "ops-80pin", "iiyama-slot-pc", "iiyama-wifi-module", "micro-sd-slot", "wireless", "digilink", "d-hole-insert", "ground-lug", "proprietary", "none", "other"],
+  "Other": ["ci-slot", "ops-80pin", "iiyama-slot-pc", "iiyama-wifi-module", "micro-sd-slot", "sd-card-slot", "wireless", "digilink", "d-hole-insert", "ground-lug", "proprietary", "none", "other"],
 };

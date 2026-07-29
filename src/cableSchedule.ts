@@ -112,6 +112,7 @@ const SIGNAL_PREFIX: Record<SignalType, string> = {
   cresnet: "CN",
   dmnet: "DN",
   sensor: "SNS",
+  can: "CAN",
   vch: "VCH",
   expansion: "EXP",
   custom: "X",

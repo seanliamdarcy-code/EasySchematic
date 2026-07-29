@@ -76,6 +76,7 @@
   --color-cresnet: #a21caf;   /* magenta — Crestron Cresnet control bus */
   --color-dmnet: #c026d3;     /* fuchsia — Crestron DMNet control and power */
   --color-sensor: #71717a;    /* zinc gray — ambient sensor input */
+  --color-can: #0f766e;       /* teal — CAN bus control */
   --color-custom: #64748b;    /* cool gray */
 }
 

@@ -77,6 +77,7 @@ export const SIGNAL_TO_CABLE: Record<SignalType, string> = {
   cresnet: "Cresnet",
   dmnet: "DMNet",
   sensor: "Sensor",
+  can: "CAN Bus",
   vch: "Cat6",
   expansion: "Proprietary",
   custom: "Other",
