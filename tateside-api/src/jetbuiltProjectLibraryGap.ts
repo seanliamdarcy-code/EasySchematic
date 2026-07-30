@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import type { DeviceTemplate } from "../../src/types.js";
+import type { ProductBundleDefinition } from "../../src/quoteImportTypes.js";
 import { listCurrentTemplates } from "./deviceStore.js";
 import { classifyJetbuiltHistoryLine, JETBUILT_SCHEMATIC_RELEVANCE_VERSION } from "./jetbuiltHistoryLineClassification.js";
 import { getJetbuiltCohortSemantics } from "./jetbuiltHistoryCohorts.js";
@@ -12,15 +13,18 @@ import {
   buildLibraryIdentityIndex,
   normalizedLookupKey,
   resolveLibraryIdentity,
+  type LibraryIdentityIndex,
 } from "./libraryIdentity.js";
+import { listProductBundles, resolveProductBundle } from "./productBundleStore.js";
 
-export const JETBUILT_PROJECT_LIBRARY_GAP_ANALYSIS_VERSION = "jetbuilt-project-library-gap-v5";
+export const JETBUILT_PROJECT_LIBRARY_GAP_ANALYSIS_VERSION = "jetbuilt-project-library-gap-v6";
 export const JETBUILT_PROJECT_LIBRARY_GAP_PROPOSAL_STATE_VERSION = "jetbuilt-project-gap-proposal-state-v1";
 const MAX_PROJECT_LINE_ITEMS = 5_000;
 
 export type JetbuiltProjectGapStatus =
   | "exact-canonical-match"
   | "known-non-schematic"
+  | "known-product-bundle"
   | "already-proposed"
   | "unmatched-hardware-candidate"
   | "possible-identity-variant"
@@ -204,6 +208,57 @@ function canonicalSnapshotIdentity(templates: DeviceTemplate[]): string {
   })).sort((a, b) => String(a.id).localeCompare(String(b.id)))));
 }
 
+/** Deterministic snapshot of commercial product-bundle catalogue (import expansion source). */
+function productBundleSnapshotIdentity(bundles: readonly ProductBundleDefinition[]): string {
+  return hash(JSON.stringify(bundles.map((bundle) => ({
+    id: bundle.id,
+    manufacturer: bundle.manufacturer,
+    sku: bundle.sku,
+    aliases: [...(bundle.aliases ?? [])].map(normalize).sort(),
+    source: bundle.source,
+    components: bundle.components.map((component) => ({
+      manufacturer: component.manufacturer,
+      model: component.model,
+      quantityPerBundle: component.quantityPerBundle,
+      schematicRelevant: component.schematicRelevant === true,
+    })).sort((a, b) => `${a.manufacturer}::${a.model}`.localeCompare(`${b.manufacturer}::${b.model}`)),
+  })).sort((a, b) => a.id.localeCompare(b.id) || `${a.manufacturer}::${a.sku}`.localeCompare(`${b.manufacturer}::${b.sku}`))));
+}
+
+function productBundleEvidence(
+  bundle: ProductBundleDefinition,
+  identityIndex: LibraryIdentityIndex,
+) {
+  const components = bundle.components.map((component) => {
+    const resolution = resolveLibraryIdentity(identityIndex, component.manufacturer, component.model);
+    return {
+      manufacturer: component.manufacturer,
+      model: component.model,
+      quantityPerBundle: component.quantityPerBundle,
+      schematicRelevant: component.schematicRelevant === true,
+      libraryResolution: resolution.kind,
+      libraryTemplates: resolution.kind === "unique"
+        ? templateRefs([resolution.template])
+        : resolution.kind === "ambiguous"
+          ? templateRefs(resolution.templates)
+          : [],
+    };
+  });
+  const schematicComponents = components.filter((component) => component.schematicRelevant);
+  return {
+    id: bundle.id,
+    manufacturer: bundle.manufacturer,
+    sku: bundle.sku,
+    label: bundle.label,
+    source: bundle.source,
+    aliases: [...(bundle.aliases ?? [])],
+    components,
+    schematicComponentCount: schematicComponents.length,
+    schematicComponentsResolvedUnique: schematicComponents.filter((component) => component.libraryResolution === "unique").length,
+    schematicComponentsMissingFromLibrary: schematicComponents.filter((component) => component.libraryResolution === "none").length,
+  };
+}
+
 function projectSourceFingerprint(project: ProjectRow, rooms: ProjectGapRoom[], systems: ProjectGapSystem[], lines: LineRow[]): string {
   return hash(JSON.stringify({
     project: {
@@ -316,12 +371,19 @@ export function getJetbuiltProjectLibraryGapAnalysis(
   if (lines.length > MAX_PROJECT_LINE_ITEMS) throw new JetbuiltProjectGapError("project-too-large", `Project has ${lines.length} line items; maximum bounded analysis is ${MAX_PROJECT_LINE_ITEMS}`);
 
   const templates = listCurrentTemplates(canonicalDb);
+  const productBundles = listProductBundles(canonicalDb);
   const activeTemplateIds = new Set(templates.map((template) => template.id).filter((id): id is string => Boolean(id)));
   const identityIndex = buildLibraryIdentityIndex(templates);
   const snapshotIdentity = canonicalSnapshotIdentity(templates);
+  const bundleSnapshotIdentity = productBundleSnapshotIdentity(productBundles);
   const sourceFingerprint = projectSourceFingerprint(project, rooms, systems, lines);
   const normalizedProjectNumber = project.custom_id_raw?.trim() || requested;
-  const runKey = `jetbuilt-project-gap:${hash(JSON.stringify({ projectSourceFingerprint: sourceFingerprint, analysisVersion: JETBUILT_PROJECT_LIBRARY_GAP_ANALYSIS_VERSION, canonicalSnapshotIdentity: snapshotIdentity }))}`;
+  const runKey = `jetbuilt-project-gap:${hash(JSON.stringify({
+    projectSourceFingerprint: sourceFingerprint,
+    analysisVersion: JETBUILT_PROJECT_LIBRARY_GAP_ANALYSIS_VERSION,
+    canonicalSnapshotIdentity: snapshotIdentity,
+    productBundleSnapshotIdentity: bundleSnapshotIdentity,
+  }))}`;
   const state = proposalState ?? localProposalState(canonicalDb, normalizedProjectNumber);
   const stateIdentity = proposalStateIdentity(state);
   const resultByCandidate = new Map(state.candidateResults.filter((result) => result.runKey === runKey).map((result) => [result.candidateKey, result]));
@@ -351,12 +413,17 @@ export function getJetbuiltProjectLibraryGapAnalysis(
     const resolution = resolveLibraryIdentity(identityIndex, identity.manufacturer, identity.model);
     const uniqueTemplates = resolution.kind === "unique" ? [resolution.template] : [];
     const ambiguousTemplates = resolution.kind === "ambiguous" ? resolution.templates : [];
+    const productBundle = resolveProductBundle(canonicalDb, identity.manufacturer, identity.model);
+    const bundleEvidence = productBundle ? productBundleEvidence(productBundle, identityIndex) : null;
     const existingProposals = proposalMatches(candidateKey, identity.manufacturer, identity.model, state.proposals);
     const previousResult = resultByCandidate.get(candidateKey);
     let status: JetbuiltProjectGapStatus = "unmatched-hardware-candidate";
+    // Priority: device identity > non-schematic > commercial product bundle expansion > proposals > review.
+    // Bundles are never exact device matches — they expand to placeable components on import.
     if (resolution.kind === "unique") status = "exact-canonical-match";
     else if (resolution.kind === "ambiguous") status = "possible-identity-variant";
     else if (classification.schematicRelevant === false) status = "known-non-schematic";
+    else if (productBundle) status = "known-product-bundle";
     else if (existingProposals.length) status = "already-proposed";
     else if (previousResult?.status === "validation-failed") status = "needs-manual-review";
     const usage = outsideUsage.get(candidateKey);
@@ -386,6 +453,7 @@ export function getJetbuiltProjectLibraryGapAnalysis(
       },
       currentCanonicalCollisionEvidence: templateRefs(uniqueTemplates),
       possibleIdentityVariantEvidence: templateRefs(ambiguousTemplates),
+      productBundleEvidence: bundleEvidence,
       storedHistoryCanonicalTemplateIds,
       inactiveOrMissingStoredCanonicalTemplateIds: storedHistoryCanonicalTemplateIds.filter((id) => !activeTemplateIds.has(id)),
       existingProposals,
@@ -398,6 +466,7 @@ export function getJetbuiltProjectLibraryGapAnalysis(
         analysisVersion: JETBUILT_PROJECT_LIBRARY_GAP_ANALYSIS_VERSION,
         projectSourceFingerprint: sourceFingerprint,
         canonicalSnapshotIdentity: snapshotIdentity,
+        productBundleSnapshotIdentity: bundleSnapshotIdentity,
       },
     };
   });
@@ -410,6 +479,7 @@ export function getJetbuiltProjectLibraryGapAnalysis(
     runKey,
     projectSourceFingerprint: sourceFingerprint,
     canonicalSnapshotIdentity: snapshotIdentity,
+    productBundleSnapshotIdentity: bundleSnapshotIdentity,
     proposalStateVersion: JETBUILT_PROJECT_LIBRARY_GAP_PROPOSAL_STATE_VERSION,
     proposalStateIdentity: stateIdentity,
     proposalStateSource: state.source,
@@ -429,6 +499,7 @@ export function getJetbuiltProjectLibraryGapAnalysis(
     insufficientIdentityLines,
     exactCanonicalMatches: candidates.filter((candidate) => candidate.status === "exact-canonical-match"),
     knownNonSchematicExclusions: candidates.filter((candidate) => candidate.status === "known-non-schematic"),
+    knownProductBundles: candidates.filter((candidate) => candidate.status === "known-product-bundle"),
     existingPendingProposalMatches: candidates.filter((candidate) => candidate.status === "already-proposed"),
     unmatchedEligibleCandidates: candidates.filter((candidate) => candidate.status === "unmatched-hardware-candidate"),
     possibleIdentityVariants: candidates.filter((candidate) => candidate.status === "possible-identity-variant"),
@@ -438,6 +509,7 @@ export function getJetbuiltProjectLibraryGapAnalysis(
       distinctIdentities: grouped.size,
       exactCanonicalMatches: count("exact-canonical-match"),
       knownNonSchematic: count("known-non-schematic"),
+      knownProductBundles: count("known-product-bundle"),
       alreadyProposed: count("already-proposed"),
       possibleIdentityVariants: count("possible-identity-variant"),
       unmatchedEligible: count("unmatched-hardware-candidate"),
@@ -445,7 +517,8 @@ export function getJetbuiltProjectLibraryGapAnalysis(
     },
     queryCounts: {
       historyDatabase: 5,
-      canonicalDatabase: proposalState ? 1 : 3,
+      // listCurrentTemplates + listProductBundles + optional proposal overlay tables
+      canonicalDatabase: proposalState ? 2 : 4,
       proposalServiceRequests: state.requestCount,
       jetbuiltGetRequests: 0,
       jetbuiltWriteRequests: 0,
@@ -458,6 +531,8 @@ export function getJetbuiltProjectLibraryGapAnalysis(
       "Unmatched is triage evidence, not proof that a canonical device is missing.",
       "Exact matches use canonical model/label, reviewed identityAliases, or reviewed manufacturer equivalence groups only; searchTerms never create exact identity hits.",
       "Ambiguous identity collisions (multiple distinct templates for one key) are reported as possible-identity-variant and never auto-selected.",
+      "Known product bundles expand to schematic-relevant components on import; the commercial SKU is not itself a placeable library device.",
+      "Product-bundle component libraryResolution reports which expanded components already resolve in the library; missing components remain fill work.",
       "Stored history template IDs absent from the active canonical library are reported separately and never treated as current matches.",
       "Proposal creation still requires official research and all quality gates.",
     ],

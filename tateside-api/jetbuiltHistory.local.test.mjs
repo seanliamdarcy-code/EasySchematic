@@ -446,8 +446,12 @@ test("phase 2 classification and dual fingerprints preserve full source and filt
   const history = tempDb();
   try {
     assert.equal(JETBUILT_SCHEMATIC_RELEVANCE_VERSION, "jetbuilt-schematic-relevance-v1");
-    assert.equal(jetbuiltSchematicRelevanceV1RuleCount(), 14);
-    assert.equal(listJetbuiltSchematicRelevanceV1Rules().length, 14);
+    const listedRules = listJetbuiltSchematicRelevanceV1Rules();
+    assert.equal(jetbuiltSchematicRelevanceV1RuleCount(), listedRules.length);
+    // Original V1 set plus mounts / furniture / cabling / consumables / services expansion.
+    assert.ok(jetbuiltSchematicRelevanceV1RuleCount() >= 50, `expected expanded rule set, got ${jetbuiltSchematicRelevanceV1RuleCount()}`);
+    assert.ok(listedRules.every((entry) => entry.schematicRelevant === false));
+    assert.ok(listedRules.every((entry) => entry.normalizedIdentity.includes("::")));
 
     const installation = classifyJetbuiltHistoryLine("Tateside", "Installation");
     assert.deepEqual({
@@ -484,6 +488,8 @@ test("phase 2 classification and dual fingerprints preserve full source and filt
     assert.equal(classifyJetbuiltHistoryLine("Tateside", "Rack sundries").class, "sundries");
     assert.equal(classifyJetbuiltHistoryLine("Tateside", "Discount").class, "commercial");
     assert.equal(classifyJetbuiltHistoryLine("Tateside", "ZHB215").class, "bulk-material");
+    assert.equal(classifyJetbuiltHistoryLine("Tateside", "ZHB225").class, "bulk-material");
+    assert.equal(classifyJetbuiltHistoryLine("Tateside", "CAT6 cable").class, "bulk-material");
     assert.equal(classifyJetbuiltHistoryLine("QSC", "SLDAN-16-P").class, "software-license");
 
     const programming = classifyJetbuiltHistoryLine("Tateside", "Programming");
@@ -496,18 +502,43 @@ test("phase 2 classification and dual fingerprints preserve full source and filt
     assert.equal(delivery.class, "logistics");
     const travel = classifyJetbuiltHistoryLine("Tateside", "Travel");
     assert.equal(travel.class, "travel");
+    assert.equal(classifyJetbuiltHistoryLine("Tateside", "Hotel Expenses").class, "travel");
+    assert.equal(classifyJetbuiltHistoryLine("Tateside", "Consultancy").class, "labour-service");
+    assert.equal(classifyJetbuiltHistoryLine("Tateside", "Professional Services").class, "labour-service");
+    assert.equal(classifyJetbuiltHistoryLine("Tateside", "User training").class, "labour-service");
+    assert.equal(classifyJetbuiltHistoryLine("Tateside", "RESTOCK").class, "commercial");
+    assert.equal(classifyJetbuiltHistoryLine("Tateside Ltd", "Custom works/fabrication").class, "labour-service");
 
-    // Note remains unknown and included (insufficient certainty for V1 exclusion).
+    // Quote annotations are non-schematic.
     const note = classifyJetbuiltHistoryLine("Tateside", "Note");
-    assert.deepEqual({ class: note.class, schematicRelevant: note.schematicRelevant, ruleId: note.ruleId, reason: note.reason }, {
-      class: "unknown", schematicRelevant: null, ruleId: null, reason: null,
-    });
+    assert.equal(note.class, "annotation");
+    assert.equal(note.schematicRelevant, false);
+    assert.equal(note.ruleId, "exact:tateside:note");
 
-    // Real unmatched manufacturers must stay unknown — coverage gaps, not non-schematic.
+    // Mounts / furniture / cabling / consumables — never schematic.
+    assert.equal(classifyJetbuiltHistoryLine("Chief", "LSM1U").class, "mounting-hardware");
+    assert.equal(classifyJetbuiltHistoryLine("Chief", "XSM1U").schematicRelevant, false);
+    assert.equal(classifyJetbuiltHistoryLine("Future Automation", "PS80").class, "mounting-hardware");
+    assert.equal(classifyJetbuiltHistoryLine("Neat", "NEATPAD-GLASSMOUNT").class, "mounting-hardware");
+    assert.equal(classifyJetbuiltHistoryLine("Neat", "NEATBARSCREENMOUNTKIT").class, "mounting-hardware");
+    assert.equal(classifyJetbuiltHistoryLine("Neat", "NEATBOARDPRO-ADAPTIVE-STAND").class, "mounting-hardware");
+    assert.equal(classifyJetbuiltHistoryLine("Shure", "A910-HCM").class, "mounting-hardware");
+    assert.equal(classifyJetbuiltHistoryLine("Toptec", "RUBI - MONO").class, "furniture");
+    assert.equal(classifyJetbuiltHistoryLine("Extron Electronics", "70-1183-01").class, "furniture");
+    assert.equal(classifyJetbuiltHistoryLine("Extron Electronics", "60-1782-02").class, "furniture");
+    assert.equal(classifyJetbuiltHistoryLine("Kramer Electronics", "C-USB31/CA-3").class, "bulk-material");
+    assert.equal(classifyJetbuiltHistoryLine("Lightware", "CAB-USBC-T200A").class, "bulk-material");
+    assert.equal(classifyJetbuiltHistoryLine("Ultima", "779392").class, "bulk-material");
+    assert.equal(classifyJetbuiltHistoryLine("SanDisk", "SDSQUNC-032G-GN6MA").class, "consumable");
+    assert.equal(classifyJetbuiltHistoryLine("Lightware", "UD Mounting Plate F100").class, "mounting-hardware");
+    assert.equal(classifyJetbuiltHistoryLine("Lightware", "C-PopUp-10RN").class, "mounting-hardware");
+
+    // Real active AV hardware must stay unknown — coverage gaps, not non-schematic.
     for (const [maker, model] of [
       ["Logitech", "Meetup"], ["Cisco", "Room Kit"], ["Lightware", "CAB-USBC"], ["NUC", "NUC8"],
       ["Sennheiser", "TeamConnect"], ["Yealink", "UVC84"], ["QSC", "Core 110f"], ["AUDAC", "M2"],
-      ["Neat", "Bar"], ["Shure", "MXA910"],
+      ["Neat", "Bar"], ["Shure", "MXA910"], ["Neat", "Board 32"], ["Shure", "MXWAPX4=-Z11"],
+      ["Sonance", "PS-P63T"], ["Lightware", "MMX2-4x1-H20"], ["Catchbox", "PLU-PRO-1CB-C"],
     ]) {
       const result = classifyJetbuiltHistoryLine(maker, model);
       assert.equal(result.class, "unknown", `${maker}/${model}`);
@@ -755,11 +786,10 @@ test("phase 3 jetbuilt library discovery ranks real devices without quantity dom
     assert.ok(meetup.priorityReasons.some((reason) => reason.includes("delivered-or-installed")));
     assert.ok(meetup.priorityScore > 0);
 
-    const cable = getJetbuiltLibraryCandidates(history.db, { excludeKnownNonSchematic: true, exactCanonicalMatch: false, minimumProjectCount: 1 }, now)
+    // Bulk CAT6 is known non-schematic: excluded from default discovery, never ranks above real devices.
+    const cableExcluded = getJetbuiltLibraryCandidates(history.db, { excludeKnownNonSchematic: true, exactCanonicalMatch: false, minimumProjectCount: 1 }, now)
       .items.find((item) => item.candidateKey === "tateside::cat6cable");
-    assert.ok(cable);
-    assert.ok(cable.validQuantityTotal >= 2310);
-    assert.ok(meetup.priorityScore > cable.priorityScore);
+    assert.equal(cableExcluded, undefined);
 
     // No fuzzy merge: meetup and expansion mic remain distinct.
     assert.ok(ranked.items.some((item) => item.candidateKey === "logitech::expansionmicformeetup"));
@@ -768,6 +798,12 @@ test("phase 3 jetbuilt library discovery ranks real devices without quantity dom
     // Include known non-schematic when explicitly requested.
     const withInternal = getJetbuiltLibraryCandidates(history.db, { excludeKnownNonSchematic: false, exactCanonicalMatch: false }, now);
     assert.ok(withInternal.items.some((item) => item.candidateKey === "tateside::installation"));
+    const cableIncluded = withInternal.items.find((item) => item.candidateKey === "tateside::cat6cable");
+    assert.ok(cableIncluded);
+    assert.ok(cableIncluded.validQuantityTotal >= 2310);
+    assert.equal(cableIncluded.classification.class, "bulk-material");
+    assert.equal(cableIncluded.classification.schematicRelevant, false);
+    assert.ok(meetup.priorityScore > cableIncluded.priorityScore);
 
     // Manufacturer filter.
     const logitechOnly = getJetbuiltLibraryCandidates(history.db, { manufacturer: "Logitech" }, now);
@@ -893,6 +929,10 @@ test("phase 5 project gap lookup assembles one full BOM and classifies exact ide
         { id: "L7", manufacturer_name: "Incomplete", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
         { id: "L7A", manufacturer_name: "QSC", model: "Core 24f", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
         { id: "L7B", manufacturer_name: "DSP", model: "Core 24f", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
+        // Seeded commercial product bundles (import expands; not unmatched hardware).
+        { id: "L-neat-bun", manufacturer_name: "Neat", model: "NEATBAR2BUNUK", quantity: 2, room: { id: "R1" }, system: { id: "S1" } },
+        { id: "L-yealink-bun", manufacturer_name: "Yealink", model: "A40-031", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
+        { id: "L-lw-bun", manufacturer_name: "Lightware", model: "91350019", quantity: 1, room: { id: "R2" }, system: { id: "S2" } },
       ],
     });
     history.db.prepare(`INSERT INTO canonical_template_links
@@ -912,14 +952,15 @@ test("phase 5 project gap lookup assembles one full BOM and classifies exact ide
 
     const analysis = getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "p12345");
     assert.equal(analysis.matchedProjectId, "jb-12345");
-    assert.equal(analysis.lineItemCount, 9);
-    assert.equal(analysis.distinctCandidateIdentityCount, 7);
+    assert.equal(analysis.lineItemCount, 12);
+    assert.equal(analysis.distinctCandidateIdentityCount, 10);
     assert.equal(analysis.rooms.length, 2);
     assert.equal(analysis.systems.length, 2);
-    // v5 identity resolver: explicit identityAliases + manufacturer groups are exact when unique.
+    // v6: identity resolver + known product bundles (commercial SKUs expand; not unmatched).
     // searchTerms never create identity hits (Gamma "4k"/"dsp" stay discovery-only).
     assert.equal(analysis.summary.exactCanonicalMatches, 3); // Acme D-1, Gamma SKU-UK alias, QSC↔Q-SYS Core 24f
     assert.equal(analysis.summary.knownNonSchematic, 1);
+    assert.equal(analysis.summary.knownProductBundles, 3); // Neat Bar2 UK, Yealink A40-031, Lightware 91350019
     assert.equal(analysis.summary.alreadyProposed, 1);
     assert.equal(analysis.summary.possibleIdentityVariants, 0);
     assert.equal(analysis.summary.unmatchedEligible, 2);
@@ -940,14 +981,28 @@ test("phase 5 project gap lookup assembles one full BOM and classifies exact ide
     assert.equal(qsc.status, "exact-canonical-match");
     assert.equal(qsc.currentCanonicalCollisionEvidence[0].manufacturer, "Q-SYS");
     assert.equal(analysis.candidates.find((candidate) => candidate.candidateKey === "dsp::core24f").status, "unmatched-hardware-candidate");
+    const neatBundle = analysis.candidates.find((candidate) => candidate.candidateKey === "neat::neatbar2bunuk");
+    assert.equal(neatBundle.status, "known-product-bundle");
+    assert.equal(neatBundle.productBundleEvidence.sku, "NEATBAR2BUNUK");
+    assert.equal(neatBundle.productBundleEvidence.schematicComponentCount, 2);
+    assert.ok(neatBundle.productBundleEvidence.components.some((c) => c.model === "Neat Bar Generation 2"));
+    assert.ok(neatBundle.productBundleEvidence.components.some((c) => c.model === "NEATPAD-SE"));
+    const yealinkBundle = analysis.candidates.find((candidate) => candidate.candidateKey === "yealink::a40031");
+    assert.equal(yealinkBundle.status, "known-product-bundle");
+    assert.equal(yealinkBundle.productBundleEvidence.sku, "A40-031");
+    const lightwareBundle = analysis.candidates.find((candidate) => candidate.candidateKey === "lightware::91350019");
+    assert.equal(lightwareBundle.status, "known-product-bundle");
+    assert.equal(lightwareBundle.productBundleEvidence.components.length, 2);
+    assert.equal(analysis.knownProductBundles.length, 3);
     assert.equal(analysis.versions.schematicRelevance, "jetbuilt-schematic-relevance-v1");
-    assert.equal(analysis.analysisVersion, "jetbuilt-project-library-gap-v5");
+    assert.equal(analysis.analysisVersion, "jetbuilt-project-library-gap-v6");
+    assert.match(analysis.productBundleSnapshotIdentity, /^[a-f0-9]{64}$/);
     assert.equal(analysis.queryCounts.historyDatabase, 5);
     assert.equal(getJetbuiltProjectLibraryGapAnalysis(history.db, canonical, "P-12345").runKey, analysis.runKey);
     const tools = createMcpLibraryTools({ db: canonical, historyDb: history.db, config: { mcpLibraryEnabled: true, dynamicTaxonomyEnabled: true, libraryAuditEnabled: true, libraryDoctorEnabled: true } });
     const viaMcp = await tools.executeAsync("get_jetbuilt_project_library_gap_analysis", { projectNumber: "P-12345", allowOnDemandAcquisition: false });
     assert.equal(viaMcp.runKey, analysis.runKey);
-    assert.equal(viaMcp.queryCounts.canonicalDatabase, 3);
+    assert.equal(viaMcp.queryCounts.canonicalDatabase, 4);
     const server = createTateSideMcpServer({ db: canonical, historyDb: history.db, config: { mcpLibraryEnabled: true, dynamicTaxonomyEnabled: true, libraryAuditEnabled: true, libraryDoctorEnabled: true } });
     const client = new Client({ name: "project-gap-output-schema-test", version: "1.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

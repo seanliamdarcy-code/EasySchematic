@@ -89,7 +89,7 @@ const cooccurrenceItemOutput = z.object({
   projectCount: nonNegativeInteger, classification: jetbuiltClassificationOutput,
 }).passthrough();
 const projectGapStatus = z.enum([
-  "exact-canonical-match", "known-non-schematic", "already-proposed", "unmatched-hardware-candidate", "possible-identity-variant", "needs-manual-review", "insufficient-identity",
+  "exact-canonical-match", "known-non-schematic", "known-product-bundle", "already-proposed", "unmatched-hardware-candidate", "possible-identity-variant", "needs-manual-review", "insufficient-identity",
 ]);
 const projectGapProposalIdentityOutput = z.object({
   id: z.string(), manufacturer: nullableString, modelNumber: nullableString, status: z.string(), generationKey: nullableString, identityAliases: z.array(z.string()),
@@ -130,6 +130,54 @@ function result(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value) }], structuredContent: value as Record<string, unknown> };
 }
 
+export interface McpToolLogEntry {
+  event: "mcp-tool-call";
+  at: string;
+  tool: string;
+  outcome: "success" | "rejected" | "error";
+  durationMs: number;
+  projectNumber?: string;
+  allowOnDemandAcquisition?: boolean;
+  candidateKey?: string;
+  proposedIdentity?: { manufacturer?: string; modelNumber?: string };
+  generationKey?: string;
+  status?: string;
+  proposalId?: string;
+  validationIssues?: string[];
+  httpStatus?: number;
+  error?: string;
+}
+
+export type McpToolLogger = (entry: McpToolLogEntry) => void;
+
+function toolLogEntry(name: string, input: Record<string, unknown>, output: unknown, error: unknown, startedAt: number, httpStatus?: number): McpToolLogEntry {
+  const value = output && typeof output === "object" && !Array.isArray(output) ? output as Record<string, unknown> : {};
+  const proposed = input.proposedTemplate && typeof input.proposedTemplate === "object" && !Array.isArray(input.proposedTemplate) ? input.proposedTemplate as Record<string, unknown> : {};
+  const gap = input.projectGapContext && typeof input.projectGapContext === "object" && !Array.isArray(input.projectGapContext) ? input.projectGapContext as Record<string, unknown> : {};
+  const proposal = value.proposal && typeof value.proposal === "object" && !Array.isArray(value.proposal) ? value.proposal as Record<string, unknown> : {};
+  const string = (candidate: unknown, max = 300) => typeof candidate === "string" && candidate.trim() ? candidate.trim().slice(0, max) : undefined;
+  const manufacturer = string(proposed.manufacturer);
+  const modelNumber = string(proposed.modelNumber);
+  const validationIssues = Array.isArray(value.validationIssues) ? value.validationIssues.map((issue) => string(issue)).filter((issue): issue is string => Boolean(issue)).slice(0, 20) : undefined;
+  return {
+    event: "mcp-tool-call",
+    at: new Date().toISOString(),
+    tool: name,
+    outcome: value.success === false ? "rejected" : error ? "error" : "success",
+    durationMs: Date.now() - startedAt,
+    projectNumber: string(input.projectNumber) ?? string(gap.projectNumber),
+    allowOnDemandAcquisition: typeof input.allowOnDemandAcquisition === "boolean" ? input.allowOnDemandAcquisition : undefined,
+    candidateKey: string(gap.candidateKey),
+    proposedIdentity: manufacturer || modelNumber ? { manufacturer, modelNumber } : undefined,
+    generationKey: string(input.generationKey),
+    status: string(value.candidateStatus) ?? string(value.status) ?? string(proposal.status),
+    proposalId: string(value.proposalId) ?? string(proposal.id),
+    validationIssues: validationIssues?.length ? validationIssues : undefined,
+    httpStatus,
+    error: error instanceof Error ? string(error.message, 500) : error ? "Unexpected MCP tool error" : undefined,
+  };
+}
+
 export function openMcpDatabase(dbPath: string) {
   if (!existsSync(dbPath)) throw new McpLibraryError(`TateSide database does not exist: ${dbPath}`);
   const db = openDatabase(dbPath);
@@ -142,13 +190,17 @@ export function openMcpDatabase(dbPath: string) {
   }
 }
 
-export function createTateSideMcpServer(context: McpLibraryContext): McpServer {
+export function createTateSideMcpServer(context: McpLibraryContext, logToolCall?: McpToolLogger): McpServer {
   const server = new McpServer({ name: "easyschematic-library", version: "1.0.0" });
   const tools = createMcpLibraryTools(context);
   const register = (name: keyof typeof MCP_LIBRARY_TOOL_DESCRIPTIONS, inputSchema: z.ZodObject<z.ZodRawShape>, outputSchema: z.ZodObject<z.ZodRawShape>) => server.registerTool(name, {
     description: MCP_LIBRARY_TOOL_DESCRIPTIONS[name], inputSchema, outputSchema,
     annotations: { readOnlyHint: !name.startsWith("create_") },
   }, async (input) => {
+    const startedAt = Date.now();
+    let output: unknown;
+    let failure: unknown;
+    let httpStatus: number | undefined;
     try {
       if (name === "create_library_doctor_new_template_proposal" && context.config.mcpLibraryDoctorProposalApiUrl) {
         if (!context.config.mcpLibraryDoctorProposalApiToken) throw new McpLibraryError("Proposal API token is required when the shared proposal API is configured");
@@ -157,14 +209,19 @@ export function createTateSideMcpServer(context: McpLibraryContext): McpServer {
           headers: { "authorization": `Bearer ${context.config.mcpLibraryDoctorProposalApiToken}`, "content-type": "application/json" },
           body: JSON.stringify(input),
         });
-        const value = await response.json() as Record<string, unknown>;
-        if (!response.ok) throw new McpLibraryError(typeof value.error === "string" ? value.error : `Proposal API returned ${response.status}`);
-        return result(value);
+        httpStatus = response.status;
+        output = await response.json() as Record<string, unknown>;
+        if (!response.ok) throw new McpLibraryError(typeof (output as Record<string, unknown>).error === "string" ? String((output as Record<string, unknown>).error) : `Proposal API returned ${response.status}`);
+        return result(output);
       }
-      return result(await tools.executeAsync(name, input));
+      output = await tools.executeAsync(name, input);
+      return result(output);
     } catch (error) {
+      failure = error;
       const message = error instanceof Error ? error.message : "Unexpected MCP tool error";
       return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: message }) }], isError: true };
+    } finally {
+      try { logToolCall?.(toolLogEntry(name, input, output, failure, startedAt, httpStatus)); } catch { /* Observability must never affect tool execution. */ }
     }
   });
 

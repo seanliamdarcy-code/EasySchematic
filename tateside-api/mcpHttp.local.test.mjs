@@ -107,6 +107,7 @@ async function postInitialize(endpoint, token) {
 
 test("Streamable HTTP discovers and invokes real tools without read side effects", async () => {
   const { root, dbPath, saved } = fixture();
+  const toolEvents = [];
   const beforeDb = openDatabase(dbPath);
   const before = {
     templates: JSON.stringify(listCurrentTemplates(beforeDb)),
@@ -115,7 +116,7 @@ test("Streamable HTTP discovers and invokes real tools without read side effects
     schema: JSON.stringify(beforeDb.prepare("SELECT * FROM schema_migrations ORDER BY id").all()),
   };
   beforeDb.close();
-  const handle = await startMcpHttpServer(config(dbPath));
+  const handle = await startMcpHttpServer(config(dbPath), (entry) => toolEvents.push(entry));
   const client = new Client({ name: "mcp-http-test", version: "1.0.0" });
   const transport = new StreamableHTTPClientTransport(new URL(handle.endpoint));
   try {
@@ -131,12 +132,14 @@ test("Streamable HTTP discovers and invokes real tools without read side effects
     assert.notEqual(discovered.tools.find(({ name }) => name === "create_library_doctor_new_template_proposal").annotations.readOnlyHint, true);
     assert.equal(discovered.tools.find(({ name }) => name === "get_jetbuilt_project_library_gap_analysis").annotations.readOnlyHint, true);
     const gapOutput = discovered.tools.find(({ name }) => name === "get_jetbuilt_project_library_gap_analysis").outputSchema;
-    assert.deepEqual(gapOutput.properties.candidates.items.properties.status.enum, ["exact-canonical-match", "known-non-schematic", "already-proposed", "unmatched-hardware-candidate", "possible-identity-variant", "needs-manual-review", "insufficient-identity"]);
+    assert.deepEqual(gapOutput.properties.candidates.items.properties.status.enum, ["exact-canonical-match", "known-non-schematic", "known-product-bundle", "already-proposed", "unmatched-hardware-candidate", "possible-identity-variant", "needs-manual-review", "insufficient-identity"]);
     const newTemplateOutput = discovered.tools.find(({ name }) => name === "create_library_doctor_new_template_proposal").outputSchema;
     assert.equal(newTemplateOutput.properties.proposalOnly.const, true);
     assert.equal(newTemplateOutput.properties.applied.const, false);
 
     assert.equal(value(await client.callTool({ name: "get_library_coverage", arguments: {} })).totalTemplates, 3);
+    assert.equal(toolEvents.at(-1).tool, "get_library_coverage");
+    assert.equal(toolEvents.at(-1).outcome, "success");
     assert.equal(value(await client.callTool({ name: "list_manufacturers", arguments: { limit: 1 } })).count, 1);
     const first = value(await client.callTool({ name: "search_templates", arguments: { manufacturer: "Acme", limit: 1 } }));
     const second = value(await client.callTool({ name: "search_templates", arguments: { manufacturer: "Acme", limit: 1, offset: 1 } }));
@@ -163,6 +166,20 @@ test("Streamable HTTP discovers and invokes real tools without read side effects
     assert.equal(listLibraryDoctorProposals(handle.db).length, before.proposals + 1);
     assert.equal(JSON.stringify(listCurrentTemplates(handle.db)), before.templates);
     assert.equal(JSON.stringify(listRegistryValues(handle.db)), before.taxonomy);
+
+    const rejectedTemplate = value(await client.callTool({ name: "create_library_doctor_new_template_proposal", arguments: {
+      proposedTemplate: { manufacturer: "Rejected Fixture", modelNumber: "REJECT-1", label: "Rejected Device", category: "Sources", deviceType: "camera", ports: [] },
+      evidenceRefs: [{ type: "private-test", url: "https://must-not-appear.example/private" }],
+      rationale: "MUST_NOT_APPEAR_IN_TOOL_LOG",
+      generationKey: "rejected-observability-fixture",
+    } }));
+    assert.equal(rejectedTemplate.success, false);
+    const rejectedEvent = toolEvents.at(-1);
+    assert.equal(rejectedEvent.tool, "create_library_doctor_new_template_proposal");
+    assert.equal(rejectedEvent.outcome, "rejected");
+    assert.deepEqual(rejectedEvent.proposedIdentity, { manufacturer: "Rejected Fixture", modelNumber: "REJECT-1" });
+    assert.ok(rejectedEvent.validationIssues.some((issue) => issue.includes("qualityGates")));
+    assert.doesNotMatch(JSON.stringify(rejectedEvent), /MUST_NOT_APPEAR|must-not-appear/);
 
     const newTemplateCall = await client.callTool({ name: "create_library_doctor_new_template_proposal", arguments: {
       proposedTemplate: { manufacturer: "HTTP Fixture", modelNumber: "HTTP-NEW-1", label: "HTTP New Device", category: "Sources", deviceType: "camera", ports: [] },

@@ -5,7 +5,7 @@ import { createRemoteJWKSet } from "jose/jwks/remote";
 import { jwtVerify } from "jose/jwt/verify";
 import { getConfig, type ApiConfig } from "./config.js";
 import { McpLibraryError, type McpLibraryContext } from "./mcpLibrary.js";
-import { createTateSideMcpServer, openMcpDatabase, openOptionalHistoryDatabase } from "./mcpServer.js";
+import { createTateSideMcpServer, openMcpDatabase, openOptionalHistoryDatabase, type McpToolLogger } from "./mcpServer.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const CLOUDFLARE_ACCESS_JWT_HEADER = "cf-access-jwt-assertion";
@@ -25,6 +25,7 @@ export interface McpHttpHandle {
 
 export async function startMcpHttpServer(
   config: Pick<ApiConfig, "dbPath" | "jetbuiltApiBaseUrl" | "jetbuiltIndexPath" | "mcpLibraryEnabled" | "dynamicTaxonomyEnabled" | "libraryAuditEnabled" | "libraryDoctorEnabled" | "mcpHttpEnabled" | "mcpHttpHost" | "mcpHttpPort" | "mcpHttpAllowNonLoopback" | "mcpLibraryDoctorProposalApiUrl" | "mcpLibraryDoctorProposalApiToken" | "mcpHttpCloudflareAccessEnabled" | "mcpHttpCloudflareAccessIssuer" | "mcpHttpCloudflareAccessAudience">,
+  logToolCall?: McpToolLogger,
 ): Promise<McpHttpHandle> {
   if (!config.mcpLibraryEnabled) throw new McpLibraryError("Set TATESIDE_MCP_LIBRARY_ENABLED=1 to enable MCP library tools");
   if (!config.mcpHttpEnabled) throw new McpLibraryError("Set TATESIDE_MCP_HTTP_ENABLED=1 to start the MCP HTTP server");
@@ -54,7 +55,7 @@ export async function startMcpHttpServer(
         return;
       }
     }
-    const mcpServer = createTateSideMcpServer(context);
+    const mcpServer = createTateSideMcpServer(context, logToolCall);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
       await mcpServer.connect(transport);
@@ -132,7 +133,7 @@ function createCloudflareAccessVerifier(
 }
 
 async function main(): Promise<void> {
-  const handle = await startMcpHttpServer(getConfig());
+  const handle = await startMcpHttpServer(getConfig(), (entry) => process.stdout.write(`${JSON.stringify(entry)}\n`));
   process.stdout.write(`TateSide MCP Streamable HTTP listening at ${handle.endpoint}\n`);
   const stop = () => { void handle.close().finally(() => { process.exitCode = 0; }); };
   process.once("SIGINT", stop);
