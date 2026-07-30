@@ -60,20 +60,20 @@ INSERT INTO product_bundles (
   'yealink::a40031',
   'Yealink',
   'A40-031',
-  'Yealink MeetingBar A40 + CTP25 bundle',
-  '["A40-031-V2"]',
+  'Yealink MeetingBar A40 + CTP25 commercial bundle',
+  '["A40-031-V2","A40 031"]',
   'manual',
-  '[{"manufacturer":"Yealink","model":"A40","quantityPerBundle":1,"schematicRelevant":true},{"manufacturer":"Yealink","model":"CTP25","quantityPerBundle":1,"schematicRelevant":true}]'
+  '[{"manufacturer":"Yealink","model":"MeetingBar A40","quantityPerBundle":1,"schematicRelevant":true},{"manufacturer":"Yealink","model":"CTP25","quantityPerBundle":1,"schematicRelevant":true}]'
 ),
 (
   'bundle-yealink-a50-031',
   'yealink::a50031',
   'Yealink',
   'A50-031',
-  'Yealink MeetingBar A50 + CTP25 bundle',
-  '[]',
+  'Yealink MeetingBar A50 + CTP25 commercial bundle',
+  '["A50 031"]',
   'manual',
-  '[{"manufacturer":"Yealink","model":"A50","quantityPerBundle":1,"schematicRelevant":true},{"manufacturer":"Yealink","model":"CTP25","quantityPerBundle":1,"schematicRelevant":true}]'
+  '[{"manufacturer":"Yealink","model":"MeetingBar A50","quantityPerBundle":1,"schematicRelevant":true},{"manufacturer":"Yealink","model":"CTP25","quantityPerBundle":1,"schematicRelevant":true}]'
 )
 ON CONFLICT(unique_key) DO UPDATE SET
   manufacturer = excluded.manufacturer,

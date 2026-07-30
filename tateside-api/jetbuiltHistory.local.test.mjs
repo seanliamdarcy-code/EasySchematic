@@ -990,10 +990,14 @@ test("phase 5 project gap lookup assembles one full BOM and classifies exact ide
     const yealinkBundle = analysis.candidates.find((candidate) => candidate.candidateKey === "yealink::a40031");
     assert.equal(yealinkBundle.status, "known-product-bundle");
     assert.equal(yealinkBundle.productBundleEvidence.sku, "A40-031");
+    // Commercial bundle SKU wins even when a library template also carries that SKU as an identity alias.
+    assert.equal(yealinkBundle.productBundleEvidence.components.some((c) => c.model === "MeetingBar A40" || c.model === "A40"), true);
     const lightwareBundle = analysis.candidates.find((candidate) => candidate.candidateKey === "lightware::91350019");
     assert.equal(lightwareBundle.status, "known-product-bundle");
     assert.equal(lightwareBundle.productBundleEvidence.components.length, 2);
     assert.equal(analysis.knownProductBundles.length, 3);
+    assert.equal(classifyJetbuiltHistoryLine("Yealink", "VB-TVMount-01").class, "mounting-hardware");
+    assert.equal(classifyJetbuiltHistoryLine("Yealink", "VB-TVMount-01").schematicRelevant, false);
     assert.equal(analysis.versions.schematicRelevance, "jetbuilt-schematic-relevance-v1");
     assert.equal(analysis.analysisVersion, "jetbuilt-project-library-gap-v6");
     assert.match(analysis.productBundleSnapshotIdentity, /^[a-f0-9]{64}$/);

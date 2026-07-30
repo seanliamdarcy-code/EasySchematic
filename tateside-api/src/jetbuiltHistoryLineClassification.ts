@@ -322,6 +322,13 @@ const EXACT_NON_SCHEMATIC_RULES: Readonly<Record<string, ExactRule>> = {
     "exact:sandisk:sdsqunc-032g",
     "SanDisk microSD media card for players — consumable, not a schematic device",
   ),
+
+  // --- Yealink mounts / furniture (never schematic) ---
+  "yealink::vbtvmount01": rule(
+    "mounting-hardware",
+    "exact:yealink:vb-tvmount-01",
+    "Yealink VESA TV mount accessory for A40/A50/SmartVision — mounting hardware only",
+  ),
 };
 
 export function listJetbuiltSchematicRelevanceV1Rules(): Array<{

@@ -418,12 +418,13 @@ export function getJetbuiltProjectLibraryGapAnalysis(
     const existingProposals = proposalMatches(candidateKey, identity.manufacturer, identity.model, state.proposals);
     const previousResult = resultByCandidate.get(candidateKey);
     let status: JetbuiltProjectGapStatus = "unmatched-hardware-candidate";
-    // Priority: device identity > non-schematic > commercial product bundle expansion > proposals > review.
-    // Bundles are never exact device matches — they expand to placeable components on import.
-    if (resolution.kind === "unique") status = "exact-canonical-match";
+    // Priority: commercial product-bundle expansion beats single-device identity for the same SKU
+    // (import expands to placeable components; never treat a known commercial bundle as one device).
+    // Then: device identity > non-schematic > proposals > review.
+    if (productBundle) status = "known-product-bundle";
+    else if (resolution.kind === "unique") status = "exact-canonical-match";
     else if (resolution.kind === "ambiguous") status = "possible-identity-variant";
     else if (classification.schematicRelevant === false) status = "known-non-schematic";
-    else if (productBundle) status = "known-product-bundle";
     else if (existingProposals.length) status = "already-proposed";
     else if (previousResult?.status === "validation-failed") status = "needs-manual-review";
     const usage = outsideUsage.get(candidateKey);
