@@ -422,6 +422,12 @@ export async function searchJetbuiltClients(query: string): Promise<JetbuiltClie
   return response.clients;
 }
 
+export async function listLatestJetbuiltProjects(offset = 0): Promise<{
+  projects: JetbuiltProjectSearchResult[]; total: number; hasMore: boolean;
+}> {
+  return requestJson(`/jetbuilt/projects?latest=true&limit=50&offset=${encodeURIComponent(String(offset))}`);
+}
+
 export async function listJetbuiltProjectsForClient(clientId: string): Promise<JetbuiltProjectSearchResult[]> {
   const response = await requestJson<{ projects: JetbuiltProjectSearchResult[] }>(`/jetbuilt/clients/${encodeURIComponent(clientId)}/projects`);
   return response.projects;

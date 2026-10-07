@@ -491,6 +491,14 @@ export function searchJetbuiltProjects(query: string): JetbuiltProjectSearchResu
     .map((entry) => entry.project);
 }
 
+export function listLatestJetbuiltProjects(limit = 50, offset = 0): JetbuiltProjectSearchResult[] {
+  const safeLimit = Number.isFinite(limit) ? Math.min(50, Math.max(1, Math.floor(limit))) : 50;
+  const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
+  return [...indexState.data.projects]
+    .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "") || a.id.localeCompare(b.id))
+    .slice(safeOffset, safeOffset + safeLimit);
+}
+
 export function searchJetbuiltClients(query: string): JetbuiltClientSearchResult[] {
   const trimmed = query.trim();
   if (!trimmed) return [];

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSchematicStore } from "../store";
 import type { DeviceTemplate } from "../types";
 import {
@@ -22,6 +22,7 @@ import {
   importDevicesFromJetbuiltProject,
   importDevicesFromQuote,
   listJetbuiltProjectsForClient,
+  listLatestJetbuiltProjects,
   previewProductBundleDefinition,
   researchQuoteDevices,
   saveProductBundleDefinition,
@@ -77,6 +78,46 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [jetbuiltClientSearching, setJetbuiltClientSearching] = useState(false);
   const [jetbuiltImporting, setJetbuiltImporting] = useState(false);
   const [jetbuiltProjects, setJetbuiltProjects] = useState<JetbuiltProjectSearchResult[]>([]);
+  const [latestProjects, setLatestProjects] = useState<JetbuiltProjectSearchResult[]>([]);
+  const [latestLoading, setLatestLoading] = useState(false);
+  const [latestHasMore, setLatestHasMore] = useState(true);
+  const [latestError, setLatestError] = useState<string | null>(null);
+  const latestPaging = useRef({ offset: 0, loading: false, hasMore: true, generation: 0 });
+  const loadLatestProjects = useCallback(async (refresh = false) => {
+    const paging = latestPaging.current;
+    if (paging.loading || (!refresh && !paging.hasMore)) return;
+    const generation = paging.generation;
+    const offset = refresh ? 0 : paging.offset;
+    paging.loading = true;
+    setLatestLoading(true);
+    setLatestError(null);
+    if (refresh) {
+      paging.offset = 0;
+      paging.hasMore = true;
+      setLatestHasMore(true);
+      setLatestProjects([]);
+    }
+    try {
+      const response = await listLatestJetbuiltProjects(offset);
+      if (generation !== paging.generation) return;
+      paging.offset = offset + response.projects.length;
+      paging.hasMore = response.hasMore && response.projects.length > 0;
+      setLatestHasMore(paging.hasMore);
+      setLatestProjects((current) => {
+        const existing = refresh ? [] : current;
+        const ids = new Set(existing.map((project) => project.id));
+        return [...existing, ...response.projects.filter((project) => !ids.has(project.id))];
+      });
+    } catch (err) {
+      if (generation !== paging.generation) return;
+      setLatestError(err instanceof Error ? err.message : "Latest Jetbuilt projects could not be loaded");
+    } finally {
+      if (generation === paging.generation) {
+        paging.loading = false;
+        setLatestLoading(false);
+      }
+    }
+  }, []);
   const [jetbuiltClients, setJetbuiltClients] = useState<JetbuiltClientSearchResult[]>([]);
   const [selectedJetbuiltClient, setSelectedJetbuiltClient] = useState<JetbuiltClientSearchResult | null>(null);
   const [clientProjects, setClientProjects] = useState<JetbuiltProjectSearchResult[]>([]);
@@ -792,6 +833,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    const paging = latestPaging.current;
+    void loadLatestProjects(true);
 
     void fetchJetbuiltIndexStatus()
       .then((status) => {
@@ -803,8 +846,10 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
 
     return () => {
       cancelled = true;
+      paging.generation += 1;
+      paging.loading = false;
     };
-  }, [open]);
+  }, [open, loadLatestProjects]);
 
   if (!open) return null;
 
@@ -878,7 +923,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
               <div>
                 <div className="text-xs font-medium text-[var(--color-text-heading)]">Import from Jetbuilt Project</div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                  Preferred route. Search by P number, project name, or Jetbuilt project id.
+                  Browse the latest projects or search by P number, project name, or Jetbuilt project id.
                 </div>
               </div>
 
@@ -887,6 +932,45 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
                   ? `Jetbuilt index: ${jetbuiltStatus.projectCount} projects, ${jetbuiltStatus.clientCount} clients${jetbuiltStatus.syncedAt ? `, last synced ${new Date(jetbuiltStatus.syncedAt).toLocaleString()}` : ""}${jetbuiltStatus.refreshing ? " (refreshing)" : ""}`
                   : "Jetbuilt index status loads when you search."}
               </div>
+
+              <section aria-label="Latest Jetbuilt projects" className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium">Latest Jetbuilt projects</div>
+                  <button type="button" onClick={() => void loadLatestProjects(true)} disabled={latestLoading || jetbuiltImporting}
+                    className="text-xs underline cursor-pointer disabled:opacity-40">Refresh latest</button>
+                </div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">Most recently updated first. Scroll to load more.</div>
+                <div aria-label="Latest project list" className="max-h-56 overflow-y-auto rounded border border-[var(--color-border)]"
+                  onScroll={(event) => {
+                    const list = event.currentTarget;
+                    if (!latestError && list.scrollHeight - list.scrollTop - list.clientHeight < 80) void loadLatestProjects();
+                  }}>
+                  {latestProjects.map((project) => (
+                    <div key={project.id} className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-3">
+                      <div className="flex-1 min-w-0 text-xs">
+                        <div className="font-medium truncate">{project.customId ? `${project.customId} - ${project.name}` : project.name}</div>
+                        <div className="text-[11px] text-[var(--color-text-muted)]">
+                          Jetbuilt #{project.id}{project.stage ? ` · ${project.stage}` : ""}
+                          {project.updatedAt ? ` · updated ${new Date(project.updatedAt).toLocaleDateString()}` : ""}
+                        </div>
+                      </div>
+                      <button type="button" aria-label={`Start from ${project.customId || project.name}`}
+                        onClick={() => void handleImportJetbuiltProject(project)} disabled={jetbuiltImporting}
+                        className="px-3 py-1.5 rounded border border-[var(--color-border)] text-xs cursor-pointer disabled:opacity-40">
+                        {jetbuiltImporting ? "Importing..." : "Start from project"}
+                      </button>
+                    </div>
+                  ))}
+                  <div className="p-2 text-center text-xs">
+                    {latestError && <div role="alert" className="text-red-600 mb-2">{latestError}</div>}
+                    {latestLoading ? <span role="status">Loading projects...</span> : latestError || latestHasMore ? (
+                      <button type="button" onClick={() => void loadLatestProjects()} className="underline cursor-pointer">
+                        {latestError ? "Retry loading projects" : "Load more projects"}
+                      </button>
+                    ) : latestProjects.length ? "All projects loaded" : "No Jetbuilt projects available"}
+                  </div>
+                </div>
+              </section>
 
               <div className="flex flex-wrap items-center gap-2">
                 <input

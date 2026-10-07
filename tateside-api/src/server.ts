@@ -50,6 +50,7 @@ import {
   importJetbuiltProject,
   initializeJetbuiltIndex,
   listJetbuiltProjectsForClient,
+  listLatestJetbuiltProjects,
   previewProductBundleComponents,
   searchJetbuiltClients,
   searchJetbuiltProjects,
@@ -1008,7 +1009,8 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     }
 
     const query = (ctx.url.searchParams.get("query") ?? "").trim();
-    if (!query) {
+    const latest = ctx.url.searchParams.get("latest") === "true";
+    if (!query && !latest) {
       sendJson(ctx.res, 200, { projects: [] }, corsHeaders);
       return;
     }
@@ -1019,6 +1021,19 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
       indexPath: config.jetbuiltIndexPath,
       refreshMs: config.jetbuiltIndexRefreshMs,
     });
+    if (latest) {
+      const limit = Number(ctx.url.searchParams.get("limit") ?? "50");
+      const rawOffset = Number(ctx.url.searchParams.get("offset") ?? "0");
+      const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0;
+      const projects = listLatestJetbuiltProjects(limit, offset);
+      const status = getJetbuiltIndexStatus();
+      if (status.projectCount === 0 && status.lastError) {
+        sendJson(ctx.res, 503, { error: "Latest Jetbuilt projects could not be loaded. Try again later." }, corsHeaders);
+        return;
+      }
+      sendJson(ctx.res, 200, { projects, total: status.projectCount, hasMore: offset + projects.length < status.projectCount }, corsHeaders);
+      return;
+    }
     const projects = searchJetbuiltProjects(query);
     sendJson(ctx.res, 200, { projects }, corsHeaders);
     return;

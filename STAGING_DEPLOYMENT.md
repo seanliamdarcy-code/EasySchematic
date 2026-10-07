@@ -11,7 +11,7 @@ The old `staging` branch remains an experiment/reference; it does not identify t
 Public test URL: https://testschematic.tateside.online.
 Production URL: https://schematic.tateside.online.
 Both use Cloudflare Access. Staging SharePoint is disabled; do not connect it to production SharePoint for testing.
-Existing private provider/MCP overrides stay on the VPS. This release preserves the current OpenAI research path; the alternative OpenRouter UI/provider experiment and latest-project browser remain on the older branch.
+Existing private provider/MCP overrides stay on the VPS. This release preserves the current OpenAI research path; the alternative OpenRouter UI/provider experiment remains on the older branch. The latest-project browser is integrated into the current importer, with automatic pagination and a Load more fallback.
 
 ## Before deployment
 
