@@ -303,7 +303,7 @@ test("stdio MCP still starts and discovers the shared registry", async () => {
     command: process.execPath,
     args: [path.resolve("dist-tateside-api/tateside-api/src/mcpServer.js")],
     cwd: process.cwd(),
-    env: { ...process.env, TATESIDE_DB_PATH: dbPath, TATESIDE_MCP_LIBRARY_ENABLED: "1", TATESIDE_DYNAMIC_TAXONOMY_ENABLED: "1", TATESIDE_LIBRARY_AUDIT_ENABLED: "1", TATESIDE_LIBRARY_DOCTOR_ENABLED: "1" },
+    env: { ...process.env, TATESIDE_DATA_DIR: root, TATESIDE_DB_PATH: dbPath, TATESIDE_MCP_LIBRARY_ENABLED: "1", TATESIDE_DYNAMIC_TAXONOMY_ENABLED: "1", TATESIDE_LIBRARY_AUDIT_ENABLED: "1", TATESIDE_LIBRARY_DOCTOR_ENABLED: "1" },
     stderr: "pipe",
   });
   const client = new Client({ name: "mcp-stdio-test", version: "1.0.0" });
