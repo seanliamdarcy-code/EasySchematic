@@ -10,7 +10,8 @@ RUN npm run build
 
 # Production stage
 FROM nginx:bookworm
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+ENV TATESIDE_API_PORT=8788
+COPY docker/nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

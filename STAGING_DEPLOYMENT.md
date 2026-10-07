@@ -57,6 +57,7 @@ docker compose -f compose.staging.yml up -d --no-build
 ```
 
 The tracked Compose file replaces the previously loose staging file. Its port mapping remains 8081. Docker receives the source SHA explicitly so build-info works without including `.git` or private data in the build context.
+The official Nginx image substitutes `TATESIDE_API_PORT` in its configuration template at startup. Staging sets 8789; the production image defaults to 8788. Verify the rendered `proxy_pass` inside the new container before using it.
 
 Require the API `/health` build hash and frontend `/build-info.json` hash to match the checkout. Check services, authenticated read routes, library/schematic counts, and production's unchanged build ID. Confirm that public unauthenticated access still redirects to Cloudflare Access.
 
