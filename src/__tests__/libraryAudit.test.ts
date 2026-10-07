@@ -42,6 +42,10 @@ describe("auditLibraryTemplates", () => {
       MISSING_NAME: 1,
       MISSING_DEVICE_TYPE: 1,
       MISSING_CATEGORY: 1,
+      MISSING_PORTS: 1,
+      MISSING_TAXONOMY_EVIDENCE: 1,
+      MISSING_CLASSIFICATION_CONFIDENCE: 1,
+      MISSING_REVIEW_STATUS: 1,
     });
     expect(report.countsBySeverity.error).toBeGreaterThan(0);
   });
@@ -88,6 +92,24 @@ describe("auditLibraryTemplates", () => {
     expect(report.affectedTemplates.map((entry) => entry.templateId).sort()).toContain("one");
   });
 
+  it("flags adjacent model transpositions as possible duplicates without fuzzy guessing", () => {
+    const report = auditLibraryTemplates([
+      template({ id: "canonical", manufacturer: "Barco", modelNumber: "CSE-200" }),
+      template({ id: "possible-duplicate", manufacturer: "Barco", modelNumber: "ClickShare CES 200" }),
+      template({ id: "different", manufacturer: "Barco", modelNumber: "CSE-800" }),
+      template({ id: "legitimate-one", manufacturer: "Bowers & Wilkins", modelNumber: "CCM362" }),
+      template({ id: "legitimate-two", manufacturer: "Bowers & Wilkins", modelNumber: "CCM632" }),
+      template({ id: "missing-model", manufacturer: "Barco", modelNumber: "", label: "" }),
+    ]);
+
+    expect(report.countsByCode.POSSIBLE_DUPLICATE_MANUFACTURER_MODEL).toBe(2);
+    expect(report.issues.filter((issue) => issue.code === "POSSIBLE_DUPLICATE_MANUFACTURER_MODEL"))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ templateId: "canonical", currentValue: "ClickShare CES 200" }),
+        expect.objectContaining({ templateId: "possible-duplicate", currentValue: "CSE-200" }),
+      ]));
+  });
+
   it("reports suspicious generic template and port values", () => {
     const report = auditLibraryTemplates([
       template({
@@ -122,6 +144,29 @@ describe("auditLibraryTemplates", () => {
     ]));
   });
 
+  it("marks generic numbered port sets for manufacturer research once per template", () => {
+    const report = auditLibraryTemplates([
+      template({
+        ports: Array.from({ length: 16 }, (_, index) => ({
+          id: `p${index + 1}`,
+          label: index < 8 ? `IN ${index + 1}` : `OUT ${index - 7}`,
+          direction: index < 8 ? "input" : "output",
+          signalType: "custom",
+          connectorType: "other",
+        })),
+      } as DeviceTemplate),
+    ]);
+
+    expect(report.countsByCode.REQUIRES_MANUFACTURER_RESEARCH).toBe(1);
+    expect(report.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "REQUIRES_MANUFACTURER_RESEARCH",
+        severity: "warning",
+        currentValue: "16 generic numbered ports",
+      }),
+    ]));
+  });
+
   it("separates noisy completeness issues from the headline actionable count", () => {
     const report = auditLibraryTemplates([
       template({ id: "missing-dimensions", heightMm: undefined }),
@@ -145,11 +190,17 @@ describe("auditLibraryTemplates", () => {
     expect(report.countsByCode.INVALID_CONNECTOR_TYPE).toBe(1);
     expect(report.headline).toMatchObject({
       templatesScanned: 2,
-      totalIssues: 3,
-      actionableIssues: 1,
-      completenessIssueCount: 2,
+      totalIssues: 11,
+      actionableIssues: 3,
+      completenessIssueCount: 10,
     });
-    expect(report.completeness.templatesMissingDimensions).toBe(2);
+    expect(report.completeness).toMatchObject({
+      templatesMissingDimensions: 2,
+      templatesMissingCategory: 2,
+      templatesMissingTaxonomyEvidence: 2,
+      templatesMissingClassificationConfidence: 2,
+      templatesMissingReviewStatus: 2,
+    });
   });
 
   it("builds per-template rollups without dropping the flat issue list", () => {
@@ -181,7 +232,7 @@ describe("auditLibraryTemplates", () => {
       manufacturer: "AJA",
       modelNumber: "KUMO",
       errorCount: 1,
-      infoCount: 5,
+      infoCount: 9,
     });
     expect(report.templateSummaries[0].topIssueCodes).toEqual(expect.arrayContaining([
       { code: "SUSPICIOUS_PORT_VALUE", count: 4 },

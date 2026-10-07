@@ -8,7 +8,12 @@ export type LibraryAuditIssueCode =
   | "MISSING_NAME"
   | "MISSING_DEVICE_TYPE"
   | "MISSING_CATEGORY"
+  | "MISSING_PORTS"
+  | "MISSING_TAXONOMY_EVIDENCE"
+  | "MISSING_CLASSIFICATION_CONFIDENCE"
+  | "MISSING_REVIEW_STATUS"
   | "DUPLICATE_MANUFACTURER_MODEL"
+  | "POSSIBLE_DUPLICATE_MANUFACTURER_MODEL"
   | "MISSING_DIMENSIONS"
   | "SUSPICIOUS_TEMPLATE_VALUE"
   | "MISSING_PORT_LABEL"
@@ -19,7 +24,8 @@ export type LibraryAuditIssueCode =
   | "MISSING_CONNECTOR_TYPE"
   | "INVALID_CONNECTOR_TYPE"
   | "SUSPICIOUS_PORT_VALUE"
-  | "DUPLICATE_PORT_LABEL";
+  | "DUPLICATE_PORT_LABEL"
+  | "REQUIRES_MANUFACTURER_RESEARCH";
 
 export interface LibraryAuditIssue {
   code: LibraryAuditIssueCode;
@@ -85,6 +91,10 @@ export interface LibraryAuditCompleteness {
   templatesMissingManufacturer: number;
   templatesMissingModel: number;
   templatesMissingDeviceType: number;
+  templatesMissingPorts: number;
+  templatesMissingTaxonomyEvidence: number;
+  templatesMissingClassificationConfidence: number;
+  templatesMissingReviewStatus: number;
 }
 
 export interface LibraryAuditFiltersApplied {
@@ -160,8 +170,18 @@ const COMPLETENESS_CODES = new Set<LibraryAuditIssueCode>([
   "MISSING_DIMENSIONS",
   "MISSING_MANUFACTURER",
   "MISSING_MODEL",
+  "MISSING_PORTS",
+  "MISSING_TAXONOMY_EVIDENCE",
+  "MISSING_CLASSIFICATION_CONFIDENCE",
+  "MISSING_REVIEW_STATUS",
 ]);
-const HEADLINE_EXCLUDED_CODES = new Set<LibraryAuditIssueCode>(["MISSING_DIMENSIONS"]);
+const HEADLINE_EXCLUDED_CODES = new Set<LibraryAuditIssueCode>([
+  "MISSING_DIMENSIONS",
+  "MISSING_PORTS",
+  "MISSING_TAXONOMY_EVIDENCE",
+  "MISSING_CLASSIFICATION_CONFIDENCE",
+  "MISSING_REVIEW_STATUS",
+]);
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -300,7 +320,7 @@ function auditTemplate(template: DeviceTemplate, index: number, issues: LibraryA
     });
   }
 
-  if ("category" in template && !text(template.category)) {
+  if (!text(template.category)) {
     addIssue(issues, template, index, {
       code: "MISSING_CATEGORY",
       severity: "info",
@@ -315,6 +335,15 @@ function auditTemplate(template: DeviceTemplate, index: number, issues: LibraryA
       currentValue: template.category,
       message: "Template category is generic.",
       suggestion: "Use a specific category from the existing library taxonomy.",
+    });
+  }
+
+  if (!template.ports?.length) {
+    addIssue(issues, template, index, {
+      code: "MISSING_PORTS",
+      severity: "info",
+      message: "Template has no physical ports recorded.",
+      suggestion: "Verify the complete physical port set, or confirm that ports are not applicable.",
     });
   }
 
@@ -338,6 +367,31 @@ function auditTemplate(template: DeviceTemplate, index: number, issues: LibraryA
         suggestion: `Replace ${field} with a real value or leave it blank for manual review.`,
       });
     }
+  }
+
+  if (!template.evidenceRefs?.length) {
+    addIssue(issues, template, index, {
+      code: "MISSING_TAXONOMY_EVIDENCE",
+      severity: "info",
+      message: "Template has no taxonomy or manufacturer evidence references.",
+      suggestion: "Add official manufacturer evidence before treating this template as trusted.",
+    });
+  }
+  if (!template.classificationConfidence) {
+    addIssue(issues, template, index, {
+      code: "MISSING_CLASSIFICATION_CONFIDENCE",
+      severity: "info",
+      message: "Template has no classification confidence.",
+      suggestion: "Record low, medium, or high confidence after evidence-backed classification review.",
+    });
+  }
+  if (!template.reviewStatus) {
+    addIssue(issues, template, index, {
+      code: "MISSING_REVIEW_STATUS",
+      severity: "info",
+      message: "Template has no taxonomy review status.",
+      suggestion: "Record the current review state without implying that a proposal has been applied.",
+    });
   }
 }
 
@@ -389,10 +443,20 @@ function auditConnector(
 
 function auditPorts(template: DeviceTemplate, templateIndex: number, issues: LibraryAuditIssue[]): void {
   const labels = new Map<string, number>();
+  let placeholderPortCount = 0;
   template.ports?.forEach((port, portIndex) => {
     const label = text(port.label);
     const direction = text(port.direction);
     const signalType = text(port.signalType);
+    const connectorType = text(port.connectorType);
+
+    if (
+      /^(?:in|input|out|output)\s*\d+$/i.test(label)
+      && GENERIC_SIGNAL_VALUES.has(signalType.toLowerCase())
+      && GENERIC_CONNECTOR_VALUES.has(connectorType.toLowerCase())
+    ) {
+      placeholderPortCount += 1;
+    }
 
     if (!label) {
       addPortIssue(issues, template, templateIndex, port, portIndex, {
@@ -475,6 +539,16 @@ function auditPorts(template: DeviceTemplate, templateIndex: number, issues: Lib
     auditConnector(issues, template, templateIndex, port, portIndex, port.rearConnectorType, "rearConnectorType");
     auditConnector(issues, template, templateIndex, port, portIndex, port.frontConnectorType, "frontConnectorType");
   });
+
+  if (placeholderPortCount) {
+    addIssue(issues, template, templateIndex, {
+      code: "REQUIRES_MANUFACTURER_RESEARCH",
+      severity: "warning",
+      currentValue: `${placeholderPortCount} generic numbered port${placeholderPortCount === 1 ? "" : "s"}`,
+      message: "Template contains generic numbered ports with unspecified signal and connector types.",
+      suggestion: "Research the official manufacturer documentation and propose the complete physical port set; do not infer replacements from numbering alone.",
+    });
+  }
 }
 
 function auditDuplicates(templates: DeviceTemplate[], issues: LibraryAuditIssue[]): void {
@@ -500,6 +574,47 @@ function auditDuplicates(templates: DeviceTemplate[], issues: LibraryAuditIssue[
       });
     }
   }
+
+  for (let left = 0; left < templates.length; left += 1) {
+    const leftManufacturer = norm(templates[left].manufacturer);
+    const leftModels = modelIdentityCandidates(templateModel(templates[left]));
+    if (!leftManufacturer || !leftModels.length) continue;
+    for (let right = left + 1; right < templates.length; right += 1) {
+      if (norm(templates[right].manufacturer) !== leftManufacturer) continue;
+      const rightModels = modelIdentityCandidates(templateModel(templates[right]));
+      if (!rightModels.length) continue;
+      if (
+        leftModels[0].length === rightModels[0].length
+        || !leftModels.some((leftModel) => rightModels.some((rightModel) => isAdjacentTransposition(leftModel, rightModel)))
+      ) continue;
+      for (const [index, otherIndex] of [[left, right], [right, left]]) {
+        addIssue(issues, templates[index], index, {
+          code: "POSSIBLE_DUPLICATE_MANUFACTURER_MODEL",
+          severity: "warning",
+          currentValue: templateModel(templates[otherIndex]),
+          message: "Another template from the same manufacturer differs only by one adjacent model-character transposition.",
+          suggestion: "Verify both identities against manufacturer evidence and merge or deprecate the duplicate through review if they are the same product.",
+        });
+      }
+    }
+  }
+}
+
+function modelIdentityCandidates(value: string): string[] {
+  const words = norm(value).match(/[a-z0-9]+/g) ?? [];
+  return [...new Set([
+    words.join(""),
+    words.length > 1 ? words.slice(-2).join("") : "",
+  ].filter(Boolean))];
+}
+
+function isAdjacentTransposition(left: string, right: string): boolean {
+  if (left === right || left.length !== right.length) return false;
+  const differences = [...left].flatMap((value, index) => value === right[index] ? [] : [index]);
+  return differences.length === 2
+    && differences[1] === differences[0] + 1
+    && left[differences[0]] === right[differences[1]]
+    && left[differences[1]] === right[differences[0]];
 }
 
 function makeTemplateMap(templates: DeviceTemplate[]): Map<string, LibraryAuditAffectedTemplate> {
@@ -530,6 +645,10 @@ function makeCompleteness(issues: LibraryAuditIssue[]): LibraryAuditCompleteness
     templatesMissingManufacturer: idsByCode.get("MISSING_MANUFACTURER")?.size ?? 0,
     templatesMissingModel: idsByCode.get("MISSING_MODEL")?.size ?? 0,
     templatesMissingDeviceType: idsByCode.get("MISSING_DEVICE_TYPE")?.size ?? 0,
+    templatesMissingPorts: idsByCode.get("MISSING_PORTS")?.size ?? 0,
+    templatesMissingTaxonomyEvidence: idsByCode.get("MISSING_TAXONOMY_EVIDENCE")?.size ?? 0,
+    templatesMissingClassificationConfidence: idsByCode.get("MISSING_CLASSIFICATION_CONFIDENCE")?.size ?? 0,
+    templatesMissingReviewStatus: idsByCode.get("MISSING_REVIEW_STATUS")?.size ?? 0,
   };
 }
 
