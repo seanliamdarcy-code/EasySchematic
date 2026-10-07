@@ -59,7 +59,19 @@ test('new-template visual preview is complete, read-only, and write-free', async
 
   await page.goto('/');
   await page.waitForLoadState('networkidle');
-  const storageBefore = await page.evaluate(() => JSON.stringify(localStorage));
+  // Autosave updates React Flow measurements and save timestamps while the dialog is open.
+  // Compare the actual schematic and library contents, not those background UI fields.
+  const readStoredContents = () => page.evaluate(() => {
+    const { 'easyschematic-autosave': autosave, ...library } = { ...localStorage };
+    const schematic = autosave ? JSON.parse(autosave) : null;
+    return {
+      library,
+      name: schematic?.name,
+      nodes: schematic?.nodes.map(({ id, type, position, parentId, data }: Record<string, unknown>) => ({ id, type, position, parentId, data })),
+      edges: schematic?.edges.map(({ id, source, target, sourceHandle, targetHandle, data }: Record<string, unknown>) => ({ id, source, target, sourceHandle, targetHandle, data })),
+    };
+  });
+  const storageBefore = await readStoredContents();
   await page.getByRole('button', { name: 'File' }).click();
   await page.getByRole('button', { name: 'Library Doctor...' }).click();
   const libraryDoctor = page.getByRole('dialog', { name: 'Library Doctor' });
@@ -103,6 +115,6 @@ test('new-template visual preview is complete, read-only, and write-free', async
   await expect(raw.locator('xpath=..').locator('pre')).toContainText('"proposedTemplate"');
 
   await page.screenshot({ path: path.join(shotDir, 'neat-center-visual-preview.png'), fullPage: true });
-  expect(await page.evaluate(() => JSON.stringify(localStorage))).toBe(storageBefore);
+  expect(await readStoredContents()).toEqual(storageBefore);
   expect(writes).toEqual([]);
 });
