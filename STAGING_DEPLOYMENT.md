@@ -10,7 +10,9 @@ The old `staging` branch remains an experiment/reference; it does not identify t
 
 Public test URL: https://testschematic.tateside.online.
 Production URL: https://schematic.tateside.online.
-Both use Cloudflare Access. Staging SharePoint is disabled; do not connect it to production SharePoint for testing.
+Both use Cloudflare Access. At the user's request, staging SharePoint connects to the normal shared Projects folder. Saves and PDF publications create real shared files; isolated browser fixtures must not use this live connection.
+
+SharePoint credentials remain in the protected VPS file `/etc/tateside-schematic-api/sharepoint.env` (mode 0600). Staging loads it through `/etc/systemd/system/tateside-schematic-api-staging.service.d/sharepoint.conf`, using `EnvironmentFile=/etc/tateside-schematic-api/sharepoint.env`. Preserve this private override during deployments; do not copy secrets into Git. The API requires all six Microsoft/SharePoint settings; `TATESIDE_DISABLE_SHAREPOINT` is not read by the current code. After changing private configuration, reload systemd and restart staging only. Verify browsing, then save/open a uniquely named temporary schematic and remove it after verification.
 Existing private provider/MCP overrides stay on the VPS. This release preserves the current OpenAI research path; the alternative OpenRouter UI/provider experiment remains on the older branch. The latest-project browser is integrated into the current importer, with automatic pagination and a Load more fallback.
 
 ## Before deployment
@@ -63,7 +65,7 @@ Require the API `/health` build hash and frontend `/build-info.json` hash to mat
 
 ## Review and promotion
 
-Test project/room import, bundles, possible-match selection, non-hardware filtering, library editing, Library Doctor, and save/open/autosave. Test SharePoint separately in a suitable environment: staging deliberately disables it. AI/provider calls have not been live-tested by fixture-based checks.
+Test project/room import, bundles, possible-match selection, non-hardware filtering, library editing, Library Doctor, and save/open/autosave. SharePoint browsing and JSON save/open were verified live on 7 October; the temporary verification file was removed. PDF publishing was not live-tested. AI/provider calls have not been live-tested by fixture-based checks.
 
 Select the tested commit for production only after user acceptance. Code and library data are separate releases: do not replace production SQLite with staging SQLite. Prepare a previewable identity-aware merge that preserves production-only devices, schematics, and version history.
 
