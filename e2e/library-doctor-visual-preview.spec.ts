@@ -75,7 +75,7 @@ test('new-template visual preview is complete, read-only, and write-free', async
   await expect(preview.getByText(/USB-C Debug Only/)).toBeVisible();
   await expect(libraryDoctor.getByText('Occurrences', { exact: true })).toBeVisible();
   await expect(libraryDoctor.getByText('7', { exact: true }).first()).toBeVisible();
-  await expect(libraryDoctor.getByText(/Neat Pad/)).toBeVisible();
+  await expect(libraryDoctor.getByRole('listitem').filter({ hasText: 'Neat Pad' })).toBeVisible();
   await expect(libraryDoctor.getByText('Taxonomy validation', { exact: true })).toBeVisible();
   await expect(libraryDoctor.getByText('USB-C is debug only.', { exact: true })).toBeVisible();
   await expect(libraryDoctor.getByText('Canonical Neat Center is missing.', { exact: true })).toBeVisible();
@@ -84,7 +84,7 @@ test('new-template visual preview is complete, read-only, and write-free', async
   await expect(raw).toBeVisible();
   await expect(raw.locator('xpath=..')).not.toHaveAttribute('open', '');
 
-  await preview.locator('.react-flow__node').dblclick();
+  await preview.dblclick();
   let properties = page.getByRole('dialog', { name: 'Proposed Template Properties' });
   await expect(properties).toBeVisible();
   await expect(properties.getByText('PoE / Ethernet', { exact: true })).toBeVisible();
@@ -99,7 +99,8 @@ test('new-template visual preview is complete, read-only, and write-free', async
   await expect(properties).toBeVisible();
   await properties.getByRole('button', { name: 'Close', exact: true }).click();
   await raw.click();
-  await expect(libraryDoctor.getByText(/"proposedTemplate"/)).toBeVisible();
+  await expect(raw.locator('xpath=..').locator('pre')).toBeVisible();
+  await expect(raw.locator('xpath=..').locator('pre')).toContainText('"proposedTemplate"');
 
   await page.screenshot({ path: path.join(shotDir, 'neat-center-visual-preview.png'), fullPage: true });
   expect(await page.evaluate(() => JSON.stringify(localStorage))).toBe(storageBefore);

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, staging, 'codex/staging-*']
   pull_request:
-    branches: [master]
+    branches: [master, staging]
 
 jobs:
   build:
@@ -14,17 +14,26 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install root dependencies
         run: npm ci
-
-      - name: Install API dependencies
-        run: cd api && npm ci
 
       - name: Lint
         run: npm run lint
 
       - name: Type-check and build
         run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      - name: TateSide API build and tests
+        run: npm run tateside:api:build && node --test 'tateside-api/*.local.test.mjs'
+
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser checks
+        run: npx playwright test

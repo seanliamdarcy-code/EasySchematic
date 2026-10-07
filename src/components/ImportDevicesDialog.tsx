@@ -348,7 +348,6 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
 
   useEffect(() => {
     let cancelled = false;
-    let timeoutId: number | undefined;
 
     if (!useSharedNormalization || !parsedResult) {
       setNormalizedTemplates(null);
@@ -363,7 +362,7 @@ export default function ImportDevicesDialog({ open, onClose, onLibraryChanged }:
     setUnresolvedValues([]);
     setNormalizationPending(true);
     setNormalizationError(null);
-    timeoutId = window.setTimeout(() => {
+    const timeoutId = window.setTimeout(() => {
       void resolveImportNormalizationRequest({
         templates: parsedResult.templates.map((pt) => pt.template),
         draftRules,

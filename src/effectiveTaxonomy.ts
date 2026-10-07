@@ -15,7 +15,7 @@ export interface TaxonomyValue {
   status: EffectiveTaxonomyStatus;
 }
 
-export interface TaxonomyCategory extends TaxonomyValue {}
+export type TaxonomyCategory = TaxonomyValue;
 
 export interface TaxonomyDeviceType extends TaxonomyValue {
   parentValue: string;
@@ -152,12 +152,11 @@ export function categoryOptionsForCurrent(
 
 export function useEffectiveTaxonomy(): EffectiveTaxonomyState {
   const [dynamicTaxonomy, setDynamicTaxonomy] = useState<EffectiveTaxonomy | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     void fetchTaxonomyRegistry()
       .then((response) => {
         if (cancelled) return;

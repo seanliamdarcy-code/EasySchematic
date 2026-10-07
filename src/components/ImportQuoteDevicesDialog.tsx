@@ -60,6 +60,7 @@ const STATUS_CLASSES: Record<LibraryMatchStatus, string> = {
 };
 
 const MAX_PAID_RESEARCH_SELECTION = 5;
+const importRoomLabel = (room: string | null | undefined) => room?.trim() || "Unassigned";
 
 export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChanged }: Props) {
   const addToast = useSchematicStore((s) => s.addToast);
@@ -87,6 +88,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<QuoteImportExtractionResponse | null>(null);
+  const [selectedRoomScope, setSelectedRoomScope] = useState<string | null>(null);
   const [researchResults, setResearchResults] = useState<QuoteImportDraftReview[]>([]);
   const [possibleMatchDecisions, setPossibleMatchDecisions] = useState<Record<string, PossibleMatchDecision>>({});
   const [selectedDraftKeys, setSelectedDraftKeys] = useState<Set<string>>(new Set());
@@ -101,17 +103,32 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     device.importItemId || `${device.normalizedLookupKey || "device"}:${device.model}`
   );
 
-  const bundleGroups = useMemo(() => extraction?.bundleGroups ?? [], [extraction]);
+  const roomOptions = useMemo(
+    () => [...new Set([
+      ...(extraction?.results ?? []).map((item) => importRoomLabel(item.room)),
+      ...(extraction?.bundleGroups ?? []).map((group) => importRoomLabel(group.room)),
+    ])].sort((a, b) => a.localeCompare(b)),
+    [extraction],
+  );
+  const scopedResearchResults = useMemo(
+    () => researchResults.filter((item) => selectedRoomScope === null || importRoomLabel(item.extractedDevice.room) === selectedRoomScope),
+    [researchResults, selectedRoomScope],
+  );
+  const bundleGroups = useMemo(
+    () => (extraction?.bundleGroups ?? []).filter((group) => selectedRoomScope === null || importRoomLabel(group.room) === selectedRoomScope),
+    [extraction, selectedRoomScope],
+  );
   const bundleGroupsById = useMemo(
     () => new Map(bundleGroups.map((group) => [group.id, group])),
     [bundleGroups],
   );
   const activeImportResults = useMemo(
     () => (extraction?.results ?? []).filter((item) => {
+      if (selectedRoomScope !== null && importRoomLabel(item.room) !== selectedRoomScope) return false;
       if (!item.bundleGroupId) return true;
       return bundleGroupsById.get(item.bundleGroupId)?.accepted === true;
     }),
-    [extraction, bundleGroupsById],
+    [extraction, bundleGroupsById, selectedRoomScope],
   );
   const standaloneResults = useMemo(
     () => activeImportResults.filter((item) => !item.bundleGroupId),
@@ -138,6 +155,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setSaving(false);
     setError(null);
     setExtraction(null);
+    setSelectedRoomScope(null);
     setResearchResults([]);
     setPossibleMatchDecisions({});
     setSelectedDraftKeys(new Set());
@@ -202,8 +220,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   );
 
   const readyDrafts = useMemo(
-    () => researchResults.filter((item) => item.reviewStatus === "draft_ready" && item.template && !ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
-    [researchResults, ignoredDraftKeys],
+    () => scopedResearchResults.filter((item) => item.reviewStatus === "draft_ready" && item.template && !ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [scopedResearchResults, ignoredDraftKeys],
   );
 
   const savedDrafts = useMemo(
@@ -225,13 +243,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   );
 
   const manualReviewItems = useMemo(
-    () => researchResults.filter((item) => item.reviewStatus === "manual_review_required" && !ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
-    [researchResults, ignoredDraftKeys],
+    () => scopedResearchResults.filter((item) => item.reviewStatus === "manual_review_required" && !ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [scopedResearchResults, ignoredDraftKeys],
   );
 
   const ignoredDrafts = useMemo(
-    () => researchResults.filter((item) => ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
-    [researchResults, ignoredDraftKeys],
+    () => scopedResearchResults.filter((item) => ignoredDraftKeys.has(keyForExtractedDevice(item.extractedDevice))),
+    [scopedResearchResults, ignoredDraftKeys],
   );
 
   const unresolvedOutcomeItems = useMemo(() => {
@@ -289,6 +307,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     try {
       const response = await importDevicesFromQuote(selectedFile);
       setExtraction(response);
+      setSelectedRoomScope(null);
       setImportSourceLabel(selectedFile.name);
       setResearchResults([]);
       setPossibleMatchDecisions({});
@@ -373,6 +392,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     try {
       const response = await importDevicesFromJetbuiltProject(project.id);
       setExtraction(response);
+      setSelectedRoomScope(null);
       setImportSourceLabel(project.customId ? `${project.customId} ${project.name}` : project.name);
       setResearchResults([]);
       setPossibleMatchDecisions({});
@@ -740,7 +760,8 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
     setError(null);
     try {
       const templatesById = await ensureLibraryTemplatesLoaded();
-      const schematicName = importSourceLabel ?? extraction.fileName;
+      const sourceName = importSourceLabel ?? extraction.fileName;
+      const schematicName = selectedRoomScope === null ? sourceName : `${sourceName} - ${selectedRoomScope}`;
       const schematicItems: QuoteImportResultItem[] = [];
       for (const item of activeImportResults) {
         const key = keyForExtractedDevice(item);
@@ -820,10 +841,29 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {extraction && roomOptions.length > 1 && (
+              <label className="flex items-center gap-2 text-xs">
+                Room scope
+                <select
+                  aria-label="Room scope"
+                  value={selectedRoomScope ?? ""}
+                  onChange={(event) => {
+                    setSelectedRoomScope(event.target.value || null);
+                    setSelectedResearchKeys(new Set());
+                    setSelectedDraftKeys(new Set());
+                  }}
+                  disabled={researching || saving}
+                  className="rounded border px-2 py-1 bg-[var(--color-surface)] border-[var(--color-border)]"
+                >
+                  <option value="">All rooms</option>
+                  {roomOptions.map((room) => <option key={room} value={room}>{room}</option>)}
+                </select>
+              </label>
+            )}
             {showOutcomeReview ? (
               <OutcomeReviewPanel
-                importSourceLabel={importSourceLabel}
-                extractedCount={extraction?.extractedCount ?? 0}
+                importSourceLabel={selectedRoomScope === null ? importSourceLabel : `${importSourceLabel ?? "Imported devices"} - ${selectedRoomScope}`}
+                extractedCount={selectedRoomScope === null ? extraction?.extractedCount ?? 0 : activeImportResults.length}
                 alreadyInLibraryItems={alreadyInLibraryItems}
                 savedDrafts={savedDrafts}
                 locallyAddedDrafts={locallyAddedDrafts}
@@ -1037,7 +1077,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
             {extraction && (
               <>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                  <SummaryCard label="Extracted devices" value={String(extraction.extractedCount)} tone="default" />
+                  <SummaryCard label="Extracted devices" value={String(selectedRoomScope === null ? extraction.extractedCount : activeImportResults.length)} tone="default" />
                   <SummaryCard label="Already in library" value={String(alreadyInLibraryItems.length)} tone="success" />
                   <SummaryCard label="Possible matches" value={String(activeImportResults.filter((item) => item.status === "possible_match").length)} tone="warning" />
                   <SummaryCard label="Missing devices" value={String(unresolvedMissingDevices.length)} tone="danger" />

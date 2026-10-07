@@ -26,6 +26,7 @@ export default function SignalColorPanel({ mobile, onClose }: { mobile?: boolean
       return; // skip initial mount — local state is already correct
     }
     const merged = { ...DEFAULT_SIGNAL_COLORS, ...(storeColorsKey ? JSON.parse(storeColorsKey) : {}) };
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Loading another schematic must replace the editable colour state.
     setColors(merged);
   }, [storeColorsKey]);
 

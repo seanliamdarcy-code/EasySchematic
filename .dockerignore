@@ -1,5 +1,18 @@
 **/node_modules
 dist
+dist-tateside-api
+.git
+.tateside-data
+.tateside-test-data
+test-results
+playwright-report
+tmp
+artifacts
+CODEX_*
+.codex
+tmp-*.mjs
+run-*.mjs
+**/*.local.*
 .wrangler
 
 # Sub-projects not needed for frontend build
@@ -11,6 +24,7 @@ api/backup-*.sql
 
 # Secrets and local config
 .env*
+**/.env*
 .dev.vars
 
 # Dev artifacts

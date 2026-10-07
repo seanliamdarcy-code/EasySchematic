@@ -72,7 +72,7 @@ describe("Jetbuilt bundle expansion", () => {
       product_id: 1,
     }]);
 
-    expect(devices.map((device) => device.model)).toEqual(["A50", "CTP25"]);
+    expect(devices.map((device) => device.model)).toEqual(["CTP25", "MeetingBar A50"]);
     expect(devices.every((device) => device.sourceKind === "bundle_component")).toBe(true);
     expect(devices.every((device) => device.commercialSku === "A50-031")).toBe(true);
     expect(devices.every((device) => device.room === "Meeting Room 1" && device.system === "AV")).toBe(true);
@@ -88,7 +88,7 @@ describe("Jetbuilt bundle expansion", () => {
       product_id: 1,
     }]);
 
-    expect(devices.map((device) => device.model)).toEqual(["A40", "CTP25"]);
+    expect(devices.map((device) => device.model)).toEqual(["CTP25", "MeetingBar A40"]);
     expect(devices.every((device) => device.sourceKind === "bundle_component")).toBe(true);
     expect(devices.every((device) => device.commercialSku === "A40-031")).toBe(true);
   });
@@ -113,10 +113,10 @@ describe("Jetbuilt bundle expansion", () => {
     ]);
 
     expect(devices.map((device) => device.model)).toEqual([
-      "Neat Bar 2",
+      "Neat Bar Generation 2",
       "Neat Bar Pro",
-      "Neat Pad",
-      "Neat Pad",
+      "NEATPAD-SE",
+      "NEATPAD-SE",
     ]);
     expect(devices.every((device) => device.sourceKind === "bundle_component")).toBe(true);
   });

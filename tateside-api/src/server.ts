@@ -1,6 +1,7 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { URL } from "node:url";
+import { readFileSync } from "node:fs";
 import { getConfig } from "./config.js";
 import { openDatabase, runMigrations } from "./db.js";
 import { bulkDeleteTemplates, bulkEditTemplates, deleteTemplate, listCurrentTemplates, saveTemplates, updateTemplate } from "./deviceStore.js";
@@ -270,6 +271,11 @@ function requireIdentity(ctx: RequestContext, requireAccessIdentity: boolean): s
   return email;
 }
 
+const apiBuild = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL("../../build-info.json", import.meta.url), "utf8")) as unknown;
+  } catch { return null; }
+})();
 const config = getConfig();
 const db = openDatabase(config.dbPath);
 runMigrations(db);
@@ -390,7 +396,7 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
   const path = ctx.url.pathname;
 
   if (ctx.req.method === "GET" && path === "/health") {
-    sendJson(ctx.res, 200, { ok: true, service: "tateside-api" }, corsHeaders);
+    sendJson(ctx.res, 200, { ok: true, service: "tateside-api", build: apiBuild }, corsHeaders);
     return;
   }
 
