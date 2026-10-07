@@ -42,6 +42,7 @@ export default defineConfig({
           TATESIDE_DISABLE_SHAREPOINT: '1',
           TATESIDE_REQUIRE_ACCESS_IDENTITY: '0',
           TATESIDE_DYNAMIC_TAXONOMY_ENABLED: '1',
+          TATESIDE_LIBRARY_DOCTOR_ENABLED: '1',
         },
         url: 'http://127.0.0.1:8797/health',
         reuseExistingServer: false,

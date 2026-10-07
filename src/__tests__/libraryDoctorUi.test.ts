@@ -226,7 +226,7 @@ describe("libraryDoctorUi helpers", () => {
     expect(source).not.toMatch(/handleApply/);
     expect(source).not.toMatch(/Fix library|Update templates|Correct library|Bulk apply|Auto-fix/i);
     expect(source).toMatch(/does not change the device template/i);
-    expect(source).toMatch(/No Apply control is available by design/);
+    expect(source).toMatch(/Approved new devices can then be published explicitly/);
     expect(source).toMatch(/Add selected to review queue/);
     expect(source).toMatch(/Safe alias candidates preset/);
     expect(source).toMatch(/highRisk skip events/);

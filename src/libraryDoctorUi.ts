@@ -61,7 +61,7 @@ export function libraryDoctorReviewActionLabel(action: LibraryDoctorReviewAction
   }
 }
 
-/** Safety: UI must never expose an apply/write-template action. */
+/** Existing-device correction proposals still have no automatic apply action. */
 export function libraryDoctorUiHasApplyAction(): false {
   return false;
 }

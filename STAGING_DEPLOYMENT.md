@@ -33,6 +33,8 @@ npm test
 npm run tateside:api:build
 node --test 'tateside-api/*.local.test.mjs'
 npm run build
+npm ci --prefix mcp-server
+npm test --prefix mcp-server
 npx playwright install chromium
 npx playwright test
 npm audit --omit=dev

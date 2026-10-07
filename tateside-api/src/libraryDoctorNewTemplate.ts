@@ -124,7 +124,7 @@ function validatePorts(value: unknown, issues: string[]): Port[] {
   });
 }
 
-function validateTemplate(db: DatabaseSync, value: unknown) {
+export function validateTemplate(db: DatabaseSync, value: unknown) {
   const issues: string[] = [];
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { proposedTemplate: null, issues: ["proposedTemplate must be an object"], taxonomyValidation: [] };

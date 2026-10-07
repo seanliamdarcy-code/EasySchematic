@@ -292,6 +292,15 @@ interface SchematicState {
   edges: ConnectionEdge[];
   schematicName: string;
   isHydrated: boolean;
+  // Session-only pairing credentials: never included in schematic saves.
+  mcpBridgeEnabled: boolean;
+  mcpBridgeToken: string;
+  mcpBridgePort: number;
+  mcpBridgeStatus: "off" | "connecting" | "connected" | "error";
+  mcpBridgeStatusDetail?: string;
+  moveDevice: (nodeId: string, position: { x: number; y: number }) => void;
+  placeDeviceInRoom: (nodeId: string, roomId: string, position: { x: number; y: number }) => boolean;
+  deleteConnection: (connectionId: string) => { removedStubLinks: number };
   /** Bumped when a new schematic is wholesale-loaded (import, share link, demo, autosave hydrate). Canvas refits its viewport when this changes. */
   loadSeq: number;
   editingNodeId: string | null;
@@ -350,7 +359,7 @@ interface SchematicState {
   setEditingNodeId: (id: string | null) => void;
   setCreatingNodeId: (id: string | null) => void;
   createAndEditDevice: (template: DeviceTemplate, position: { x: number; y: number }) => void;
-  addRoom: (label: string, position: { x: number; y: number }) => void;
+  addRoom: (label: string, position: { x: number; y: number }, size?: { width: number; height: number }) => void;
   addExternalEndpoint: (position: { x: number; y: number }) => void;
   addDrawBox: (position: { x: number; y: number }) => void;
   updateRoomLabel: (nodeId: string, label: string) => void;
@@ -1383,6 +1392,10 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   edges: [],
   schematicName: "Untitled Schematic",
   isHydrated: false,
+  mcpBridgeEnabled: false,
+  mcpBridgeToken: "",
+  mcpBridgePort: 8765,
+  mcpBridgeStatus: "off",
   loadSeq: 0,
   editingNodeId: null,
   creatingNodeId: null,
@@ -3004,7 +3017,46 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     set({ editingNodeId: newNodeId, creatingNodeId: newNodeId });
   },
 
-  addRoom: (label, position) => {
+  moveDevice: (nodeId, position) => {
+    const state = get();
+    const node = state.nodes.find((n) => n.id === nodeId && n.type === "device");
+    if (!node) return;
+    pushUndo({ nodes: state.nodes, edges: state.edges });
+    set({ nodes: state.nodes.map((n) => n.id === nodeId ? { ...n, parentId: undefined, position } : n) });
+    get().reparentNode(nodeId, position, { skipUndo: true });
+    get().saveToLocalStorage();
+  },
+
+  placeDeviceInRoom: (nodeId, roomId, position) => {
+    const state = get();
+    const map = new Map(state.nodes.map((node) => [node.id, node]));
+    const room = map.get(roomId);
+    const device = map.get(nodeId);
+    if (room?.type !== "room" || device?.type !== "device") return false;
+    const roomAbs = getAbsolutePosition(roomId, map);
+    const absolute = { x: roomAbs.x + position.x, y: roomAbs.y + position.y };
+    const winner = findBestEnclosingRoom(nodeId, false, absolute.x + fallbackNodeWidth(device) / 2,
+      absolute.y + fallbackNodeHeight(device) / 2, state.nodes, map);
+    if (winner?.id !== roomId) return false;
+    get().moveDevice(nodeId, absolute);
+    return get().nodes.find((node) => node.id === nodeId)?.parentId === roomId;
+  },
+
+  deleteConnection: (connectionId) => {
+    const state = get();
+    const selectedNodes = new Set(state.nodes.filter((node) => node.selected).map((node) => node.id));
+    const selectedEdges = new Set(state.edges.filter((edge) => edge.selected).map((edge) => edge.id));
+    set({ nodes: state.nodes.map((node) => ({ ...node, selected: false })),
+      edges: state.edges.map((edge) => ({ ...edge, selected: edge.id === connectionId })) });
+    const before = get().edges.length;
+    get().removeSelected();
+    const removedStubLinks = Math.max(0, before - get().edges.length - 1);
+    set({ nodes: get().nodes.map((node) => ({ ...node, selected: selectedNodes.has(node.id) })),
+      edges: get().edges.map((edge) => ({ ...edge, selected: selectedEdges.has(edge.id) })) });
+    return { removedStubLinks };
+  },
+
+  addRoom: (label, position, size) => {
     const state = get();
     pushUndo({ nodes: state.nodes, edges: state.edges });
     const newRoom: SchematicNode = {
@@ -3012,7 +3064,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
       type: "room",
       position,
       data: { label },
-      style: { width: 400, height: 300 },
+      style: size ?? { width: 400, height: 300 },
       selected: true,
       zIndex: -1,
     };

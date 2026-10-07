@@ -6,6 +6,7 @@ import {
   listLibraryDoctorProposals,
   previewLibraryDoctorGeneration,
   reviewLibraryDoctorProposal,
+  publishLibraryDoctorNewTemplate,
   type LibraryDoctorEnqueueResult,
   type LibraryDoctorProposal,
   type LibraryDoctorProposalCandidate,
@@ -21,10 +22,10 @@ import {
   hasMeaningfulLibraryDoctorGenerationScope,
   libraryDoctorReviewActionLabel,
   libraryDoctorStatusLabel,
-  libraryDoctorUiHasApplyAction,
   parseCommaSeparatedList,
   summarizeProposalIdentity,
 } from "../libraryDoctorUi";
+import { refreshTemplates } from "../templateApi";
 import NewTemplateProposalDetail from "./NewTemplateProposalDetail";
 
 type TabId = "candidates" | "queue";
@@ -134,8 +135,8 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
     return counts;
   }, [proposals]);
 
-  // Safety: this UI never exposes apply.
-  void libraryDoctorUiHasApplyAction();
+  // Existing-device proposals remain review-only; accepted new devices have explicit publication.
+
 
   const loadQueue = useCallback(async () => {
     setQueueLoading(true);
@@ -369,6 +370,23 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
     }
   };
 
+  const handlePublish = async () => {
+    if (!selectedProposal || anyBusy) return;
+    if (!window.confirm("Publish this approved device to the shared library? It will become available to everyone using this environment.")) return;
+    setReviewLoading(true);
+    setError(null);
+    try {
+      const result = await publishLibraryDoctorNewTemplate(selectedProposal.id);
+      await refreshTemplates();
+      setHistory(await getLibraryDoctorProposalHistory(selectedProposal.id));
+      const message = `${result.template.label} published to the shared library.`;
+      setInfo(message);
+      addToast(message, "success");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally { setReviewLoading(false); }
+  };
+
   const toggleKey = (key: string) => {
     setSelectedKeys((prev) => {
       const next = new Set(prev);
@@ -439,7 +457,7 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
         </div>
 
         <div className="mx-4 mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-950">
-          <strong>Safety:</strong> There is no Apply action. Accepting approves a proposal in the
+          <strong>Safety:</strong> Acceptance records review only. Approved new devices have a separate Publish control. Existing-device corrections remain in the
           review queue only. High-risk mappings (for example euroblock) are not auto-generated.
           Candidate preview requires a scope — the UI does not run an uncontrolled whole-library scan
           by default.
@@ -738,6 +756,7 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                   <label className="flex flex-col gap-1">
                     <span className="text-[var(--color-text-muted)]">Status</span>
                     <select
+                      aria-label="Status"
                       value={filterStatus}
                       onChange={(e) => setFilterStatus(e.target.value)}
                       className="border border-[var(--color-border)] rounded px-2 py-1.5"
@@ -1039,6 +1058,7 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                               {event.oldStatus ?? "∅"} → {event.newStatus}
                               {event.reviewer ? ` · ${event.reviewer}` : ""}
                               {event.reviewNote ? ` · ${event.reviewNote}` : ""}
+                              {event.details.action === "published" ? ` · Published device ${event.details.templateId}` : ""}
                             </li>
                           ))}
                         </ul>
@@ -1056,6 +1076,14 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                       </details>
                     )}
 
+                    {selectedProposal.proposalType === "new-template" && selectedProposal.status === "accepted" && (
+                      <div className="border-t border-[var(--color-border)] pt-3">
+                        {history.some((event) => event.details.action === "published")
+                          ? <p>Published to the shared library.</p>
+                          : <button type="button" className={btnPrimary} disabled={anyBusy || historyLoading}
+                              onClick={() => void handlePublish()}>Publish approved device</button>}
+                      </div>
+                    )}
                     {reviewActions.length > 0 && (
                       <div className="border-t border-[var(--color-border)] pt-3 space-y-2">
                         <label className="flex flex-col gap-1">
@@ -1088,7 +1116,7 @@ export default function LibraryDoctorDialog({ onClose }: { onClose: () => void }
                           ))}
                         </div>
                         <div className="text-[10px] text-[var(--color-text-muted)]">
-                          No Apply control is available by design. Accept ≠ apply.
+                          Accept records review only. Approved new devices can then be published explicitly.
                         </div>
                       </div>
                     )}

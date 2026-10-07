@@ -30,6 +30,7 @@ import ShowInfoPanel from "./components/ShowInfoPanel";
 import ViewOptionsPanel from "./components/ViewOptionsPanel";
 import MenuBar from "./components/MenuBar";
 import TateSideAutoSync from "./components/TateSideAutoSync";
+import { useMcpBridge } from "./mcpBridge";
 import EdgeContextMenu from "./components/EdgeContextMenu";
 import IncompatibleConnectionDialog from "./components/IncompatibleConnectionDialog";
 import ParallelOutputConnectionDialog from "./components/ParallelOutputConnectionDialog";
@@ -2200,6 +2201,7 @@ function DemoBanner() {
 }
 
 export default function App() {
+  useMcpBridge();
   const printView = useSchematicStore((s) => s.printView);
   const activePage = useSchematicStore((s) => s.activePage);
   const activePgType = useSchematicStore((s) => {

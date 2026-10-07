@@ -1,4 +1,5 @@
 import { useState } from "react";
+import McpConnectionSettings from "./McpConnectionSettings";
 import { useSchematicStore } from "../store";
 import { DEFAULT_SCROLL_CONFIG, DEFAULT_STUB_LABEL_SHOW_PORT, DEFAULT_STUB_LABEL_PAGE_MODE } from "../types";
 import type { LabelCaseMode, PanMode, ScrollAction, ScrollConfig, StubLabelPageMode } from "../types";
@@ -78,11 +79,12 @@ function SensitivityRow({
   );
 }
 
-type PrefTab = "canvas" | "display";
+type PrefTab = "canvas" | "display" | "ai";
 
 const TAB_LABELS: Record<PrefTab, string> = {
   canvas: "Canvas",
   display: "Display",
+  ai: "AI (Beta)",
 };
 
 export default function PreferencesDialog({ onClose }: { onClose: () => void }) {
@@ -492,8 +494,8 @@ export default function PreferencesDialog({ onClose }: { onClose: () => void }) 
               </div>
             </>
           )}
+          {activeTab === "ai" && <McpConnectionSettings />}
         </div>
-
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-[var(--color-border)] shrink-0">
           {!isDefault ? (

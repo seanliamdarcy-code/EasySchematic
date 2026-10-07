@@ -10,3 +10,5 @@ Read `STAGING_DEPLOYMENT.md` before VPS, deployment, or data-promotion work.
 - Code deployment does not promote device-library data. Preserve production schematics, history, and production-only devices when preparing a reviewed data merge.
 - Use Node 24, `npm ci`, `npm run lint`, `npm test`, `npm run tateside:api:build`, `node --test 'tateside-api/*.local.test.mjs'`, `npm run build`, and `npx playwright test` for release validation.
 - Browser tests use isolated local data and mocked external responses. Never run fixture-based write tests against live staging/production databases.
+
+- Live schematic MCP runs locally (`mcp-server`), paired to the test editor. Build/test it with `npm ci --prefix mcp-server` and `npm test --prefix mcp-server`. Codex uses 8765 and Claude 8766 on Sean's laptop. See `mcp-server/README.md` for pairing and missing-device review/publication. Never log pairing tokens.

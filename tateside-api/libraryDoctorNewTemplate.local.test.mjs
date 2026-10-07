@@ -292,3 +292,39 @@ test("Epson-style complete payload failure is preserved and never stripped to fo
   assert.equal(independent.proposal.evidenceRefs.length, 1);
   assert.equal(listLibraryDoctorProposals(db).length, 1);
 }));
+
+const { publishApprovedNewTemplate } = await import("../dist-tateside-api/tateside-api/src/libraryDoctorPublish.js");
+test("publication requires approval, is audited and is idempotent", () => withDb((db) => {
+  const result = createLibraryDoctorNewTemplateProposal(db, neat());
+  const id = result.proposalId;
+  assert.throws(() => publishApprovedNewTemplate(db, id, "reviewer@example.test"), /accepted/);
+  reviewLibraryDoctorProposal(db, id, {status: "accepted", reviewedBy: "reviewer@example.test"});
+  assert.equal(listCurrentTemplates(db).length, 0);
+  const first = publishApprovedNewTemplate(db, id, "reviewer@example.test");
+  assert.equal(first.alreadyPublished, false);
+  assert.equal(first.template.reviewStatus, "human-reviewed");
+  assert.deepEqual(first.template.identityAliases, neat().identityAliases);
+  assert.equal(JSON.stringify(first.template.evidenceRefs), JSON.stringify(result.proposal.evidenceRefs));
+  const second = publishApprovedNewTemplate(db, id, "reviewer@example.test");
+  assert.equal(second.alreadyPublished, true);
+  assert.equal(first.template.id, second.template.id);
+  assert.equal(listCurrentTemplates(db).length, 1);
+  const history = listLibraryDoctorProposalHistory(db, id).filter(event => event.details.action === "published");
+  assert.equal(history.length, 1);
+  assert.equal(history[0].reviewer, "reviewer@example.test");
+  assert.equal(history[0].details.templateId, first.template.id);
+}));
+test("publication rejects an identity that appeared after approval", () => withDb((db) => {
+  const result = createLibraryDoctorNewTemplateProposal(db, neat());
+  reviewLibraryDoctorProposal(db, result.proposalId, {status: "accepted"});
+  saveTemplates(db, {templates: [neat().proposedTemplate]});
+  assert.throws(() => publishApprovedNewTemplate(db, result.proposalId, "reviewer@example.test"), /matching device/);
+  assert.equal(listCurrentTemplates(db).length, 1);
+}));
+test("publication audit failure rolls back the library write", () => withDb((db) => {
+  db.exec("CREATE TRIGGER publication_failure BEFORE INSERT ON library_doctor_proposal_events WHEN json_extract(NEW.details_json, '$.action') = 'published' BEGIN SELECT RAISE(ABORT, 'fixture audit failure'); END;");
+  const result = createLibraryDoctorNewTemplateProposal(db, neat());
+  reviewLibraryDoctorProposal(db, result.proposalId, {status: "accepted"});
+  assert.throws(() => publishApprovedNewTemplate(db, result.proposalId, "reviewer@example.test"), /fixture audit failure/);
+  assert.equal(listCurrentTemplates(db).length, 0);
+}));

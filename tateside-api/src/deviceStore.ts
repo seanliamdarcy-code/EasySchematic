@@ -8,6 +8,8 @@ export interface SaveTemplatesInput {
   note?: string;
   source?: string;
   actorEmail?: string | null;
+  // Internal-only publication audit, committed atomically with the template.
+  publicationProposalId?: string;
 }
 
 export interface UpdateTemplateInput {
@@ -486,6 +488,13 @@ export function saveTemplates(db: DatabaseSync, input: SaveTemplatesInput): Devi
         source: input.source,
         actorEmail: input.actorEmail,
       }));
+    }
+    if (input.publicationProposalId) {
+      db.prepare(`INSERT INTO library_doctor_proposal_events
+        (id, proposal_id, old_status, new_status, reviewer, event_type, details_json, created_at)
+        VALUES (?, ?, 'accepted', 'accepted', ?, 'reviewed', ?, ?)`)
+        .run(randomUUID(), input.publicationProposalId, input.actorEmail ?? null,
+          JSON.stringify({ action: "published", templateId: saved[0].id }), new Date().toISOString());
     }
     db.exec("COMMIT");
   } catch (err) {

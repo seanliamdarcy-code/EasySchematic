@@ -26,6 +26,7 @@ import {
   reviewLibraryDoctorProposal,
   supersedeLibraryDoctorProposal,
 } from "./libraryDoctorStore.js";
+import { publishApprovedNewTemplate } from "./libraryDoctorPublish.js";
 import { createLibraryDoctorNewTemplateProposal } from "./libraryDoctorNewTemplate.js";
 import { listProjectGapCandidateResults, listProjectGapProposalIdentities } from "./jetbuiltProjectLibraryGap.js";
 import { getTaxonomyVocabularies, inspectTemplateTaxonomy, listTaxonomyAliases, previewTemplateTaxonomy } from "./taxonomy.js";
@@ -604,6 +605,26 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
       return;
     }
 
+    if (ctx.req.method === "POST" && path === "/api/tateside/library-doctor/proposals/editor-new-template") {
+      const actor = requireIdentity(ctx, true);
+      if (!actor) return;
+      const body = await readJsonObject(ctx.req);
+      const result = createLibraryDoctorNewTemplateProposal(db, {
+        proposedTemplate: body.proposedTemplate, identityAliases: body.identityAliases,
+        evidenceRefs: body.evidenceRefs, rationale: body.rationale,
+        classificationConfidence: body.classificationConfidence, qualityGates: body.qualityGates,
+        operationalNotes: body.operationalNotes, createdBy: actor,
+      });
+      sendJson(ctx.res, result.success ? 201 : 400, result, corsHeaders);
+      return;
+    }
+    const publishMatch = path.match(/^\/api\/tateside\/library-doctor\/proposals\/([^/]+)\/publish$/);
+    if (ctx.req.method === "POST" && publishMatch) {
+      const actor = requireIdentity(ctx, true);
+      if (!actor) return;
+      sendJson(ctx.res, 200, publishApprovedNewTemplate(db, decodeURIComponent(publishMatch[1]), actor), corsHeaders);
+      return;
+    }
     const email = requireIdentity(ctx, config.requireAccessIdentity);
     if (email === undefined) return;
 

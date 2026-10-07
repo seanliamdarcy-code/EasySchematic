@@ -32,6 +32,9 @@ jobs:
       - name: TateSide API build and tests
         run: npm run tateside:api:build && node --test 'tateside-api/*.local.test.mjs'
 
+      - name: MCP bridge build and tests
+        run: npm ci --prefix mcp-server && npm test --prefix mcp-server
+
       - name: Install browser
         run: npx playwright install --with-deps chromium
 

@@ -514,7 +514,7 @@ export async function researchQuoteDevices(
   throw new TatesideApiError(jobResponse.error || "Missing-device research failed", 500);
 }
 
-// ─── Library Doctor review queue (read/review only — no apply path) ───────────
+// â”€â”€â”€ Library Doctor review queue (read/review only â€” no apply path) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type LibraryDoctorProposalStatus =
   | "pending"
@@ -731,4 +731,11 @@ export async function getLibraryDoctorProposalHistory(
     `/library-doctor/proposals/${encodeURIComponent(proposalId)}/history`,
   );
   return response.history;
+}
+
+export async function proposeMissingDevice(input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return requestJson("/library-doctor/proposals/editor-new-template", { method: "POST", body: input });
+}
+export async function publishLibraryDoctorNewTemplate(proposalId: string): Promise<{template: DeviceTemplate; alreadyPublished: boolean}> {
+  return requestJson(`/library-doctor/proposals/${encodeURIComponent(proposalId)}/publish`, { method: "POST", body: {} });
 }
