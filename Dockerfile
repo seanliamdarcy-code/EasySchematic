@@ -1,11 +1,11 @@
 # Build stage
 FROM node:24-bookworm AS builder
 WORKDIR /app
-ARG VITE_BUILD_HASH
-ENV VITE_BUILD_HASH=$VITE_BUILD_HASH
 COPY package.json package-lock.json ./
 RUN npm ci --legacy-peer-deps
 COPY . .
+ARG VITE_BUILD_HASH
+ENV VITE_BUILD_HASH=$VITE_BUILD_HASH
 RUN npm run build
 
 # Production stage

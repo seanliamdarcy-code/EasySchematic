@@ -36,4 +36,5 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Browser checks
+        timeout-minutes: 5
         run: npx playwright test

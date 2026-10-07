@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 /**
  * Live browser tests for EasySchematic.
- * Starts Vite automatically unless PLAYWRIGHT_BASE_URL is set (reuse an existing server).
+ * Starts isolated API and Vite servers unless PLAYWRIGHT_BASE_URL is set.
  */
 export default defineConfig({
   testDir: './e2e',
@@ -16,7 +16,7 @@ export default defineConfig({
     timeout: 10_000,
   },
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -31,8 +31,8 @@ export default defineConfig({
   ],
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
-    : {
-        command: 'npm run dev:full',
+    : [{
+        command: 'npm run tateside:api',
         env: {
           TATESIDE_API_HOST: '127.0.0.1',
           TATESIDE_API_PORT: '8797',
@@ -43,8 +43,17 @@ export default defineConfig({
           TATESIDE_REQUIRE_ACCESS_IDENTITY: '0',
           TATESIDE_DYNAMIC_TAXONOMY_ENABLED: '1',
         },
-        url: 'http://localhost:5173',
+        url: 'http://127.0.0.1:8797/health',
         reuseExistingServer: false,
         timeout: 120_000,
-      },
+      }, {
+        command: 'npm run dev -- --host 127.0.0.1 --port 5173 --strictPort',
+        env: {
+          EASYSCHEMATIC_FULL_STACK_DEV: '1',
+          TATESIDE_DEV_API_TARGET: 'http://127.0.0.1:8797',
+        },
+        url: 'http://127.0.0.1:5173',
+        reuseExistingServer: false,
+        timeout: 120_000,
+      }],
 });
