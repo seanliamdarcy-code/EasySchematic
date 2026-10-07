@@ -14,7 +14,7 @@ test('MCP builds from an empty canvas and requires human publication for missing
   };
   try {
     await client.connect(transport);
-    expect((await client.listTools()).tools).toHaveLength(30);
+    expect((await client.listTools()).tools).toHaveLength(31);
     await page.setExtraHTTPHeaders({'CF-Access-Authenticated-User-Email': 'mcp-fixture@example.test'});
     await page.goto('/');
     await page.waitForLoadState('networkidle');
@@ -109,4 +109,52 @@ test('HTTPS test editor can pair with the laptop localhost bridge', async ({page
     const result=await client.callTool({name:'get_schematic',arguments:{}});
     expect(result.isError).not.toBe(true);
   } finally { await client.close(); }
+});
+
+test('missing devices are local, immediately usable, portable and never published', async ({page}) => {
+  const client = new Client({name:'local-device-test',version:'1.0'});
+  const transport = new StdioClientTransport({command:process.execPath,args:[path.resolve('mcp-server/dist/index.js')],
+    env:{...process.env as Record<string,string>,EASYSCHEMATIC_MCP_PORT:'18767',EASYSCHEMATIC_MCP_TOKEN:'local-device-fixture'},stderr:'pipe'});
+  const call = async (name:string,args:Record<string,unknown>={}) => {
+    const result=await client.callTool({name,arguments:args});
+    if(result.isError) throw new Error(JSON.stringify(result.content));
+    return JSON.parse((result.content as Array<{text:string}>)[0].text);
+  };
+  const canonicalWrites:string[]=[];
+  page.on('request',request=>{if(request.method()!=='GET' && /\/api\/tateside\/(devices|library-doctor)\//.test(request.url())) canonicalWrites.push(request.url());});
+  try {
+    await client.connect(transport);
+    await page.goto('/'); await page.waitForLoadState('networkidle');
+    await page.evaluate(async()=>{const {useSchematicStore}=await import('/src/store.ts');useSchematicStore.setState({nodes:[],edges:[],customTemplates:[]});});
+    await page.getByRole('button',{name:'File',exact:true}).click();
+    await page.getByRole('button',{name:'Preferences...'}).click();
+    await page.getByRole('button',{name:'AI (Beta)',exact:true}).click();
+    await page.getByLabel('MCP pairing token').fill('local-device-fixture');
+    await page.getByLabel('MCP server port').fill('18767');
+    await page.getByLabel('Let my AI assistant read and edit this schematic').check();
+    await expect(page.getByRole('status')).toContainText('Connection: connected');
+    await page.getByRole('button',{name:'Close',exact:true}).click();
+    const model=`Local Fixture ${Date.now()}`;
+    const template={manufacturer:'Local Fixture',modelNumber:model,label:model,shortName:'Camera',category:'Sources',deviceType:'camera',
+      ports:[{id:'hdmi',label:'HDMI OUT',connectorType:'hdmi',signalType:'hdmi',direction:'output'}],
+      evidenceRefs:[{type:'official-product-page',url:'https://example.test/local-fixture'}],classificationConfidence:'medium'};
+    const invalid={...template,ports:[{...template.ports[0],signalType:'invented-signal'}]};
+    await expect(call('create_local_device',{template:invalid})).rejects.toThrow(/Invalid signal/);
+    expect((await call('get_schematic')).deviceCount).toBe(0);
+    const result=await call('create_local_device',{template,x:120,y:80});
+    expect(result).toMatchObject({scope:'local',reused:false,published:false,position:{x:120,y:80}});
+    expect(result.templateId).toMatch(/^local-ai-/);
+    expect((await call('get_device',{nodeId:result.nodeId})).ports[0].label).toBe('HDMI OUT');
+    expect((await call('search_templates',{query:model}))[0].templateId).toBe(result.templateId);
+    const duplicate=await call('create_local_device',{template,placeOnCanvas:false});
+    expect(duplicate).toMatchObject({templateId:result.templateId,reused:true,scope:'local'});
+    expect((await call('get_schematic')).deviceCount).toBe(1);
+    const exported=await page.evaluate(async()=>{const {useSchematicStore}=await import('/src/store.ts');return useSchematicStore.getState().exportToJSON();});
+    expect(exported.customTemplates).toHaveLength(1);
+    expect(exported.customTemplates?.[0]).toMatchObject({id:result.templateId,reviewStatus:'ai-researched',classificationConfidence:'medium',evidenceRefs:template.evidenceRefs});
+    await page.reload(); await expect(page.locator('.react-flow')).toBeVisible();
+    const local=await page.evaluate(async()=>{const {useSchematicStore}=await import('/src/store.ts');return useSchematicStore.getState().customTemplates;});
+    expect(local).toHaveLength(1); expect(local[0].id).toBe(result.templateId);
+    expect(canonicalWrites).toEqual([]);
+  } finally {await client.close();}
 });

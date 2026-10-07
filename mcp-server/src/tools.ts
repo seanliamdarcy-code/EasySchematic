@@ -22,21 +22,32 @@ export interface ToolDef {
 
 const noArgs = { type: "object", properties: {}, additionalProperties: false };
 
+const templateSchema = { type: "object", required: ["manufacturer", "modelNumber", "label", "shortName", "category", "deviceType", "ports"], additionalProperties: false,
+        properties: { manufacturer: {type: "string"}, modelNumber: {type: "string"}, label: {type: "string"}, shortName: {type: "string"}, category: {type: "string"}, deviceType: {type: "string"},
+          roleTags: {type: "array", items: {type: "string"}}, deviceCapabilities: {type: "array", items: {type: "string"}}, protocols: {type: "array", items: {type: "string"}},
+          heightMm: {type: "number"}, widthMm: {type: "number"}, depthMm: {type: "number"}, weightKg: {type: "number"}, rackForm: {enum: ["full", "half", "shelf-only"]},
+          searchTerms: {type: "array", items: {type: "string"}}, referenceUrl: {type: "string"},
+          ports: {type: "array", maxItems: 500, items: {type: "object", required: ["id", "label", "connectorType", "signalType", "direction"],
+            properties: {id: {type: "string"}, label: {type: "string"}, section: {type: "string"}, connectorType: {type: "string"}, signalType: {type: "string"}, direction: {enum: ["input", "output", "bidirectional", "passthrough"]}}} } } };
+
 export const TOOLS: ToolDef[] = [
-  { name: "get_library_taxonomy", description: "Read active device taxonomy before proposing a missing device. Use exact values returned.", inputSchema: noArgs },
+  { name: "create_local_device", description: "Default for a missing device: research official specifications, then create a LOCAL custom device and place it immediately, without Library Doctor approval. Search existing templates first; exact matches are reused. Never invent ports or specifications. Saved in this browser and included with schematic saves/exports; never published to the shared library. Read get_device afterward for actual port ids. Set placeOnCanvas=false to save only the template.", inputSchema: {
+    type: "object", additionalProperties: false, required: ["template"], properties: {
+      template: { ...templateSchema, properties: { ...templateSchema.properties,
+        classificationConfidence: {enum: ["high", "medium", "low"]},
+        evidenceRefs: {type: "array", items: {type: "object", properties: {type: {type: "string"}, url: {type: "string"}, title: {type: "string"}, excerpt: {type: "string"}, note: {type: "string"}}}},
+        identityAliases: {type: "array", items: {type: "string"}} } },
+      x: {type: "number"}, y: {type: "number"}, placeOnCanvas: {type: "boolean", default: true}
+    }
+  } },
+  { name: "get_library_taxonomy", description: "Read active device taxonomy before creating or proposing a missing device. Use exact values returned.", inputSchema: noArgs },
   { name: "get_device_proposal", description: "Check human review and publication status of a missing-device proposal.", inputSchema: { type: "object", required: ["proposalId"], properties: { proposalId: {type: "string"} }, additionalProperties: false } },
   { name: "add_approved_device", description: "Place a missing device ONLY after human acceptance and explicit publication in Library Doctor. This tool never approves or publishes.", inputSchema: { type: "object", required: ["proposalId"], properties: { proposalId: {type: "string"}, label: {type: "string"}, x: {type: "number"}, y: {type: "number"} }, additionalProperties: false } },
   { name: "propose_missing_device", description: "Create a review proposal only. First search_templates, read taxonomy, and research official manufacturer documentation using your browsing tools. Never invent ports or dimensions. Quality gates are caller declarations; set them only after verification. A human must accept and Publish approved device in Library Doctor before placement.", inputSchema: {
     type: "object", additionalProperties: false,
     required: ["proposedTemplate", "evidenceRefs", "rationale", "classificationConfidence", "qualityGates"],
     properties: {
-      proposedTemplate: { type: "object", required: ["manufacturer", "modelNumber", "label", "shortName", "category", "deviceType", "ports"], additionalProperties: false,
-        properties: { manufacturer: {type: "string"}, modelNumber: {type: "string"}, label: {type: "string"}, shortName: {type: "string"}, category: {type: "string"}, deviceType: {type: "string"},
-          roleTags: {type: "array", items: {type: "string"}}, deviceCapabilities: {type: "array", items: {type: "string"}}, protocols: {type: "array", items: {type: "string"}},
-          heightMm: {type: "number"}, widthMm: {type: "number"}, depthMm: {type: "number"}, weightKg: {type: "number"}, rackForm: {enum: ["full", "half", "shelf-only"]},
-          searchTerms: {type: "array", items: {type: "string"}}, referenceUrl: {type: "string"},
-          ports: {type: "array", maxItems: 500, items: {type: "object", required: ["id", "label", "connectorType", "signalType", "direction"],
-            properties: {id: {type: "string"}, label: {type: "string"}, section: {type: "string"}, connectorType: {type: "string"}, signalType: {type: "string"}, direction: {enum: ["input", "output", "bidirectional", "passthrough"]}}} } } },
+      proposedTemplate: templateSchema,
       identityAliases: {type: "array", items: {type: "string"}}, operationalNotes: {type: "array", items: {type: "string"}},
       evidenceRefs: {type: "array", minItems: 1, items: {type: "object", required: ["type", "url"], properties: {type: {type: "string"}, url: {type: "string"}, title: {type: "string"}, excerpt: {type: "string"}, note: {type: "string"}}}},
       rationale: {type: "string"}, classificationConfidence: {enum: ["high"]},

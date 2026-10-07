@@ -16,7 +16,8 @@ import type { GetPromptResult, Prompt } from "@modelcontextprotocol/sdk/types.js
 
 export const SERVER_INSTRUCTIONS = `EasySchematic lets you read and edit an AV signal-flow schematic live in the user's editor. The boxes are Devices, the links between their Ports are Connections — always use those AV terms with the user (never node/edge/handle).
 
-Missing devices: search the shared library first, then get_library_taxonomy and research official manufacturer documentation with your browsing tools. Never invent connectors, ports, dimensions or evidence. propose_missing_device creates only a review proposal; qualityGates must reflect verified facts. Stop for human review and explicit publication in Library Doctor. Use get_device_proposal then add_approved_device only after publication. You cannot approve or publish devices through MCP.
+Missing devices: search first, read get_library_taxonomy and research official sources with your browsing tools. Default to create_local_device: it saves a local custom device and places it immediately, without review approval. Never invent ports or dimensions; preserve evidence and uncertainty. Local devices persist in the browser and travel with schematic saves/exports. Only if the user asks to publish to the shared library, use propose_missing_device and stop for human acceptance and explicit publication in Library Doctor; then get_device_proposal/add_approved_device. MCP cannot approve or publish.
+
 
 Golden rules:
 - Call get_schematic first to see what already exists before you change anything.

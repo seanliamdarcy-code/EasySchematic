@@ -76,6 +76,7 @@ import type {
 
 import { fetchTaxonomyRegistry, proposeMissingDevice, getLibraryDoctorProposal, getLibraryDoctorProposalHistory } from "./tatesideApi";
 import { refreshTemplates } from "./templateApi";
+import { validateDeviceTemplate, normalizeDeviceTemplate } from "./deviceTemplateValidation";
 import { CONNECTOR_LABELS, SIGNAL_LABELS } from "./types";
 
 export type BridgeStatus = "off" | "connecting" | "connected" | "error";
@@ -479,6 +480,34 @@ function placeDeviceInRackCore(p: PlaceDeviceInRackParams) {
 // Command handlers — each returns a JSON-serializable result or throws CommandError.
 // ---------------------------------------------------------------------------
 export const handlers: Record<CommandType, (params: Record<string, unknown>) => unknown | Promise<unknown>> = {
+  create_local_device: async (params) => {
+    const validation = validateDeviceTemplate(params.template);
+    if (!validation.ok) throw new CommandError(`Invalid local device: ${validation.errors.join("; ")}`);
+    const template = normalizeDeviceTemplate(params.template);
+    if (!template.label || !template.deviceType) throw new CommandError("label and deviceType must be non-empty.");
+    const portIds = new Set<string>();
+    for (const port of template.ports) {
+      if (!port.id || portIds.has(port.id)) throw new CommandError("Every port needs a unique, non-empty id.");
+      portIds.add(port.id);
+      if (!Object.hasOwn(SIGNAL_LABELS, port.signalType) || !["input", "output", "bidirectional", "passthrough"].includes(port.direction)
+        || (port.connectorType && !Object.hasOwn(CONNECTOR_LABELS, port.connectorType)))
+        throw new CommandError(`Invalid signal, direction or connector for port "${port.id}". Call get_library_taxonomy.`);
+    }
+    const position = validatePosition((params.x ?? 0) as number, (params.y ?? 0) as number);
+    if (!position.ok) throw new CommandError(position.error);
+    if (params.placeOnCanvas !== undefined && typeof params.placeOnCanvas !== "boolean") throw new CommandError("placeOnCanvas must be boolean.");
+    const templates = await allTemplates();
+    const identity = (value: string | undefined) => (value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    const existing = [...st().customTemplates, ...templates].find((candidate) => template.manufacturer && template.modelNumber
+      ? identity(candidate.manufacturer) === identity(template.manufacturer)
+        && [candidate.modelNumber, ...(candidate.identityAliases ?? [])].some((value) => identity(value) === identity(template.modelNumber))
+      : identity(candidate.label) === identity(template.label) && candidate.deviceType === template.deviceType);
+    const deviceTemplate: DeviceTemplate = existing ?? { ...template, id: `local-ai-${crypto.randomUUID()}`, reviewStatus: "ai-researched", classificationConfidence: template.classificationConfidence ?? "low", version: undefined };
+    if (!existing) st().addCustomTemplate(deviceTemplate);
+    const placed = params.placeOnCanvas === false ? {} : addDeviceCore({templateId: deviceTemplate.id ?? deviceTemplate.deviceType, ...position.position}, [...templates, deviceTemplate]);
+    return { templateId: deviceTemplate.id ?? deviceTemplate.deviceType, scope: st().customTemplates.includes(deviceTemplate) ? "local" : "shared-existing",
+      reused: !!existing, published: false, ...placed };
+  },
   get_library_taxonomy: async () => ({ registry: await fetchTaxonomyRegistry(), connectors: CONNECTOR_LABELS, signals: SIGNAL_LABELS, directions: ["input", "output", "bidirectional", "passthrough"] }),
   propose_missing_device: (params) => proposeMissingDevice(params),
   get_device_proposal: async (params) => {

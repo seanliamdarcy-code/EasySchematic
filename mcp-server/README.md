@@ -1,6 +1,6 @@
 # TateSide live schematic MCP (Beta)
 
-Ported from upstream EasySchematic `e2f178c` (5 October 2026), adapted to the TateSide fork's shared library and store. It provides 26 upstream editing tools and four TateSide missing-device tools. It works with an empty schematic or an existing one.
+Ported from upstream EasySchematic `e2f178c` (5 October 2026), adapted to the TateSide fork's shared library and store. It provides 26 upstream editing tools and five TateSide missing-device tools. It works with an empty schematic or an existing one.
 
 The assistant starts this Node program on the laptop over MCP stdio. The open editor tab connects to its WebSocket on `127.0.0.1`. The VPS hosts the editor/API; it does not host this local MCP server. Token pairing, an Origin allowlist and a single active tab protect the connection. Pairing stays in memory and turns off on reload.
 
@@ -39,13 +39,15 @@ Allow local-network access if the browser requests it. Only one tab can control 
 
 ## Missing devices
 
-The assistant must search existing templates first. `get_library_taxonomy` returns current categories/classification values, connector and signal vocabularies. The assistant uses its own browsing/research capabilities to verify official manufacturer sources; the MCP does not perform web research itself. Unknown specifications must stay unknown.
+Search existing templates first, then read `get_library_taxonomy` and research official manufacturer specifications using the assistant's own browsing tools. Never invent ports or dimensions; include evidence and record uncertainty.
 
-`propose_missing_device` validates the proposed template, evidence and caller quality declarations, checks duplicates, then creates a pending Library Doctor proposal. It does not change the canonical library or schematic. Quality declarations describe the assistant's research; the backend checks data/URL shape but does not independently verify manufacturer ownership or completeness.
+**Default: `create_local_device`.** This validates and saves a local custom device in the current browser, then places it immediately. No Library Doctor approval is needed. It returns the template and placed device identities; read `get_device` for the actual port IDs before wiring. Use `placeOnCanvas=false` to save only the template. Matching existing identities are reused without overwriting them.
 
-A human opens **File → Library Doctor**, reviews the device preview, evidence, ports and dimensions, and chooses **Accept (queue only)**. Switch the Status filter to Accepted, select the proposal, then choose **Publish approved device** and confirm. Publication revalidates current taxonomy and identity, writes the shared template and an audit event atomically, and is idempotent. Existing-device corrections remain review-only.
+Local devices persist in that browser and are included with schematic saves/exports. They travel with a shared schematic but are not published to everyone's device library. Clearing browser storage removes the browser copy; keep schematic files/server saves as backups. AI-created definitions are marked AI researched, retain evidence/confidence, and still need your engineering review.
 
-The assistant checks `get_device_proposal` and can then use `add_approved_device`. There are no MCP approval/publication tools. Port IDs are regenerated when devices are instantiated: always read `get_device` before wiring. Published devices go to this environment's library; staging publication does not promote them to production.
+**Optional shared publication:** only when the user wants everyone to have the device, use `propose_missing_device`. A human reviews it in File → Library Doctor, accepts it, selects the Accepted status filter, then chooses Publish approved device. Publication rechecks taxonomy/identity and writes the shared template plus audit event atomically. The assistant can check `get_device_proposal` and then use `add_approved_device`. There are no MCP approval/publication tools. Publishing in staging does not promote devices to production.
+
+Quality declarations describe the assistant's research; the backend validates data/URL shape, not manufacturer ownership or specification completeness independently.
 
 ## Environment variables
 

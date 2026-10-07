@@ -25,6 +25,6 @@ export default function McpConnectionSettings() {
     </label>
     <p role="status">Connection: {status}{detail ? ` — ${detail}` : ""}</p>
     <p className="text-[var(--color-text-muted)]">Allow local-network access if your browser asks. Use port 8765 for Codex or 8766 for Claude on this laptop.</p>
-    <p className="text-[var(--color-text-muted)]">Pairing is session-only and turns off when this tab reloads. Missing devices are proposed in Library Doctor for your review; the AI cannot approve or publish them.</p>
+    <p className="text-[var(--color-text-muted)]">Pairing is session-only and turns off when this tab reloads. Missing devices can be created locally and used immediately. Publishing to the shared library still requires your approval in Library Doctor.</p>
   </div>;
 }
