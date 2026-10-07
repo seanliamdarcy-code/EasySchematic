@@ -59,6 +59,12 @@ test('new-template visual preview is complete, read-only, and write-free', async
 
   await page.goto('/');
   await page.waitForLoadState('networkidle');
+  // Hydration schedules an initial server autosave after a debounce. Let it finish
+  // before measuring writes caused by the Library Doctor preview itself.
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('easyschematic-autosave') ?? '{}').tatesideSchematicId,
+  )).toBeTruthy();
+  writes.length = 0;
   // Autosave updates React Flow measurements and save timestamps while the dialog is open.
   // Compare the actual schematic and library contents, not those background UI fields.
   const readStoredContents = () => page.evaluate(() => {
