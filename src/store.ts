@@ -296,6 +296,7 @@ interface SchematicState {
   mcpBridgeEnabled: boolean;
   mcpBridgeToken: string;
   mcpBridgePort: number;
+  mcpBridgeOffice: boolean;
   mcpBridgeStatus: "off" | "connecting" | "connected" | "error";
   mcpBridgeStatusDetail?: string;
   moveDevice: (nodeId: string, position: { x: number; y: number }) => void;
@@ -1395,6 +1396,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   mcpBridgeEnabled: false,
   mcpBridgeToken: "",
   mcpBridgePort: 8765,
+  mcpBridgeOffice: false,
   mcpBridgeStatus: "off",
   loadSeq: 0,
   editingNodeId: null,

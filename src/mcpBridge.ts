@@ -245,6 +245,7 @@ async function allTemplates(): Promise<DeviceTemplate[]> {
   const enabled = st().mcpBridgeEnabled;
   const token = st().mcpBridgeToken;
   const port = st().mcpBridgePort;
+  const office = st().mcpBridgeOffice;
   const page = st().activePage;
   let library: DeviceTemplate[];
   try {
@@ -252,7 +253,7 @@ async function allTemplates(): Promise<DeviceTemplate[]> {
   } catch {
     library = getBundledTemplates();
   }
-  if (st().loadSeq !== loadSeq || st().mcpBridgeEnabled !== enabled || st().mcpBridgeToken !== token || st().mcpBridgePort !== port || st().activePage !== page) throw new CommandError("Editor session changed; retry the command.");
+  if (st().loadSeq !== loadSeq || st().mcpBridgeEnabled !== enabled || st().mcpBridgeToken !== token || st().mcpBridgePort !== port || st().mcpBridgeOffice !== office || st().activePage !== page) throw new CommandError("Editor session changed; retry the command.");
   const merged = new Map<string, DeviceTemplate>();
   for (const t of [...library, ...st().customTemplates]) {
     merged.set(t.id ?? t.deviceType, t);
@@ -538,7 +539,7 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
     const current = st();
     if (current.loadSeq !== before.loadSeq || current.nodes !== before.nodes || current.edges !== before.edges || current.pages !== before.pages
       || current.mcpBridgeEnabled !== before.mcpBridgeEnabled || current.mcpBridgeToken !== before.mcpBridgeToken
-      || current.mcpBridgePort !== before.mcpBridgePort || current.activePage !== before.activePage) {
+      || current.mcpBridgePort !== before.mcpBridgePort || current.mcpBridgeOffice !== before.mcpBridgeOffice || current.activePage !== before.activePage) {
       throw new CommandError("Editor session changed; retry the import.");
     }
     const byId = Object.fromEntries(templates.filter((template) => template.id).map((template) => [template.id!, template]));
@@ -598,13 +599,14 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
     const enabled = st().mcpBridgeEnabled;
     const token = st().mcpBridgeToken;
     const port = st().mcpBridgePort;
+    const office = st().mcpBridgeOffice;
     const page = st().activePage;
     const result = await handlers.get_device_proposal(params) as {proposal: {status: string; proposalType: string}; publishedTemplateId: unknown};
     if (result.proposal.status !== "accepted" || result.proposal.proposalType !== "new-template" || typeof result.publishedTemplateId !== "string")
       throw new CommandError("This device has not been approved and published by a human in Library Doctor.");
     await refreshTemplates();
     const templates = await allTemplates();
-    if (st().loadSeq !== loadSeq || st().mcpBridgeEnabled !== enabled || st().mcpBridgeToken !== token || st().mcpBridgePort !== port || st().activePage !== page) throw new CommandError("Editor session changed; retry the command.");
+    if (st().loadSeq !== loadSeq || st().mcpBridgeEnabled !== enabled || st().mcpBridgeToken !== token || st().mcpBridgePort !== port || st().mcpBridgeOffice !== office || st().activePage !== page) throw new CommandError("Editor session changed; retry the command.");
     return addDeviceCore({ ...params, templateId: result.publishedTemplateId } as unknown as AddDeviceParams, templates);
   },
   get_schematic: () => {
@@ -1040,6 +1042,7 @@ class BridgeController {
   private enabled = false;
   private token = "";
   private port = DEFAULT_BRIDGE_PORT;
+  private office = false;
   private clientId =
     typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `tab-${Date.now()}`;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1048,14 +1051,15 @@ class BridgeController {
   private halted = false;
 
   /** (Re)start with the latest settings. Idempotent for unchanged inputs. */
-  start(token: string, port: number) {
-    if (this.enabled && this.token === token && this.port === port && (this.ws || this.reconnectTimer)) {
+  start(token: string, port: number, office = false) {
+    if (this.enabled && this.token === token && this.port === port && this.office === office && (this.ws || this.reconnectTimer)) {
       return; // already running with the same config (StrictMode-safe)
     }
     this.stop();
     this.enabled = true;
     this.token = token;
     this.port = port || DEFAULT_BRIDGE_PORT;
+    this.office = office;
     this.halted = false;
     this.backoffMs = 1000;
     this.connect();
@@ -1090,7 +1094,7 @@ class BridgeController {
     setStatus("connecting");
     let ws: WebSocket;
     try {
-      ws = new WebSocket(`ws://127.0.0.1:${this.port}`);
+      ws = new WebSocket(this.office ? "wss://schematic-mcp.tateside.online/editor" : `ws://127.0.0.1:${this.port}`);
     } catch {
       setStatus("error", "Could not open a connection.");
       this.scheduleReconnect();
@@ -1110,14 +1114,18 @@ class BridgeController {
       );
     };
 
-    ws.onmessage = (ev) => this.onMessage(ev);
+    ws.onmessage = (ev) => this.onMessage(ev, ws);
 
     ws.onerror = () => {
       setStatus("error", "Connection error — is the MCP server running?");
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (this.ws === ws) this.ws = null;
+      if (this.office && event.code === 1008) {
+        this.halted = true;
+        setStatus("error", "Office sign-in expired. Reconnect your office account in Preferences.");
+      }
       if (this.enabled && !this.halted) {
         setStatus("connecting", "Reconnecting…");
         this.scheduleReconnect();
@@ -1125,7 +1133,8 @@ class BridgeController {
     };
   }
 
-  private async onMessage(ev: MessageEvent) {
+  private async onMessage(ev: MessageEvent, socket: WebSocket) {
+    if (socket !== this.ws) return;
     let msg: BridgeServerMessage;
     try {
       msg = JSON.parse(typeof ev.data === "string" ? ev.data : "");
@@ -1149,8 +1158,9 @@ class BridgeController {
     }
     if (msg.type === "command") {
       const { requestId, command, params } = msg;
-      const reply = (ok: boolean, payload: { result?: unknown; error?: string }) =>
-        this.ws?.send(JSON.stringify({ type: "response", requestId, ok, ...payload }));
+      const reply = (ok: boolean, payload: { result?: unknown; error?: string }) => {
+        if (this.ws === socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "response", requestId, ok, ...payload }));
+      };
       const handler = handlers[command];
       if (!handler) {
         reply(false, { error: `Unknown command "${command}".` });
@@ -1174,9 +1184,10 @@ export function useMcpBridge() {
   const enabled = useSchematicStore((s) => s.mcpBridgeEnabled);
   const token = useSchematicStore((s) => s.mcpBridgeToken);
   const port = useSchematicStore((s) => s.mcpBridgePort);
+  const office = useSchematicStore((s) => s.mcpBridgeOffice);
   useEffect(() => {
-    if (enabled && token) mcpBridge.start(token, port);
+    if (enabled && (token || office)) mcpBridge.start(office ? "office-access" : token, port, office);
     else mcpBridge.stop();
     return () => mcpBridge.stop();
-  }, [enabled, token, port]);
+  }, [enabled, token, port, office]);
 }

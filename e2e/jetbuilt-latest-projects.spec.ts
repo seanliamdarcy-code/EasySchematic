@@ -45,9 +45,11 @@ test('latest projects load on opening, scroll, retry, deduplicate and start the 
   await expect(rows).toHaveCount(69);
   await expect(latest.getByText('All projects loaded', { exact: true })).toBeVisible();
   expect(offsets).toEqual([0, 50, 50]);
+  await list.evaluate(el => { el.scrollTop = 0; });
   await latest.getByRole('button', { name: 'Refresh latest' }).click();
   await expect(rows).toHaveCount(50);
-  await latest.getByRole('button', { name: 'Load more projects' }).click();
+  // Exercise the fallback without scrolling into view and triggering auto-pagination first.
+  await latest.getByRole('button', { name: 'Load more projects' }).evaluate(button => (button as HTMLButtonElement).click());
   await expect(rows).toHaveCount(69);
   await latest.getByRole('button', { name: 'Start from P-69', exact: true }).click();
   await page.getByRole('button', { name: 'Start schematic', exact: true }).click();

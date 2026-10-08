@@ -2,7 +2,15 @@
 
 Ported from upstream EasySchematic `e2f178c` (5 October 2026), adapted to the TateSide fork's shared library and store. It provides 26 upstream editing tools, five TateSide missing-device tools and three Jetbuilt project tools. It works with an empty schematic or an existing one.
 
-The assistant starts this Node program on the laptop over MCP stdio. The open editor tab connects to its WebSocket on `127.0.0.1`. The VPS hosts the editor/API; it does not host this local MCP server. Token pairing, an Origin allowlist and a single active tab protect the connection. Pairing stays in memory and turns off on reload.
+Local stdio connections run on the laptop with token pairing. The shared office connection runs on the VPS with Cloudflare staff sign-in and a separate active editor for each account. Both use the same tools. Pairing stays in memory and turns off on reload.
+
+## Shared office connector
+
+Use `https://schematic-mcp.tateside.online/mcp` in Grok or a remote MCP client. Sign in through Cloudflare Access with your TateSide account. In the test editor, open **Preferences → AI (Beta) → Connect my office account**, sign in with the same account, and connect the schematic. No laptop server or pairing token is needed. Keep the editor tab open. A second paired tab replaces only that account's connection. Library publication still requires human review.
+
+The VPS runs `dist/office-main.js` on loopback port 8792 under `easyschematic-office.service`. Install `deploy/office.service` as the systemd unit and build with `npm ci --prefix mcp-server && npm test --prefix mcp-server`. Its protected `/etc/easyschematic-office.env` contains `EASYSCHEMATIC_ACCESS_ISSUER`, `EASYSCHEMATIC_ACCESS_AUDIENCE`, `EASYSCHEMATIC_OFFICE_EDITOR_ORIGINS`, and `EASYSCHEMATIC_BUILD_HASH`. Cloudflare Tunnel routes the exact hostname to that loopback service; Cloudflare Access supplies managed OAuth and restricts access to verified `tateside.com` email accounts. The origin also verifies the JWT signature, issuer, audience, expiry and staff identity. Connections close when their Access session expires; reconnect in Preferences.
+
+OAuth access tokens last 15 minutes and refresh grants last up to 30 days, with Access policy re-evaluation on refresh. Allowed remote-client callbacks are restricted to Grok/xAI and Claude HTTPS URLs. The service stores no grants or pairing secrets; restarting disconnects editors, which reconnect automatically while their Access session is valid.
 
 ## Build and test
 
