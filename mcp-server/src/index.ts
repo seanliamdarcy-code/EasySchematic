@@ -46,10 +46,10 @@ const allowedOrigins = (process.env.EASYSCHEMATIC_MCP_ORIGINS || "")
   .filter(Boolean);
 
 const bridge = new AppBridge({ port, token, allowedOrigins, log });
-bridge.start();
+await bridge.start();
 
 log("");
-log(`WebSocket bridge listening on ws://127.0.0.1:${port}`);
+log(`WebSocket bridge available on ws://127.0.0.1:${port}`);
 log(`Pairing token is stored in ${tokenFile}; it is never printed to logs.`);
 log("Copy the token file contents into EasySchematic → Preferences → AI (Beta), then turn the toggle on.");
 log("");

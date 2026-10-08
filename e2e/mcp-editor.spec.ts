@@ -14,7 +14,7 @@ test('MCP builds from an empty canvas and requires human publication for missing
   };
   try {
     await client.connect(transport);
-    expect((await client.listTools()).tools).toHaveLength(31);
+    expect((await client.listTools()).tools).toHaveLength(34);
     await page.setExtraHTTPHeaders({'CF-Access-Authenticated-User-Email': 'mcp-fixture@example.test'});
     await page.goto('/');
     await page.waitForLoadState('networkidle');

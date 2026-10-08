@@ -31,6 +31,20 @@ const templateSchema = { type: "object", required: ["manufacturer", "modelNumber
             properties: {id: {type: "string"}, label: {type: "string"}, section: {type: "string"}, connectorType: {type: "string"}, signalType: {type: "string"}, direction: {enum: ["input", "output", "bidirectional", "passthrough"]}}} } } };
 
 export const TOOLS: ToolDef[] = [
+  { name: "search_jetbuilt_projects", description: "Read-only project search by P number, name or Jetbuilt id through the paired editor's authenticated API. Returns project ids for get_jetbuilt_project. Never changes the canvas or writes Jetbuilt.", inputSchema: {
+    type: "object", additionalProperties: false, required: ["query"], properties: { query: { type: "string", minLength: 1 } }
+  } },
+  { name: "get_jetbuilt_project", description: "Read a Jetbuilt project's room/kit list, quantities, library matches, possible matches and unresolved bundles. Use a projectId from search_jetbuilt_projects. Returns previewId and itemIds for start_jetbuilt_schematic; no canvas change. Preview is held only in this editor tab (latest three previews). Ask which rooms/kit the user wants before starting.", inputSchema: {
+    type: "object", additionalProperties: false, required: ["projectId"], properties: { projectId: { type: "string", minLength: 1 } }
+  } },
+  { name: "start_jetbuilt_schematic", description: "Start a NEW schematic from a reviewed Jetbuilt preview, optionally limited to exact room names and itemIds. Separate instances are placed for quantities by default. Exact library matches are placed; unmatched kit is returned for official research and create_local_device (its room container is created). includeUnmatched=true instead places portless placeholders. Does not save/publish externally. Replaces the open schematic: read get_schematic first, have the user save existing work, and set replaceCurrent=true only on their explicit instruction. Refuses unknown selections and expired previews.", inputSchema: {
+    type: "object", additionalProperties: false, required: ["previewId"], properties: {
+      previewId: { type: "string", minLength: 1 }, name: { type: "string", minLength: 1 },
+      rooms: { type: "array", minItems: 1, maxItems: 1000, items: { type: "string", minLength: 1 } },
+      itemIds: { type: "array", minItems: 1, maxItems: 1000, items: { type: "string", minLength: 1 } },
+      replaceCurrent: { type: "boolean", default: false }, expandQuantities: { type: "boolean", default: true }, includeUnmatched: { type: "boolean", default: false }
+    }
+  } },
   { name: "create_local_device", description: "Default for a missing device: research official specifications, then create a LOCAL custom device and place it immediately, without Library Doctor approval. Search existing templates first; exact matches are reused. Never invent ports or specifications. Saved in this browser and included with schematic saves/exports; never published to the shared library. Read get_device afterward for actual port ids. Set placeOnCanvas=false to save only the template.", inputSchema: {
     type: "object", additionalProperties: false, required: ["template"], properties: {
       template: { ...templateSchema, properties: { ...templateSchema.properties,

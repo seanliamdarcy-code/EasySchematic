@@ -32,7 +32,7 @@ import {
   TatesideApiError,
 } from "../tatesideApi";
 import { validateTemplate } from "../import/validate";
-import { buildQuoteImportSchematic } from "../import/quoteSchematic";
+import { buildQuoteImportSchematic, importRoomLabel } from "../import/quoteSchematic";
 import ManageTatesideTemplateDialog from "./ManageTatesideTemplateDialog";
 
 interface Props {
@@ -61,7 +61,6 @@ const STATUS_CLASSES: Record<LibraryMatchStatus, string> = {
 };
 
 const MAX_PAID_RESEARCH_SELECTION = 5;
-const importRoomLabel = (room: string | null | undefined) => room?.trim() || "Unassigned";
 
 export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChanged }: Props) {
   const addToast = useSchematicStore((s) => s.addToast);
@@ -130,6 +129,7 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<QuoteImportExtractionResponse | null>(null);
   const [selectedRoomScope, setSelectedRoomScope] = useState<string | null>(null);
+  const [expandQuantities, setExpandQuantities] = useState(true);
   const [researchResults, setResearchResults] = useState<QuoteImportDraftReview[]>([]);
   const [possibleMatchDecisions, setPossibleMatchDecisions] = useState<Record<string, PossibleMatchDecision>>({});
   const [selectedDraftKeys, setSelectedDraftKeys] = useState<Set<string>>(new Set());
@@ -819,9 +819,11 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
         }
         schematicItems.push(item);
       }
-      newSchematic(buildQuoteImportSchematic(schematicName, schematicItems, templatesById));
+      const file = buildQuoteImportSchematic(schematicName, schematicItems, templatesById, { expandQuantities });
+      newSchematic(file);
       setSchematicName(schematicName);
-      addToast(`Started schematic from ${activeImportResults.length} imported device${activeImportResults.length === 1 ? "" : "s"}`, "success");
+      const deviceCount = file.nodes.filter((entry) => entry.type === "device").length;
+      addToast(`Started schematic with ${deviceCount} Device${deviceCount === 1 ? "" : "s"}`, "success");
       reset();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start a schematic from this import");
@@ -886,6 +888,13 @@ export default function ImportQuoteDevicesDialog({ open, onClose, onLibraryChang
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {extraction && (
+              <label className="flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={expandQuantities} disabled={researching || saving}
+                  onChange={(event) => setExpandQuantities(event.target.checked)} />
+                Place each unit separately for wiring
+              </label>
+            )}
             {extraction && roomOptions.length > 1 && (
               <label className="flex items-center gap-2 text-xs">
                 Room scope

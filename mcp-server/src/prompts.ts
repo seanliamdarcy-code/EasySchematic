@@ -16,7 +16,9 @@ import type { GetPromptResult, Prompt } from "@modelcontextprotocol/sdk/types.js
 
 export const SERVER_INSTRUCTIONS = `EasySchematic lets you read and edit an AV signal-flow schematic live in the user's editor. The boxes are Devices, the links between their Ports are Connections — always use those AV terms with the user (never node/edge/handle).
 
-Missing devices: search first, read get_library_taxonomy and research official sources with your browsing tools. Default to create_local_device: it saves a local custom device and places it immediately, without review approval. Never invent ports or dimensions; preserve evidence and uncertainty. Local devices persist in the browser and travel with schematic saves/exports. Only if the user asks to publish to the shared library, use propose_missing_device and stop for human acceptance and explicit publication in Library Doctor; then get_device_proposal/add_approved_device. MCP cannot approve or publish.
+Jetbuilt projects: when the user supplies a P number, search_jetbuilt_projects, choose the exact matching project, and get_jetbuilt_project. Show its rooms and kit quantities, ask which rooms/kit to draw, and use start_jetbuilt_schematic with the returned previewId and exact selections. Previewing is read-only. Starting replaces the canvas; read get_schematic first and never set replaceCurrent=true without the user's explicit instruction to replace saved/current work. Quantities become separate Devices by default. Follow the user's instructions for Connections; do not assume a BOM describes wiring.
+
+Missing devices: search first, read get_library_taxonomy and research official sources with your browsing tools. Default to create_local_device: it saves a local custom device and places it immediately, without review approval. Never invent ports or dimensions; preserve evidence and uncertainty. Use the import's unmatched list, place researched Devices in the returned room containers, and reread their actual Ports. Local devices persist in the browser and travel with schematic saves/exports. A human can review Device Properties and choose Add to TateSide Library. Alternatively, if requested, use propose_missing_device for Library Doctor review and publication; then get_device_proposal/add_approved_device. MCP cannot approve or publish.
 
 
 Golden rules:
@@ -25,10 +27,15 @@ Golden rules:
 - Prefer the batch tools (add_devices, connect_devices_batch, install_card_batch, place_device_in_rack_batch) over repeated single calls; each reports per-item success so you can retry only what failed.
 - Re-read get_device after a structural change (e.g. installing a card) before wiring the new Ports.
 
-Three prompts hold step-by-step playbooks: "build-schematic" (lay out and wire a system), "rack-elevation" (build and populate a rack), and "modular-chassis" (fit cards into a chassis).`;
+Four prompts hold step-by-step playbooks: "jetbuilt-project" (preview a P number and start selected rooms), "build-schematic" (lay out and wire a system), "rack-elevation" (build and populate a rack), and "modular-chassis" (fit cards into a chassis).`;
 
 /** Definitions returned by the prompts/list handler. */
 export const PROMPTS: Prompt[] = [
+  {
+    name: "jetbuilt-project",
+    description: "Preview a Jetbuilt P number, select rooms and kit, start a schematic and research missing Devices locally.",
+    arguments: [{ name: "project", description: "P number and optional room/kit instructions.", required: false }],
+  },
   {
     name: "build-schematic",
     description: "Playbook for laying out and wiring an AV system on the schematic canvas (get_schematic → search_templates → add_devices → rooms → connect_devices_batch).",
@@ -79,6 +86,11 @@ const MODULAR_CHASSIS = `You are configuring a modular Device — a chassis with
 5. Installing a card adds Ports to the chassis. Re-read get_device after installs to pick up the new Port ids before you connect them.`;
 
 const PLAYBOOKS: Record<string, { body: string; argName: string; noArgFallback: string }> = {
+  "jetbuilt-project": {
+    body: `Call get_schematic first. Search the supplied P number with search_jetbuilt_projects and resolve the exact project (ask if ambiguous). Call get_jetbuilt_project to preview rooms, kit, quantities, exact/possible matches and unresolved bundles. Ask which rooms and items the user wants. Start using start_jetbuilt_schematic with previewId, exact room names and optional itemIds. Save existing work first; replaceCurrent is only for an explicit replacement request. Do not guess possible matches or bundle contents. Research unmatched equipment using official sources and get_library_taxonomy, then create_local_device and place_device_in_room. Read get_device before making Connections according to user instructions. Humans can later review Properties and Add to TateSide Library.`,
+    argName: "project",
+    noArgFallback: "Ask the user for a Jetbuilt P number and which room they want to work on.",
+  },
   "build-schematic": {
     body: BUILD_SCHEMATIC,
     argName: "brief",

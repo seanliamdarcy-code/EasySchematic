@@ -7,7 +7,7 @@ export default function McpConnectionSettings() {
   const status = useSchematicStore((s) => s.mcpBridgeStatus);
   const detail = useSchematicStore((s) => s.mcpBridgeStatusDetail);
   return <div className="space-y-3 text-xs">
-    <p>Connect your local Codex or Claude MCP server to this open schematic. Enabled tools can read and edit devices, wiring, rooms, notes and racks.</p>
+    <p>Connect Codex or Claude to this editor. Give your assistant a Jetbuilt P number to preview rooms and kit, choose a room, then build and wire its schematic.</p>
     <label className="flex flex-col gap-1">Pairing token
       <input aria-label="MCP pairing token" type="password" autoComplete="off" value={token} disabled={enabled}
         onChange={(e) => useSchematicStore.setState({ mcpBridgeToken: e.target.value })}
@@ -25,6 +25,6 @@ export default function McpConnectionSettings() {
     </label>
     <p role="status">Connection: {status}{detail ? ` — ${detail}` : ""}</p>
     <p className="text-[var(--color-text-muted)]">Allow local-network access if your browser asks. Use port 8765 for Codex or 8766 for Claude on this laptop.</p>
-    <p className="text-[var(--color-text-muted)]">Pairing is session-only and turns off when this tab reloads. Missing devices can be created locally and used immediately. Publishing to the shared library still requires your approval in Library Doctor.</p>
+    <p className="text-[var(--color-text-muted)]">Pairing is session-only and turns off when this tab reloads. Missing devices can be researched and created locally immediately. Review a Device in Properties and choose Add to TateSide Library when you want to share it.</p>
   </div>;
 }

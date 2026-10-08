@@ -29,6 +29,9 @@ export const PROTOCOL_VERSION = 1;
  *  delete_note — get_schematic also now reports rooms + notes), and the two Ship-9
  *  "batch structural" tools (install_card_batch, place_device_in_rack_batch). */
 export type CommandType =
+  | "search_jetbuilt_projects"
+  | "get_jetbuilt_project"
+  | "start_jetbuilt_schematic"
   | "create_local_device"
   | "get_library_taxonomy"
   | "propose_missing_device"

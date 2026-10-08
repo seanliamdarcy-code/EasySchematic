@@ -38,7 +38,9 @@ const CONNECTOR_GROUP_ENTRIES: Array<[string, ConnectorType[]]> = (() => {
   const grouped = new Set<ConnectorType>(groups.flatMap(([, list]) => list));
   const orphans = (Object.keys(CONNECTOR_LABELS) as ConnectorType[]).filter((c) => !grouped.has(c));
   if (orphans.length > 0) {
-    groups.push(["Other", orphans.sort((a, b) => CONNECTOR_LABELS[a].localeCompare(CONNECTOR_LABELS[b]))]);
+    const other = groups.find((group) => group[0] === "Other");
+    if (other) other[1] = [...other[1], ...orphans].sort((a, b) => CONNECTOR_LABELS[a].localeCompare(CONNECTOR_LABELS[b]));
+    else groups.push(["Other", orphans.sort((a, b) => CONNECTOR_LABELS[a].localeCompare(CONNECTOR_LABELS[b]))]);
   }
   return groups;
 })();
@@ -537,6 +539,9 @@ function ManageTatesideTemplateDialogContent({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title ?? (saveMode === "create" ? "Draft Device Properties" : "Library Device Properties")}
         className="rounded-lg shadow-xl w-[860px] max-w-[95vw] max-h-[94vh] flex flex-col overflow-hidden"
         style={{
           backgroundColor: "var(--color-bg)",

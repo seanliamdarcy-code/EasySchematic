@@ -27,18 +27,33 @@ export class AppBridge {
   private active: WebSocket | null = null;
   private readonly pending = new Map<string, Pending>();
   private seq = 0;
+  private relay = false;
+  private readonly relaySockets = new Set<WebSocket>();
 
   constructor(private readonly opts: BridgeOptions) {}
 
-  start(): void {
-    this.wss = new WebSocketServer({ host: "127.0.0.1", port: this.opts.port });
-    this.wss.on("connection", (ws, req) => this.onConnection(ws, req));
-    this.wss.on("error", (err) => this.opts.log(`WebSocket server error: ${err.message}`));
+  async start(): Promise<void> {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: this.opts.port });
+    this.wss = server;
+    server.on("connection", (ws, req) => this.onConnection(ws, req));
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", () => { this.relay = false; resolve(); });
+      server.once("error", (err: NodeJS.ErrnoException) => {
+        this.wss = null;
+        if (err.code === "EADDRINUSE") {
+          this.relay = true;
+          this.opts.log(`Sharing the EasySchematic bridge on port ${this.opts.port}.`);
+          resolve();
+        } else reject(err);
+      });
+    });
+    server.on("error", (err) => this.opts.log(`WebSocket server error: ${err.message}`));
   }
 
   stop(): void {
     this.rejectAllPending(new Error("MCP server stopped."));
     for (const socket of this.wss?.clients ?? []) socket.terminate();
+    for (const socket of this.relaySockets) socket.terminate();
     this.active = null;
     this.wss?.close();
     this.wss = null;
@@ -65,7 +80,7 @@ export class AppBridge {
       }
 
       if (!helloed) {
-        if (msg.type !== "hello") {
+        if (msg.type !== "hello" && msg.type !== "relay_call") {
           ws.close();
           return;
         }
@@ -77,6 +92,19 @@ export class AppBridge {
         if (!tokensMatch(String(msg.token ?? ""), this.opts.token)) {
           ws.send(JSON.stringify({ type: "hello_ack", ok: false, reason: "Invalid pairing token." }));
           ws.close();
+          return;
+        }
+        if (msg.type === "relay_call") {
+          helloed = true;
+          if (typeof msg.command !== "string" || !msg.params || typeof msg.params !== "object" || Array.isArray(msg.params)) {
+            ws.close();
+            return;
+          }
+          // Other stdio sessions share the editor without replacing its binding.
+          void this.call(msg.command, msg.params as Record<string, unknown>).then(
+            result => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "relay_result", ok: true, result })); },
+            error => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "relay_result", ok: false, error: String(error.message) })); },
+          );
           return;
         }
         helloed = true;
@@ -129,6 +157,7 @@ export class AppBridge {
 
   /** Send a command to the bound tab and await its correlated response. */
   call(command: string, params: Record<string, unknown>): Promise<unknown> {
+    if (this.relay) return this.relayCall(command, params);
     if (!this.connected || !this.active) {
       return Promise.reject(
         new Error("No EasySchematic app is connected. Open the editor and turn on AI Assistant (MCP) in Preferences."),
@@ -144,6 +173,36 @@ export class AppBridge {
       }, timeoutMs);
       this.pending.set(requestId, { resolve, reject, timer });
       socket.send(JSON.stringify({ type: "command", requestId, command, params }));
+    });
+  }
+
+  private relayCall(command: string, params: Record<string, unknown>): Promise<unknown> {
+    const socket = new WebSocket(`ws://127.0.0.1:${this.opts.port}`, { origin: "http://127.0.0.1" });
+    this.relaySockets.add(socket);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error, result?: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.relaySockets.delete(socket);
+        socket.close();
+        if (error) reject(error);
+        else resolve(result);
+      };
+      const timer = setTimeout(() => finish(new Error(`Timed out waiting for the shared EasySchematic bridge to handle "${command}".`)), (this.opts.requestTimeoutMs ?? 15000) + 1000);
+      socket.on("open", () => socket.send(JSON.stringify({ type: "relay_call", protocolVersion: PROTOCOL_VERSION, token: this.opts.token, command, params })));
+      socket.on("message", data => {
+        let msg: Record<string, unknown>;
+        try { msg = JSON.parse(data.toString()); }
+        catch { finish(new Error("Invalid response from the shared EasySchematic bridge.")); return; }
+        if (msg.type !== "relay_result") {
+          finish(new Error(String(msg.reason ?? "The running EasySchematic bridge must be updated to support multiple chats.")));
+        } else if (msg.ok) finish(undefined, msg.result);
+        else finish(new Error(String(msg.error ?? "Shared bridge command failed.")));
+      });
+      socket.on("error", error => finish(error));
+      socket.on("close", () => finish(new Error("Shared EasySchematic bridge disconnected.")));
     });
   }
 }

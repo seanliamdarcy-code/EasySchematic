@@ -74,7 +74,9 @@ import type {
   SchematicNode,
 } from "./types";
 
-import { fetchTaxonomyRegistry, proposeMissingDevice, getLibraryDoctorProposal, getLibraryDoctorProposalHistory } from "./tatesideApi";
+import { fetchTaxonomyRegistry, proposeMissingDevice, getLibraryDoctorProposal, getLibraryDoctorProposalHistory, searchJetbuiltProjects, importDevicesFromJetbuiltProject } from "./tatesideApi";
+import type { QuoteImportExtractionResponse } from "./quoteImportTypes";
+import { buildQuoteImportSchematic, importRoomLabel } from "./import/quoteSchematic";
 import { refreshTemplates } from "./templateApi";
 import { validateDeviceTemplate, normalizeDeviceTemplate } from "./deviceTemplateValidation";
 import { CONNECTOR_LABELS, SIGNAL_LABELS } from "./types";
@@ -83,6 +85,18 @@ export type BridgeStatus = "off" | "connecting" | "connected" | "error";
 
 /** Raised inside a command handler to return ok:false with a readable message. */
 class CommandError extends Error {}
+
+// Previews are bounded, tab-local and never persisted. Import exactly what staff reviewed.
+const jetbuiltPreviews = new Map<string, { projectId: string; extraction: QuoteImportExtractionResponse }>();
+function requiredText(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new CommandError(`${name} must be a non-empty string.`);
+  return value.trim();
+}
+function selectedStrings(value: unknown, name: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || !value.length || value.length > 1000) throw new CommandError(`${name} must contain between 1 and 1000 values.`);
+  return value.map((entry) => requiredText(entry, name));
+}
 
 function st() {
   return useSchematicStore.getState();
@@ -480,6 +494,68 @@ function placeDeviceInRackCore(p: PlaceDeviceInRackParams) {
 // Command handlers — each returns a JSON-serializable result or throws CommandError.
 // ---------------------------------------------------------------------------
 export const handlers: Record<CommandType, (params: Record<string, unknown>) => unknown | Promise<unknown>> = {
+  search_jetbuilt_projects: async (params) => {
+    return searchJetbuiltProjects(requiredText(params.query, "query"));
+  },
+  get_jetbuilt_project: async (params) => {
+    const projectId = requiredText(params.projectId, "projectId");
+    const extraction = await importDevicesFromJetbuiltProject(projectId);
+    const previewId = crypto.randomUUID();
+    jetbuiltPreviews.set(previewId, { projectId, extraction });
+    if (jetbuiltPreviews.size > 3) jetbuiltPreviews.delete(jetbuiltPreviews.keys().next().value!);
+    const items = extraction.results.map((item, index) => ({ ...item, itemId: `item-${index + 1}`, room: importRoomLabel(item.room) }));
+    const roomNames = [...new Set([...items.map((item) => item.room), ...(extraction.bundleGroups ?? []).map((group) => importRoomLabel(group.room))])];
+    return { previewId, projectId, name: extraction.fileName,
+      rooms: roomNames.map((name) => ({ name, itemCount: items.filter((item) => item.room === name).length })),
+      items, bundleGroups: extraction.bundleGroups ?? [], warnings: extraction.warnings,
+      nextStep: "Choose rooms and kit before calling start_jetbuilt_schematic. This preview has not changed the canvas. Unresolved bundles need reviewed component definitions; never guess their contents." };
+  },
+  start_jetbuilt_schematic: async (params) => {
+    const previewId = requiredText(params.previewId, "previewId");
+    const preview = jetbuiltPreviews.get(previewId);
+    if (!preview) throw new CommandError("Preview expired or belongs to another editor tab. Call get_jetbuilt_project again.");
+    const rooms = selectedStrings(params.rooms, "rooms");
+    const itemIds = selectedStrings(params.itemIds, "itemIds");
+    for (const field of ["replaceCurrent", "expandQuantities", "includeUnmatched"]) {
+      if (params[field] !== undefined && typeof params[field] !== "boolean") throw new CommandError(`${field} must be boolean.`);
+    }
+    const knownRooms = new Set([...preview.extraction.results.map((item) => importRoomLabel(item.room)), ...(preview.extraction.bundleGroups ?? []).map((group) => importRoomLabel(group.room))]);
+    if (rooms?.some((room) => !knownRooms.has(room))) throw new CommandError("Unknown room. Use the exact room names from get_jetbuilt_project.");
+    const allItems = preview.extraction.results.map((item, index) => ({ item, itemId: `item-${index + 1}` }));
+    if (itemIds?.some((id) => !allItems.some((entry) => entry.itemId === id))) throw new CommandError("Unknown itemId. Use ids from this preview.");
+    const selected = allItems.filter(({ item, itemId }) => (!rooms || rooms.includes(importRoomLabel(item.room))) && (!itemIds || itemIds.includes(itemId)));
+    if (!selected.length) throw new CommandError("No kit items in this selection. Unresolved bundles must be reviewed in Start New Project first.");
+    if (itemIds && selected.length !== new Set(itemIds).size) throw new CommandError("An itemId is outside the selected rooms.");
+    const bundles = new Map((preview.extraction.bundleGroups ?? []).map((group) => [group.id, group]));
+    if (selected.some(({ item }) => item.bundleGroupId && bundles.get(item.bundleGroupId)?.accepted !== true)) {
+      throw new CommandError("Selected kit contains unreviewed bundle components. Review these in Start New Project, or select standalone/accepted items only.");
+    }
+    const before = st();
+    if ((before.nodes.length || before.edges.length || before.pages.length) && params.replaceCurrent !== true) {
+      throw new CommandError("The current schematic is not empty. Save it first; replaceCurrent=true is allowed only when the user explicitly asks to replace it.");
+    }
+    const templates = await allTemplates();
+    const current = st();
+    if (current.loadSeq !== before.loadSeq || current.nodes !== before.nodes || current.edges !== before.edges || current.pages !== before.pages
+      || current.mcpBridgeEnabled !== before.mcpBridgeEnabled || current.mcpBridgeToken !== before.mcpBridgeToken
+      || current.mcpBridgePort !== before.mcpBridgePort || current.activePage !== before.activePage) {
+      throw new CommandError("Editor session changed; retry the import.");
+    }
+    const byId = Object.fromEntries(templates.filter((template) => template.id).map((template) => [template.id!, template]));
+    const items = selected.map(({ item }) => item);
+    const notPlaced = selected.filter(({ item }) => !item.exactMatch || !byId[item.exactMatch.id])
+      .map(({ item, itemId }) => ({ itemId, manufacturer: item.manufacturer, model: item.model, quantity: item.quantity, room: importRoomLabel(item.room), status: item.status }));
+    const name = params.name !== undefined ? requiredText(params.name, "name")
+      : `${preview.extraction.fileName}${rooms ? ` - ${rooms.join(", ")}` : ""}`;
+    const file = buildQuoteImportSchematic(name, items, byId, { expandQuantities: params.expandQuantities !== false, includeUnmatched: params.includeUnmatched === true });
+    st().newSchematic(file);
+    st().setSchematicName(name);
+    return { projectId: preview.projectId, ...(handlers.get_schematic({}) as object),
+      notPlaced: params.includeUnmatched === true ? [] : notPlaced,
+      unmatched: notPlaced, warnings: preview.extraction.warnings,
+      unresolvedBundles: (preview.extraction.bundleGroups ?? []).filter((group) => !group.accepted && (!rooms || rooms.includes(importRoomLabel(group.room)))),
+      nextStep: "Research unmatched Devices from official sources, then create_local_device and place_device_in_room. If placeholders were requested, replace them only after the researched Device is successfully placed. Read actual Ports before connecting." };
+  },
   create_local_device: async (params) => {
     const validation = validateDeviceTemplate(params.template);
     if (!validation.ok) throw new CommandError(`Invalid local device: ${validation.errors.join("; ")}`);
