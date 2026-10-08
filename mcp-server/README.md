@@ -15,6 +15,20 @@ npm test --prefix mcp-server
 
 The main frontend build includes the editor bridge. CI builds and tests this separate server too. After updating its source, rebuild before restarting your assistant.
 
+## Grok website / app connector (Windows)
+
+Grok's web connector calls a public HTTPS MCP URL, so it cannot use the stdio entry point or the editor's localhost WebSocket directly. The optional `dist/http.js` entry point exposes the same tools with Streamable HTTP and OAuth, using the existing workstation bridge and protected pairing token. Codex and Claude's stdio setup remains supported.
+
+1. Install Node.js 24 and Cloudflare's official `cloudflared` client (if needed: `winget install --id Cloudflare.cloudflared`). Run `npm ci --prefix mcp-server` and `npm test --prefix mcp-server`.
+2. Run `./mcp-server/start-grok.ps1`. It starts hidden HTTP/tunnel processes, protects their state/log directory, and prints the connector URL.
+3. Sign in at [Grok Connectors](https://grok.com/connectors), choose **New Connector → Custom**, and enter that URL. For Business/Enterprise, a team admin first provisions the URL in the xAI console.
+4. On the EasySchematic authorization page, review the requested access, run `./mcp-server/copy-pairing-token.ps1`, paste the existing token, and choose **Allow Grok access**. This issues a separate OAuth token; the pairing token is not sent to Grok. It travels through the Cloudflare tunnel to your local server during approval. Only HTTPS Grok/xAI callbacks can register. Requests use PKCE and expiring tokens; refresh consent lasts up to 24 hours. Server restart revokes its grants.
+5. Pair the test editor on **8765**, using the same existing token, then ask Grok for a Jetbuilt P number and a room. This connection shares the paired editor with Codex. Shared-library publication still happens through human review in EasySchematic.
+
+Keep the workstation and tunnel running. The temporary URL changes on restart, requiring an updated Grok connector. Stop both managed processes with `./mcp-server/start-grok.ps1 -Stop`. A stable office-wide connector needs a permanent hostname and per-user routing; this entry point is deliberately for one workstation and one paired editor. It does not deploy any VPS or frontend change.
+
+References: [Grok custom connectors](https://docs.x.ai/grok/connectors), [tunnel requirements](https://docs.x.ai/grok/connectors/custom-mcp-tunneling), [team connector management](https://docs.x.ai/grok/connector-management).
+
 ## Office Claude Desktop setup (Windows)
 
 Install Node.js 24 and Claude Desktop, and put this checkout in a stable local folder on each workstation. From the checkout root, run `npm ci --prefix mcp-server`, `npm test --prefix mcp-server`, then `./mcp-server/setup-claude.ps1`. The script preserves other Claude settings/MCP servers, backs up the existing config in the protected token directory, creates/protects that workstation's token, and registers the built server on port 8766. It does not install Claude or Node. Run it again after moving the checkout. Never share a workstation's pairing token in chat or email.
