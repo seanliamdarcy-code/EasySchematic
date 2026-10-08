@@ -362,4 +362,7 @@ export const SAFE_DEVICE_FIELDS: Record<string, SafeFieldKind> = {
   isVenueProvided: "patch",
   useShortName: "patch",
   wrapLabel: "patch",
+  headerLine2: "patch",
+  showManufacturerModel: "patch",
+  showDeviceType: "patch",
 };

@@ -7,9 +7,8 @@ import {
   auxRowHeight,
   rowsInSlot,
   headerBandHeight,
-  HEADER_LABEL_ZONE_PX,
-  HEADER_LABEL_ZONE_2_PX,
 } from "../auxiliaryData";
+import { resolveDeviceHeader, type SchematicDisplayDefaults } from "../displayName";
 import type { AuxRow } from "../types";
 import {
   EXTERNAL_ENDPOINT_HEIGHT,
@@ -21,6 +20,7 @@ import {
 export interface DeviceBlockVisualProps {
   data: DeviceData;
   resolvedLabel: { text: string; wrap: boolean };
+  schematicDefaults?: SchematicDisplayDefaults;
   displayLabel?: (value: string) => string;
   selected?: boolean;
   hiddenPinSignalTypes?: ReadonlySet<string> | null;
@@ -56,7 +56,8 @@ function buildColumnItems(ports: Port[]): ColumnItem[] {
 
 function DeviceBlockVisual({
   data,
-  resolvedLabel,
+  resolvedLabel: legacyLabel,
+  schematicDefaults = {},
   displayLabel = (value) => value,
   selected = false,
   hiddenPinSignalTypes = null,
@@ -71,7 +72,9 @@ function DeviceBlockVisual({
   onPortContextMenu,
   onDoubleClick,
 }: DeviceBlockVisualProps) {
-  const labelZone = resolvedLabel.wrap ? HEADER_LABEL_ZONE_2_PX : HEADER_LABEL_ZONE_PX;
+  const header = resolveDeviceHeader(data, schematicDefaults);
+  const resolvedLabel = header.enabled ? header.label : legacyLabel;
+  const labelZone = (resolvedLabel.wrap ? 32 : 20) + (header.line2 ? 12 : 0);
   const openPortMenu = (event: MouseEvent, port: Port) => {
     event.preventDefault();
     event.stopPropagation();
@@ -106,8 +109,8 @@ function DeviceBlockVisual({
       hiddenPinSignalTypes, templateHiddenStr, hideUnconnectedPorts, connectedHandles]);
 
   const headerAuxRows = useMemo(
-    () => rowsInSlot(data.auxiliaryData, "header"),
-    [data.auxiliaryData],
+    () => rowsInSlot(header.auxiliaryData, "header"),
+    [header.auxiliaryData],
   );
   const footerAuxRows = useMemo(
     () => rowsInSlot(data.auxiliaryData, "footer"),
@@ -507,7 +510,7 @@ function DeviceBlockVisual({
    *  Keep the band-height formula in sync with `headerBandHeight()` in auxiliaryData.ts —
    *  snapUtils uses it to estimate device height before React Flow measures it. */
   function renderHeaderBand(rows: AuxRow[]) {
-    const bandH = headerBandHeight(data.auxiliaryData, labelZone);
+    const bandH = headerBandHeight(header.auxiliaryData, labelZone);
     const content = labelZone + rows.reduce((sum, r) => sum + auxRowHeight(r), 0);
     const totalPad = bandH - content;
     const pt = Math.floor(totalPad / 2);
@@ -533,20 +536,21 @@ function DeviceBlockVisual({
         }}
       >
         <div
-          className="flex items-center justify-center"
+          className="flex flex-col items-center justify-center min-w-0"
           style={{ height: labelZone }}
         >
           <span
             className={
               resolvedLabel.wrap
                 ? "text-xs font-semibold text-[var(--color-text-heading)]"
-                : "text-xs font-semibold text-[var(--color-text-heading)] truncate leading-tight"
+                : "text-xs font-semibold text-[var(--color-text-heading)] truncate leading-tight max-w-full"
             }
             style={labelStyle}
             title={displayLabel(resolvedLabel.text)}
           >
             {displayLabel(resolvedLabel.text)}
           </span>
+          {header.line2 && <span data-device-header-line="2" className="text-[9px] leading-3 truncate max-w-full text-[var(--color-text-heading)]" title={header.line2}>{header.line2}</span>}
         </div>
         {rows.map((row, i) => renderAuxRow(row, i))}
       </div>

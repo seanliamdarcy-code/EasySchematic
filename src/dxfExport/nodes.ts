@@ -14,13 +14,11 @@ import {
   auxBlockHeight,
   auxRowHeight,
   headerBandHeight,
-  HEADER_LABEL_ZONE_PX,
-  HEADER_LABEL_ZONE_2_PX,
   resolveAuxiliaryLine,
   rowsInSlot,
 } from "../auxiliaryData";
 import { transformLabelNow } from "../labelCaseUtils";
-import { resolveDeviceLabel, type SchematicDisplayDefaults } from "../displayName";
+import { resolveDeviceHeader, type SchematicDisplayDefaults } from "../displayName";
 import {
   EXTERNAL_ENDPOINT_HEIGHT,
   estimateExternalEndpointWidth,
@@ -163,10 +161,11 @@ export function emitDevice(
 
   // Header band — merged name strip + header aux rows. Height is 20-multiple (min 40),
   // matching DeviceNode's headerBandHeight() so the DXF export tracks the canvas layout.
-  const headerRows = rowsInSlot(data.auxiliaryData, "header");
-  const resolvedLabel = resolveDeviceLabel(data, schematicDefaults);
-  const labelZone = resolvedLabel.wrap ? HEADER_LABEL_ZONE_2_PX : HEADER_LABEL_ZONE_PX;
-  const bandH = headerBandHeight(data.auxiliaryData, labelZone);
+  const header = resolveDeviceHeader(data, schematicDefaults);
+  const headerRows = rowsInSlot(header.auxiliaryData, "header");
+  const resolvedLabel = header.label;
+  const labelZone = header.labelZone;
+  const bandH = headerBandHeight(header.auxiliaryData, labelZone);
   const headerContent = labelZone + headerRows.reduce((s, r) => s + auxRowHeight(r), 0);
   const headerPad = bandH - headerContent;
   const headerPadTop = Math.floor(headerPad / 2);
@@ -203,7 +202,7 @@ export function emitDevice(
   // DXF doesn't support multi-line wrap; even with wrap=on we emit a single (possibly truncated) line.
   if (resolvedLabel.text) {
     const labelHeight = cssFontPxToDxfHeight(12);
-    const labelBaselineY = ay + headerPadTop + labelZone - 4;
+    const labelBaselineY = ay + headerPadTop + labelZone - 4 - (header.line2 ? 12 : 0);
     writer.addText(
       CANONICAL_LAYERS.LABELS,
       pxToIn(ax + w / 2),
@@ -212,6 +211,8 @@ export function emitDevice(
       { height: labelHeight, align: "center" },
     );
   }
+
+  if (header.line2) writer.addText(CANONICAL_LAYERS.LABELS, pxToIn(ax + w / 2), -pxToIn(ay + headerPadTop + labelZone - 2), truncateToWidth(header.line2, labelAvailIn, auxTextHeight), { height: auxTextHeight, align: "center" });
 
   // Header aux rows — flow directly below the label zone, inside the same band.
   {

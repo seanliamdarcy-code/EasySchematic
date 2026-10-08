@@ -512,6 +512,8 @@ interface SchematicState {
   colorKeyPage: "first" | "last" | "all";
   colorKeyOverrides: Partial<Record<SignalType, boolean>> | undefined;
   colorKeyLabels: Partial<Record<SignalType, string>> | undefined;
+  deviceHeader: SchematicFile["deviceHeader"];
+  setDeviceHeader: (settings: SchematicFile["deviceHeader"]) => void;
   setColorKeyLabels: (labels: Partial<Record<SignalType, string>>) => void;
   cableCosts: Record<string, number> | undefined;
   setCableCost: (key: string, cost: number | undefined) => void;
@@ -808,6 +810,7 @@ function getPersistedSchematicFile(state: SchematicState): SchematicFile {
     colorKeyPage: state.colorKeyPage !== "all" ? state.colorKeyPage : undefined,
     colorKeyOverrides: state.colorKeyOverrides && Object.keys(state.colorKeyOverrides).length > 0 ? state.colorKeyOverrides : undefined,
     colorKeyLabels: state.colorKeyLabels,
+    deviceHeader: state.deviceHeader,
     pages: state.pages.length > 0 ? state.pages : undefined,
     cableCosts: state.cableCosts && Object.keys(state.cableCosts).length > 0 ? state.cableCosts : undefined,
     roomDistances: state.roomDistances && Object.keys(state.roomDistances).length > 0 ? state.roomDistances : undefined,
@@ -1459,6 +1462,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   colorKeyPage: "all" as "first" | "last" | "all",
   colorKeyOverrides: undefined,
   colorKeyLabels: undefined,
+  deviceHeader: undefined,
   cableCosts: undefined,
   roomDistances: undefined,
   distanceSettings: undefined,
@@ -3947,6 +3951,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   setColorKeyCorner: (c) => { set({ colorKeyCorner: c }); get().saveToLocalStorage(); },
   setColorKeyColumns: (n) => { set({ colorKeyColumns: Math.max(1, Math.min(4, n)) }); get().saveToLocalStorage(); },
   setColorKeyPage: (p) => { set({ colorKeyPage: p }); get().saveToLocalStorage(); },
+  setDeviceHeader: (deviceHeader) => { set({ deviceHeader }); get().saveToLocalStorage(); },
   setColorKeyLabels: (labels) => { set({ colorKeyLabels: labels }); get().saveToLocalStorage(); },
   setColorKeyOverrides: (o) => { set({ colorKeyOverrides: o && Object.keys(o).length > 0 ? o : undefined }); get().saveToLocalStorage(); },
   setCableCost: (key, cost) => {
@@ -4992,6 +4997,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
             colorKeyPage: data.colorKeyPage ?? "all",
             colorKeyOverrides: data.colorKeyOverrides ?? undefined,
             colorKeyLabels: data.colorKeyLabels ?? undefined,
+            deviceHeader: data.deviceHeader,
             pages: data.pages ?? [],
             cableCosts: data.cableCosts ?? undefined,
             roomDistances: data.roomDistances ?? undefined,
@@ -5075,6 +5081,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
         colorKeyPage: data.colorKeyPage ?? "all",
         colorKeyOverrides: data.colorKeyOverrides ?? undefined,
         colorKeyLabels: data.colorKeyLabels ?? undefined,
+        deviceHeader: data.deviceHeader,
         pages: data.pages ?? [],
         cableCosts: data.cableCosts ?? undefined,
         roomDistances: data.roomDistances ?? undefined,
@@ -5158,6 +5165,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
       colorKeyPage: state.colorKeyPage !== "all" ? state.colorKeyPage : undefined,
       colorKeyOverrides: state.colorKeyOverrides && Object.keys(state.colorKeyOverrides).length > 0 ? state.colorKeyOverrides : undefined,
       colorKeyLabels: state.colorKeyLabels,
+      deviceHeader: state.deviceHeader,
       pages: state.pages.length > 0 ? state.pages : undefined,
       cableCosts: state.cableCosts && Object.keys(state.cableCosts).length > 0 ? state.cableCosts : undefined,
       roomDistances: state.roomDistances && Object.keys(state.roomDistances).length > 0 ? state.roomDistances : undefined,
@@ -5253,6 +5261,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
       colorKeyPage: data.colorKeyPage ?? "all",
       colorKeyOverrides: data.colorKeyOverrides ?? undefined,
       colorKeyLabels: data.colorKeyLabels ?? undefined,
+      deviceHeader: data.deviceHeader,
       pages: data.pages ?? [],
       activePage: "schematic",
       cableCosts: data.cableCosts ?? undefined,
@@ -5326,6 +5335,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
         titleBlock: { showName: "", venue: "", designer: "", engineer: "", date: "", drawingTitle: "", company: "", revision: "", logo: "", customFields: [] },
         titleBlockLayout: createDefaultLayout(),
         colorKeyLabels: undefined,
+        deviceHeader: undefined,
         hiddenSignalTypes: "",
         hiddenPinSignalTypes: "",
         hideUnconnectedPorts: false,
@@ -5539,6 +5549,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     const displayDefaults = {
       useShortNames: state.useShortNames,
       wrapDeviceLabels: state.wrapDeviceLabels,
+      deviceHeader: state.deviceHeader,
     };
     const handlePosFor = (
       deviceNode: typeof state.nodes[number],

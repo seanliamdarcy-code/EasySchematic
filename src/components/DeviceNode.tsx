@@ -11,6 +11,7 @@ function DeviceNodeComponent({ id, data, selected }: NodeProps<DeviceNodeType>) 
   const displayLabel = useDisplayLabel();
   const useShortNames = useSchematicStore((s) => s.useShortNames);
   const wrapDeviceLabels = useSchematicStore((s) => s.wrapDeviceLabels);
+  const deviceHeader = useSchematicStore((s) => s.deviceHeader);
   const resolvedLabel = useMemo(
     () => resolveDeviceLabel(data, { useShortNames, wrapDeviceLabels }),
     [data, useShortNames, wrapDeviceLabels],
@@ -70,6 +71,7 @@ function DeviceNodeComponent({ id, data, selected }: NodeProps<DeviceNodeType>) 
     <DeviceBlockVisual
       data={data}
       resolvedLabel={resolvedLabel}
+      schematicDefaults={{ useShortNames, wrapDeviceLabels, deviceHeader }}
       displayLabel={displayLabel}
       selected={selected}
       hiddenPinSignalTypes={hiddenPinSignalTypes}

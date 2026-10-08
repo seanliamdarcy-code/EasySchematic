@@ -14,6 +14,8 @@
  */
 import { useEffect } from "react";
 import type { Connection } from "@xyflow/react";
+import { resolveDeviceHeader } from "./displayName";
+import { transformLabelNow } from "./labelCaseUtils";
 import { useSchematicStore } from "./store";
 import { absRect, getPortAbsolutePositions } from "./snapUtils";
 import { roomHandlers } from "./mcp/rooms";
@@ -621,9 +623,11 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
     }).filter(Boolean) : [];
     const instance = "nodeId" in placed ? requireDevice(placed.nodeId as string) : undefined;
     const instancePorts = (instance?.data as DeviceData | undefined)?.ports;
+    const ignoredFields = existing ? (["label", "manufacturer", "modelNumber", "deviceType", "shortName"] as const).filter(key => template[key] !== undefined && template[key] !== existing[key]) : [];
     return { templateId: deviceTemplate.id ?? deviceTemplate.deviceType, scope: st().customTemplates.includes(deviceTemplate) ? "local" : "shared-existing",
       reused: !!existing, published: false, ...placed, portDifferences,
-      warnings: portDifferences.length ? ["Existing template reused with different Ports. Use overrideExisting=true to preserve your corrected local definition."] : [],
+      ignoredFields,
+      warnings: [...(portDifferences.length ? ["Existing template reused with different Ports. Use overrideExisting=true to preserve your corrected local definition."] : []), ...(ignoredFields.length ? [`Existing template reused; supplied fields ignored: ${ignoredFields.join(", ")}. Use overrideExisting=true to keep the supplied definition.`] : [])],
       ports: instancePorts,
       portIdMap: instancePorts ? Object.fromEntries(deviceTemplate.ports.map((port, i) => [port.id, instancePorts[i]?.id])) : undefined };
   },
@@ -659,6 +663,7 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
         label: d.label,
         deviceType: d.deviceType,
         manufacturer: d.manufacturer,
+        displayHeader: resolveDeviceHeader(d, st()).displayHeader.map((line, index) => index === 0 ? transformLabelNow(line) : line),
         position: n.position,
         parentId: n.parentId,
         ...deviceGeometry(n),
@@ -699,6 +704,7 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
         label: d.label,
         deviceType: d.deviceType,
         manufacturer: d.manufacturer,
+        displayHeader: resolveDeviceHeader(d, st()).displayHeader.map((line, index) => index === 0 ? transformLabelNow(line) : line),
         modelNumber: d.modelNumber,
         position: n.position,
         parentId: n.parentId,
@@ -713,6 +719,8 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
       nodeId: node.id,
       label: d.label,
       shortName: d.shortName,
+      displayHeader: resolveDeviceHeader(d, st()).displayHeader.map((line, index) => index === 0 ? transformLabelNow(line) : line),
+      headerLine2: d.headerLine2, showManufacturerModel: d.showManufacturerModel, showDeviceType: d.showDeviceType,
       deviceType: d.deviceType,
       manufacturer: d.manufacturer,
       modelNumber: d.modelNumber,

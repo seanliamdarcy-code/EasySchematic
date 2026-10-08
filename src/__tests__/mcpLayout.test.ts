@@ -16,6 +16,28 @@ beforeEach(() => {
 });
 
 describe("MCP layout controls", () => {
+  it("persists header defaults and overrides, exposes rendered lines and rejects malformed settings atomically", () => {
+    s().patchDeviceData("source", { label: "Video Bar", manufacturer: "Neat", modelNumber: "Neat Bar Pro" });
+    expect(handlers.get_device({ nodeId: "source" })).toMatchObject({ displayHeader: ["Video Bar"] });
+    handlers.configure_sheet({ deviceHeader: { showManufacturerModel: true } });
+    expect(handlers.get_device({ nodeId: "source" })).toMatchObject({ displayHeader: ["Video Bar", "Neat Bar Pro"] });
+    handlers.set_device_property({ nodeId: "source", properties: { headerLine2: "Samsung – model TBC", showDeviceType: false } });
+    expect(handlers.get_schematic({})).toMatchObject({ devices: expect.arrayContaining([expect.objectContaining({ nodeId: "source", displayHeader: ["Video Bar", "Samsung – model TBC"] })]) });
+    const saved = s().exportToJSON();
+    s().newSchematic();
+    expect(s().deviceHeader).toBeUndefined();
+    s().importFromJSON(saved);
+    expect(s().deviceHeader).toEqual({ showManufacturerModel: true });
+    expect(handlers.get_device({ nodeId: "source" })).toMatchObject({ displayHeader: ["Video Bar", "Samsung – model TBC"] });
+    expect(() => handlers.configure_sheet({ deviceHeader: { showManufacturerModel: "yes" }, scale: 1 })).toThrow();
+    expect(s().deviceHeader).toEqual({ showManufacturerModel: true });
+    handlers.configure_sheet({ deviceHeader: { showManufacturerModel: false } });
+    expect(handlers.get_device({ nodeId: "source" })).toMatchObject({ displayHeader: ["Video Bar"] });
+    const { deviceHeader: _header, ...legacy } = saved;
+    void _header;
+    s().importFromJSON(legacy);
+    expect(s().deviceHeader).toBeUndefined();
+  });
   it("creates exact feathers, parents them and interprets subsequent moves as room-relative", () => {
     const created = handlers.add_external_endpoints({ endpoints: [{ label: "NETWORK", x: 500, y: 1543, direction: "output", connectorType: "rj45", signalType: "ethernet" }] }) as { results: { result: { nodeId: string; position: { y: number }; portCoordinates: object[] } }[] };
     const endpoint = created.results[0].result;

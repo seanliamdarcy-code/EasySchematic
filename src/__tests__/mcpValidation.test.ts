@@ -15,6 +15,11 @@ import {
 } from "../mcp/validation";
 
 describe("classifyDeviceProperties", () => {
+  it("validates Beta header overrides before persisting them", () => {
+    expect(classifyDeviceProperties({ headerLine2: "Samsung – model TBC", showManufacturerModel: true, showDeviceType: false }).patch).toEqual({ headerLine2: "Samsung – model TBC", showManufacturerModel: true, showDeviceType: false });
+    expect(classifyDeviceProperties({ headerLine2: 42, showManufacturerModel: "yes", showDeviceType: 0 }).applied).toEqual([]);
+    expect(classifyDeviceProperties({ headerLine2: "x".repeat(2001) }).applied).toEqual([]);
+  });
   it("routes label and shortName to their dedicated buckets", () => {
     const r = classifyDeviceProperties({ label: "Main Display", shortName: "DISP-1" });
     expect(r.label).toBe("Main Display");

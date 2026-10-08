@@ -107,6 +107,20 @@ Allow local-network access if the browser requests it. Only one editor tab can c
 
 If the editor says connected but a chat reports no editor, check which process owns port 8765 and whether additional processes are running an old build. Older builds logged `EADDRINUSE` but continued serving disconnected tools. Rebuild and reload those MCP processes to load the sharing fix; repeatedly reconnecting the editor cannot repair an old process that failed to bind its port. If the port owner exits, reload the MCP sessions and reconnect the editor.
 
+## Device make/model headers
+
+Existing schematics keep their appearance until enabled:
+
+```json
+{"deviceHeader":{"showManufacturerModel":true}}
+```
+
+Pass this to `configure_sheet`. The first line uses the Device label; the second combines manufacturer/model without repeating a manufacturer already at the start of the model. The default device-type subtitle hides when the second line is present. `showDeviceType` explicitly shows or hides it; omitted visibility uses the automatic behavior. Preferences provides the same saved sheet controls.
+
+`set_device_property({nodeId,properties:{headerLine2:"Samsung – model TBC"}})` replaces the computed second line when enabled. Empty text restores the computed value. Per-Device `showManufacturerModel`/`showDeviceType` booleans override sheet defaults; these controls are also in Device Properties. Feathers never show a make/model line. Width stays fixed, long text has an ellipsis and tooltip, and `get_device`/`get_schematic` return full `displayHeader` lines. Canvas, print capture and DXF use the same header rules.
+
+Set `showManufacturerModel:false` to disable the second line. If you explicitly hid the subtitle, also set `showDeviceType:true` to restore it. Local-template reuse returns `ignoredFields` and a warning when supplied identity/display fields differ; `overrideExisting:true` creates a separate corrected template.
+
 ## Missing devices
 
 Search existing templates first, then read `get_library_taxonomy` and research official manufacturer specifications using the assistant's own browsing tools. Never invent ports or dimensions; include evidence and record uncertainty.

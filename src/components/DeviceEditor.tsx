@@ -145,6 +145,9 @@ export default function DeviceEditor() {
   /** Tri-state per-instance toggle: undefined = inherit schematic default. */
   const [useShortName, setUseShortName] = useState<boolean | undefined>(undefined);
   const [wrapLabel, setWrapLabelState] = useState<boolean | undefined>(undefined);
+  const [headerLine2, setHeaderLine2] = useState("");
+  const [showManufacturerModel, setShowManufacturerModel] = useState<boolean | undefined>(undefined);
+  const [showDeviceType, setShowDeviceType] = useState<boolean | undefined>(undefined);
   const [hostname, setHostname] = useState("");
   const [deviceType, setDeviceType] = useState("");
   const [manufacturer, setManufacturer] = useState("");
@@ -223,6 +226,9 @@ export default function DeviceEditor() {
     setShortName(node.data.shortName ?? "");
     setUseShortName(node.data.useShortName);
     setWrapLabelState(node.data.wrapLabel);
+    setHeaderLine2(node.data.headerLine2 ?? "");
+    setShowManufacturerModel(node.data.showManufacturerModel);
+    setShowDeviceType(node.data.showDeviceType);
     setHostname(node.data.hostname ?? "");
     setDeviceType(node.data.deviceType);
     setManufacturer(node.data.manufacturer ?? "");
@@ -346,6 +352,9 @@ export default function DeviceEditor() {
     }
 
     const data: DeviceData = {
+      headerLine2: headerLine2.trim() || undefined,
+      showManufacturerModel,
+      showDeviceType,
       label: label.trim() || "Untitled",
       ...(shortName.trim() ? { shortName: shortName.trim() } : {}),
       ...(useShortName !== undefined ? { useShortName } : {}),
@@ -392,7 +401,7 @@ export default function DeviceEditor() {
     updateDevice(editingNodeId, data);
     setCreatingNodeId(null); // commit the node — close won't undo it
     if (closeAfter) close();
-  }, [editingNodeId, ports, label, shortName, useShortName, wrapLabel, hostname, deviceType, manufacturer, modelNumber, referenceUrl, category, color, textColor, headerColor, node, updateDevice, close, setCreatingNodeId, showAllPorts, hiddenPorts, dhcpServer, powerDrawW, powerCapacityW, voltage, thermalBtuh, poeBudgetW, poeDrawW, unitCost, heightMm, widthMm, depthMm, weightKg, isCableAccessory, integratedWithCable, isVenueProvided, adapterVisibility, auxiliaryData, searchTermsRaw]);
+  }, [editingNodeId, ports, label, shortName, useShortName, wrapLabel, headerLine2, showManufacturerModel, showDeviceType, hostname, deviceType, manufacturer, modelNumber, referenceUrl, category, color, textColor, headerColor, node, updateDevice, close, setCreatingNodeId, showAllPorts, hiddenPorts, dhcpServer, powerDrawW, powerCapacityW, voltage, thermalBtuh, poeBudgetW, poeDrawW, unitCost, heightMm, widthMm, depthMm, weightKg, isCableAccessory, integratedWithCable, isVenueProvided, adapterVisibility, auxiliaryData, searchTermsRaw]);
 
   // Ctrl+Enter anywhere in the editor → Apply & Close
   const onCtrlEnter = useCallback((e: React.KeyboardEvent) => {
@@ -831,6 +840,13 @@ export default function DeviceEditor() {
             </Field>
             {!isExternalEndpoint && (
               <>
+                <Field label="Make/model header override">
+                  <input aria-label="Make/model header override" maxLength={2000} value={headerLine2} onChange={(e) => setHeaderLine2(e.target.value)} placeholder="Automatic from manufacturer and model" className="w-full text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1.5" />
+                </Field>
+                <div className="text-xs flex flex-col gap-1">
+                  <label>Make/model <select aria-label="Device make/model visibility" value={showManufacturerModel === undefined ? "inherit" : String(showManufacturerModel)} onChange={(e) => setShowManufacturerModel(e.target.value === "inherit" ? undefined : e.target.value === "true")}><option value="inherit">Sheet default</option><option value="true">Show</option><option value="false">Hide</option></select></label>
+                  <label>Device type <select aria-label="Device type visibility" value={showDeviceType === undefined ? "inherit" : String(showDeviceType)} onChange={(e) => setShowDeviceType(e.target.value === "inherit" ? undefined : e.target.value === "true")}><option value="inherit">Sheet default</option><option value="true">Show</option><option value="false">Hide</option></select></label>
+                </div>
                 <Field label="Short Name">
                   <input
                     className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1.5 text-xs text-[var(--color-text-heading)] outline-none focus:border-blue-500"

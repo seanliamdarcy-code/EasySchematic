@@ -36,7 +36,7 @@ describe("Jetbuilt through the editor bridge", () => {
       { id: "usb", label: "USB-C", signalType: "usb", connectorType: "usb-c", direction: "bidirectional" }] };
     const reused = await handlers.create_local_device({ template: corrected }) as { warnings: string[]; portIdMap: Record<string, string>; ports: { id: string }[] };
     expect(reused).toMatchObject({ reused: true, scope: "shared-existing" });
-    expect(reused.warnings).toHaveLength(1);
+    expect(reused.warnings).toEqual(expect.arrayContaining([expect.stringContaining("different Ports"), expect.stringContaining("shortName")]));
     expect(reused.portIdMap.video).toBe(reused.ports[0].id);
     const overridden = await handlers.create_local_device({ template: corrected, overrideExisting: true }) as typeof reused;
     expect(overridden).toMatchObject({ reused: false, scope: "local", warnings: [] });
@@ -44,6 +44,12 @@ describe("Jetbuilt through the editor bridge", () => {
     expect(overridden.portIdMap.usb).toBe(overridden.ports[1].id);
     expect(template.ports).toHaveLength(1);
     expect(useSchematicStore.getState().customTemplates).toHaveLength(1);
+  });
+  it("warns when reuse ignores a supplied model spelling and Device type", async () => {
+    const result = await handlers.create_local_device({ template: { ...template, modelNumber: "C o d e c", deviceType: "monitor" } }) as { warnings: string[]; ignoredFields: string[]; nodeId: string };
+    expect(result.ignoredFields).toEqual(["modelNumber", "deviceType"]);
+    expect(result.warnings).toEqual([expect.stringContaining("modelNumber, deviceType")]);
+    expect(handlers.get_device({ nodeId: result.nodeId })).toMatchObject({ modelNumber: "Codec", deviceType: "video-codec" });
   });
   it("searches and previews without changing the document", async () => {
     const before = useSchematicStore.getState().nodes;

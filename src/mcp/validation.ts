@@ -33,6 +33,10 @@ export function classifyDeviceProperties(
 ): ClassifiedProperties {
   const result: ClassifiedProperties = { patch: {}, applied: [], rejected: [] };
   for (const [key, value] of Object.entries(properties)) {
+    if ((["showManufacturerModel", "showDeviceType"].includes(key) && typeof value !== "boolean") || (key === "headerLine2" && (typeof value !== "string" || value.length > 2000))) {
+      result.rejected.push(key);
+      continue;
+    }
     const kind = SAFE_DEVICE_FIELDS[key];
     if (!kind || !isScalar(value)) {
       result.rejected.push(key);

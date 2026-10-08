@@ -237,6 +237,9 @@ export interface DeviceData {
   /** Per-instance override for wrapping the device label across multiple lines.
    *  undefined = inherit SchematicFile.wrapDeviceLabels. */
   wrapLabel?: boolean;
+  headerLine2?: string;
+  showManufacturerModel?: boolean;
+  showDeviceType?: boolean;
   hostname?: string;
   deviceType: string;
   ports: Port[];
@@ -846,6 +849,7 @@ export interface SchematicFile {
   colorKeyPage?: "first" | "last" | "all";
   colorKeyOverrides?: Partial<Record<SignalType, boolean>>;
   colorKeyLabels?: Partial<Record<SignalType, string>>;
+  deviceHeader?: { showManufacturerModel?: boolean; showDeviceType?: boolean };
   /** Rack elevation pages */
   pages?: SchematicPage[];
   /** Show connector-level face-plate detail in rack views (default off; advanced) */

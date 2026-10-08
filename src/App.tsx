@@ -1332,7 +1332,7 @@ function SchematicCanvas() {
 
       const snap = computeSnap(draggedNode as SchematicNode, state.nodes, {
         useShortNames: state.useShortNames,
-        wrapDeviceLabels: state.wrapDeviceLabels,
+        deviceHeader: state.deviceHeader, wrapDeviceLabels: state.wrapDeviceLabels,
       }, state.edges);
       setSnapGuides(snap.guides);
 
@@ -1417,7 +1417,7 @@ function SchematicCanvas() {
       if (isGroupDrag) {
         const snap = computeSnap(draggedNode as SchematicNode, state.nodes, {
           useShortNames: state.useShortNames,
-          wrapDeviceLabels: state.wrapDeviceLabels,
+          deviceHeader: state.deviceHeader, wrapDeviceLabels: state.wrapDeviceLabels,
         }, state.edges);
         const dx = snap.x - draggedNode.position.x;
         const dy = snap.y - draggedNode.position.y;
@@ -1554,7 +1554,7 @@ function SchematicCanvas() {
       // computeSnap already handles port-priority + center-grid fallback.
       const snap = computeSnap(draggedNode as SchematicNode, state.nodes, {
         useShortNames: state.useShortNames,
-        wrapDeviceLabels: state.wrapDeviceLabels,
+        deviceHeader: state.deviceHeader, wrapDeviceLabels: state.wrapDeviceLabels,
       }, state.edges);
       let finalX = snap.x;
       let finalY = snap.y;

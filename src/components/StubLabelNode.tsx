@@ -140,7 +140,7 @@ function StubLabelNodeComponent({ id, data, selected }: NodeProps<StubLabelNodeT
       const nodeMap = new Map(state.nodes.map((n) => [n.id, n] as const));
       const portPositions = getPortAbsolutePositions(device, nodeMap, {
         useShortNames: state.useShortNames,
-        wrapDeviceLabels: state.wrapDeviceLabels,
+        deviceHeader: state.deviceHeader, wrapDeviceLabels: state.wrapDeviceLabels,
       });
       // Match by full handle id so bidir / passthrough resolve to the right row+side.
       const portPos = portPositions.find((p) => p.handleId === deviceHandleId);

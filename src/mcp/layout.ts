@@ -53,6 +53,7 @@ function sheetSummary() {
   const s = state();
   return { paperId: s.printPaperId, orientation: s.printOrientation, scale: s.printScale, titleBlock: s.titleBlock,
     titleBlockLayout: s.titleBlockLayout,
+    deviceHeader: s.deviceHeader ?? { showManufacturerModel: false },
     offset: { x: s.printOriginOffsetX, y: s.printOriginOffsetY }, ...sheetGeometry(s),
     legend: { enabled: s.colorKeyEnabled, corner: s.colorKeyCorner, columns: s.colorKeyColumns, page: s.colorKeyPage, overrides: s.colorKeyOverrides, labels: s.colorKeyLabels }, signalColors: s.signalColors };
 }
@@ -159,6 +160,10 @@ export const layoutHandlers = {
     return edge(e.id);
   },
   configure_sheet: (params: Record<string, unknown>) => {
+    const deviceHeader = params.deviceHeader === undefined ? undefined : object(params.deviceHeader);
+    if (deviceHeader) for (const [key, value] of Object.entries(deviceHeader)) {
+      if (!["showManufacturerModel", "showDeviceType"].includes(key) || typeof value !== "boolean") throw new Error("deviceHeader accepts only boolean showManufacturerModel/showDeviceType.");
+    }
     if (params.titleBlockLayout !== undefined && params.titleBlockLayout !== "tateside") throw new Error("titleBlockLayout must be tateside.");
     const offset = params.offset === undefined ? undefined : object(params.offset);
     if (offset) position(offset.x, offset.y);
@@ -226,6 +231,7 @@ export const layoutHandlers = {
     }
     // Validate the complete request before applying any settings.
     const s = state();
+    if (deviceHeader) s.setDeviceHeader({ ...s.deviceHeader, ...deviceHeader });
     if (params.paperId !== undefined) s.setPrintPaperId(params.paperId as string);
     if (params.orientation !== undefined) s.setPrintOrientation(params.orientation as "landscape" | "portrait");
     if (params.scale !== undefined) s.setPrintScale(params.scale as number);
