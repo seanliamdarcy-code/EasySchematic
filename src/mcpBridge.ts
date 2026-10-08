@@ -16,6 +16,7 @@ import { useEffect } from "react";
 import type { Connection } from "@xyflow/react";
 import { useSchematicStore } from "./store";
 import { absRect, getPortAbsolutePositions } from "./snapUtils";
+import { roomHandlers } from "./mcp/rooms";
 import { getBundledTemplates, getTemplateById, getCardsByFamily, fetchTemplates } from "./templateApi";
 import { inferRackForm, inferRackHeightU } from "./rackUtils";
 import {
@@ -143,12 +144,25 @@ function roomSummary(n: SchematicNode) {
 /** Compact view of a note (sticky-note) node for get_schematic. `text` is a best-effort
  *  plain-text rendering of the note's stored HTML (see noteHtmlToText). `parentId` is
  *  reported because a note can be reparented into a room, making `position` room-relative. */
+function noteSize(params: Record<string, unknown>, text: string, current?: SchematicNode) {
+  const width = params.width ?? current?.measured?.width ?? current?.width ?? current?.style?.width ?? 400;
+  if (typeof width !== "number" || !Number.isFinite(width) || width < 120 || width > 10000) throw new CommandError("Note width must be between 120 and 10000.");
+  // Conservative text estimate at the editor's 11px font, including wrapped lines.
+  const lines = text.replace(/\r\n?/g, "\n").split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length * 11 / (width - 16))), 0);
+  const height = params.height ?? Math.max(100, lines * 18 + 16, Number(current?.measured?.height ?? current?.height ?? current?.style?.height ?? 0));
+  if (typeof height !== "number" || !Number.isFinite(height) || height < 60 || height > 10000) throw new CommandError("Note height must be between 60 and 10000.");
+  if (params.height !== undefined && height < lines * 18 + 16) throw new CommandError("Note height is too small for its text; increase it or omit height for automatic sizing.");
+  return { width, height };
+}
+
 function noteSummary(n: SchematicNode) {
   return {
     noteId: n.id,
     text: noteHtmlToText((n.data as { html?: string }).html ?? ""),
     position: n.position,
     parentId: n.parentId,
+    width: n.measured?.width ?? n.width ?? n.style?.width ?? 200,
+    height: n.measured?.height ?? n.height ?? n.style?.height ?? 100,
   };
 }
 
@@ -509,6 +523,7 @@ function placeDeviceInRackCore(p: PlaceDeviceInRackParams) {
 // ---------------------------------------------------------------------------
 export const handlers: Record<CommandType, (params: Record<string, unknown>) => unknown | Promise<unknown>> = {
   ...layoutHandlers,
+  ...roomHandlers,
   capture_canvas: (params) => captureCanvas(params),
   search_jetbuilt_projects: async (params) => {
     return searchJetbuiltProjects(requiredText(params.query, "query"));
@@ -588,17 +603,29 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
     const position = validatePosition((params.x ?? 0) as number, (params.y ?? 0) as number);
     if (!position.ok) throw new CommandError(position.error);
     if (params.placeOnCanvas !== undefined && typeof params.placeOnCanvas !== "boolean") throw new CommandError("placeOnCanvas must be boolean.");
+    if (params.overrideExisting !== undefined && typeof params.overrideExisting !== "boolean") throw new CommandError("overrideExisting must be boolean.");
     const templates = await allTemplates();
     const identity = (value: string | undefined) => (value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-    const existing = [...st().customTemplates, ...templates].find((candidate) => template.manufacturer && template.modelNumber
+    const existing = params.overrideExisting === true ? undefined : [...st().customTemplates, ...templates].find((candidate) => template.manufacturer && template.modelNumber
       ? identity(candidate.manufacturer) === identity(template.manufacturer)
         && [candidate.modelNumber, ...(candidate.identityAliases ?? [])].some((value) => identity(value) === identity(template.modelNumber))
       : identity(candidate.label) === identity(template.label) && candidate.deviceType === template.deviceType);
     const deviceTemplate: DeviceTemplate = existing ?? { ...template, id: `local-ai-${crypto.randomUUID()}`, reviewStatus: "ai-researched", classificationConfidence: template.classificationConfidence ?? "low", version: undefined };
     if (!existing) st().addCustomTemplate(deviceTemplate);
     const placed = params.placeOnCanvas === false ? {} : addDeviceCore({templateId: deviceTemplate.id ?? deviceTemplate.deviceType, ...position.position}, [...templates, deviceTemplate]);
+    const portDifferences = existing ? Array.from({ length: Math.max(template.ports.length, existing.ports.length) }, (_, index) => {
+      const supplied = template.ports[index], reused = existing.ports[index];
+      const fields = [...new Set([...Object.keys(supplied ?? {}), ...Object.keys(reused ?? {})])].filter(key => key !== "id") as (keyof Port)[];
+      const changed = fields.filter(key => JSON.stringify(supplied?.[key]) !== JSON.stringify(reused?.[key]));
+      return changed.length ? { index, fields: changed, supplied, reused } : undefined;
+    }).filter(Boolean) : [];
+    const instance = "nodeId" in placed ? requireDevice(placed.nodeId as string) : undefined;
+    const instancePorts = (instance?.data as DeviceData | undefined)?.ports;
     return { templateId: deviceTemplate.id ?? deviceTemplate.deviceType, scope: st().customTemplates.includes(deviceTemplate) ? "local" : "shared-existing",
-      reused: !!existing, published: false, ...placed };
+      reused: !!existing, published: false, ...placed, portDifferences,
+      warnings: portDifferences.length ? ["Existing template reused with different Ports. Use overrideExisting=true to preserve your corrected local definition."] : [],
+      ports: instancePorts,
+      portIdMap: instancePorts ? Object.fromEntries(deviceTemplate.ports.map((port, i) => [port.id, instancePorts[i]?.id])) : undefined };
   },
   get_library_taxonomy: async () => ({ registry: await fetchTaxonomyRegistry(), connectors: CONNECTOR_LABELS, signals: SIGNAL_LABELS, directions: ["input", "output", "bidirectional", "passthrough"] }),
   propose_missing_device: (params) => proposeMissingDevice(params),
@@ -751,11 +778,14 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
 
   move_device: (params) => {
     const { nodeId, x, y } = params as unknown as MoveDeviceParams;
-    requireDevice(nodeId);
+    const node = requireDevice(nodeId);
     const pos = validatePosition(x, y);
     if (!pos.ok) throw new CommandError(pos.error);
-    st().moveDevice(nodeId, pos.position);
-    return { nodeId, position: pos.position };
+    const rect = absRect(node, new Map(st().nodes.map(n => [n.id, n])));
+    const absolute = { x: pos.position.x + rect.left - node.position.x, y: pos.position.y + rect.top - node.position.y };
+    st().moveDevice(nodeId, absolute);
+    const moved = requireDevice(nodeId);
+    return { nodeId, position: moved.position, parentId: moved.parentId, ...deviceGeometry(moved) };
   },
 
   delete_connection: (params) => {
@@ -838,7 +868,7 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
     // nothing. Gate on that boolean (NOT a parentId read-back, which can't tell a
     // rejected placement of an already-in-this-room device from a real one).
     const placed = st().placeDeviceInRoom(deviceId, roomId, rel);
-    if (!placed) {
+    if (!placed || requireDevice(deviceId).parentId !== roomId) {
       const after = st().nodes.find((n) => n.id === deviceId);
       throw new CommandError(
         `Device "${deviceId}" could not be placed in room "${roomId}": at the given position ` +
@@ -856,6 +886,7 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
     }
     const pos = validatePosition(x, y);
     if (!pos.ok) throw new CommandError(pos.error);
+    const size = noteSize(params, text);
     // No store action returns the new note's id, and addNote/updateNoteHtml are two
     // calls — but only addNote pushes undo, so the pair is a single undo step. Snapshot
     // ids, create the (empty) note, then set its escaped HTML on the new node.
@@ -864,7 +895,8 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
     const note = st().nodes.find((n) => n.type === "note" && !before.has(n.id));
     if (!note) throw new CommandError("Note was not created (no new note node appeared).");
     st().updateNoteHtml(note.id, noteTextToHtml(text));
-    return { noteId: note.id, text, position: pos.position };
+    st().patchContainerNode(note.id, size, { skipUndo: true });
+    return { noteId: note.id, text, position: pos.position, ...size };
   },
 
   list_slot_cards: (params) => {
@@ -1023,24 +1055,24 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
 
   update_note: (params) => {
     const { noteId, text } = params as unknown as UpdateNoteParams;
-    requireNote(noteId);
-    if (typeof text !== "string" || text.trim() === "") {
+    const note = requireNote(noteId);
+    if (text !== undefined && (typeof text !== "string" || text.trim() === "")) {
       throw new CommandError("text is required (a non-empty note).");
     }
-    const html = noteTextToHtml(text);
+    const size = noteSize(params, text ?? noteHtmlToText((note.data as { html: string }).html), note);
+    const html = text === undefined ? (note.data as { html: string }).html : noteTextToHtml(text);
     const current = (requireNote(noteId).data as { html?: string }).html ?? "";
     // No-op when the content is unchanged — updateNoteHtml does not guard identical writes,
     // and pushSnapshot() would otherwise add an empty undo step (the editor's own commit
     // path is likewise gated on `html !== data.html`).
-    if (html === current) {
+    if (html === current && size.width === (note.measured?.width ?? note.width ?? note.style?.width ?? 200) && size.height === (note.measured?.height ?? note.height ?? note.style?.height ?? 100)) {
       return { noteId, text, changed: false };
     }
     // pushSnapshot() makes this a single undo step (updateNoteHtml itself does not push undo,
     // because the editor calls it on every keystroke and snapshots separately). Text is
     // XSS-safe via the same noteTextToHtml path add_note uses.
-    st().pushSnapshot();
-    st().updateNoteHtml(noteId, html);
-    return { noteId, text, changed: true };
+    st().patchContainerNode(noteId, { html, ...size });
+    return { noteId, text, ...size, changed: true };
   },
 
   delete_note: (params) => {

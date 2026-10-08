@@ -35,6 +35,8 @@ const templateSchema = { type: "object", required: ["manufacturer", "modelNumber
             properties: {id: {type: "string"}, label: {type: "string"}, section: {type: "string"}, connectorType: {type: "string"}, signalType: {type: "string"}, direction: {enum: ["input", "output", "bidirectional", "passthrough"]}}} } } };
 
 export const TOOLS: ToolDef[] = [
+  { name: "update_room", description: "Move/resize/rename an existing unlocked room. x/y are absolute canvas coordinates; moving carries its children. fitToChildren=true fits its current children with padding (default 32) and preserves their absolute positions; use separately from explicit geometry. width/height respect 200x150 minimums. Returns geometry and child ids. Undoable; no shared-library change.", inputSchema: toolObject({ roomId: str, label: str, x: num, y: num, width: num, height: num, fitToChildren: { type: "boolean" }, padding: { type: "number", minimum: 16, maximum: 1000 } }, ["roomId"]) },
+  { name: "delete_room", description: "Delete an unlocked room container only. Preserves its Devices, notes, nested rooms and Connections; immediate children become unparented at their existing absolute positions. Undoable. Use get_schematic for the room id.", inputSchema: toolObject({ roomId: str }, ["roomId"]) },
   { name: "add_external_endpoints", description: "Create service/off-sheet feathers in a batch: AV NETWORK, MAINS POWER, BYOD, speaker destinations. These are compact one-Port Devices, never library templates. Specify signal/connector metadata and direction. Feathers are service references: signal/direction checks apply, physical connector matching does not; real Device-to-Device rules remain unchanged. Direction: output feeds a Device input; input receives a Device output; bidirectional uses in/out faces. Coordinates are absolute canvas coordinates. Returns independent ids/Ports; wire using connect_devices_batch and group with place_device_in_room. Best-effort per-item results. Delete with delete_device.", inputSchema: toolObject({ endpoints: { type: "array", minItems: 1, maxItems: 100, items: toolObject(endpointFields, ["label", "x", "y", "signalType", "connectorType", "direction"]) } }, ["endpoints"]) },
   { name: "update_external_endpoint", description: "Edit a compact external endpoint label or absolute canvas position. Direction/signal/connector edits are allowed only while disconnected. Retains its Port id. To delete use delete_device.", inputSchema: toolObject({ nodeId: str, ...endpointFields }, ["nodeId"]) },
   { name: "rename_ports", description: "Rename existing Ports on one Device instance without changing their ids, signal types, directions or Connections. Never edits the shared library. Read get_device first; supply actual portIds. Rejects the whole request if any id is invalid or duplicated.", inputSchema: toolObject({ nodeId: str, ports: { type: "array", minItems: 1, maxItems: 500, items: toolObject({ portId: str, label: str }, ["portId", "label"]) } }, ["nodeId", "ports"]) },
@@ -44,18 +46,19 @@ export const TOOLS: ToolDef[] = [
   { name: "set_connection_waypoints", description: "Set manual routing points in absolute canvas coordinates, preserving the editor's orthogonal router. An empty array clears manual routing. Use auto-routing first. Read get_device/get_schematic absoluteBounds and portCoordinates to calculate points, never guess from parent-relative position. Inspect capture_canvas for crossings and readability.", inputSchema: toolObject({ connectionId: str, waypoints: { type: "array", maxItems: 100, items: toolObject({ x: num, y: num }, ["x", "y"]) } }, ["connectionId", "waypoints"]) },
   {
     name: "configure_sheet",
-    description: "Read settings, pageCount and page/drawing-area/title-block/legend rectangles in absolute canvas coordinates. referencePage gives geometry on an empty canvas. Patch paper/orientation/scale, offset (page-grid origin in canvas coordinates), title fields, colours and legend. A3 is iso-a3. logo accepts an image URL, /asset path or image data URI; empty text clears it. showName is project, venue is client/location, designer is drawn by. customFields replaces metadata; existing layout cells refer to ids. Call fitToSheet=preview or apply separately after configuring paper: fits content and routed Connections on one page within scale limits; inspect print capture for legend collisions. No PDF/download/external save. Uses existing persistence; page-specific print layouts remain separate.",
+    description: "Read settings, pageCount and page/drawing-area/title-block/legend rectangles in absolute canvas coordinates. referencePage gives geometry on an empty canvas. Patch paper/orientation/scale, offset (page-grid origin in canvas coordinates), title fields, colours and legend. A3 is iso-a3. titleBlockLayout=tateside selects a house layout with logo/company/client/project/drawing title/drawing number/revision/date/drawn by/scale cells. Set customFields drawingNo and scale before or with this preset. legend.labels replaces custom signal labels; equal custom labels with equal colour/style merge in the legend. logo accepts an image URL, /asset path or image data URI; empty text clears it. showName is project, venue is client/location, designer is drawn by. customFields replaces metadata; existing layout cells refer to ids. Call fitToSheet=preview or apply separately after configuring paper: fits content and routed Connections on one page within scale limits; inspect print capture for legend collisions. No PDF/download/external save. Uses existing persistence; page-specific print layouts remain separate.",
     inputSchema: toolObject({
       paperId: str,
       orientation: { enum: ["landscape", "portrait"] },
       scale: { type: "number", minimum: 0.25, maximum: 2 },
+      titleBlockLayout: { enum: ["tateside"] },
       offset: toolObject({ x: num, y: num }, ["x", "y"]),
       fitToSheet: { enum: ["preview", "apply"] },
       titleBlock: toolObject({ showName: str, venue: str, designer: str, engineer: str, date: str, drawingTitle: str, company: str, revision: str, logo: str,
         customFields: { type: "array", maxItems: 50, items: toolObject({ id: str, label: str, value: str }, ["id", "label", "value"]) } }),
       signalColors: { type: "object", additionalProperties: str },
       legend: toolObject({ enabled: { type: "boolean" }, corner: { enum: ["top-left", "top-right", "bottom-left", "bottom-right"] },
-        columns: { type: "integer", minimum: 1, maximum: 4 }, page: { enum: ["first", "last", "all"] } }),
+        columns: { type: "integer", minimum: 1, maximum: 4 }, page: { enum: ["first", "last", "all"] }, labels: { type: "object", additionalProperties: str } }),
     }),
   },
   { name: "capture_canvas", description: "Return a PNG image to inspect Device spacing, routing and labels. view=print includes page edges, frame, title block and legend; page is 1-based, default 1. Read configure_sheet for pageCount/geometry. Read-only; no download or on-screen view change. Maximum dimension 1600 pixels. An empty/unmounted canvas or invalid page returns an error.", inputSchema: toolObject({ view: { enum: ["canvas", "print"] }, page: { type: "integer", minimum: 1 } }) },
@@ -73,13 +76,13 @@ export const TOOLS: ToolDef[] = [
       replaceCurrent: { type: "boolean", default: false }, expandQuantities: { type: "boolean", default: true }, includeUnmatched: { type: "boolean", default: false }
     }
   } },
-  { name: "create_local_device", description: "Default for a missing device: research official specifications, then create a LOCAL custom device and place it immediately, without Library Doctor approval. Search existing templates first; exact matches are reused. Never invent ports or specifications. Saved in this browser and included with schematic saves/exports; never published to the shared library. Read get_device afterward for actual port ids. Set placeOnCanvas=false to save only the template.", inputSchema: {
+  { name: "create_local_device", description: "Default for a missing device: research official specifications, then create a LOCAL custom device and place it immediately, without Library Doctor approval. Search existing templates first; exact matches are reused by default, with portDifferences/warnings when supplied Ports differ. Set overrideExisting=true to create a corrected local template without changing shared library data. Never invent ports or specifications. Saved in this browser and included with schematic saves/exports; never published to the shared library. Returns placed instance Ports and portIdMap (templatePortId to instance Port id). Set placeOnCanvas=false to save only the template.", inputSchema: {
     type: "object", additionalProperties: false, required: ["template"], properties: {
       template: { ...templateSchema, properties: { ...templateSchema.properties,
         classificationConfidence: {enum: ["high", "medium", "low"]},
         evidenceRefs: {type: "array", items: {type: "object", properties: {type: {type: "string"}, url: {type: "string"}, title: {type: "string"}, excerpt: {type: "string"}, note: {type: "string"}}}},
         identityAliases: {type: "array", items: {type: "string"}} } },
-      x: {type: "number"}, y: {type: "number"}, placeOnCanvas: {type: "boolean", default: true}
+      x: {type: "number"}, y: {type: "number"}, placeOnCanvas: {type: "boolean", default: true}, overrideExisting: {type: "boolean", default: false}
     }
   } },
   { name: "get_library_taxonomy", description: "Read active device taxonomy before creating or proposing a missing device. Use exact values returned.", inputSchema: noArgs },
@@ -197,7 +200,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "move_device",
     description:
-      "Reposition a device on the canvas. x and y are in the same coordinate space get_device/get_schematic report for that device â€” canvas coordinates for a top-level device, or coordinates relative to its room/rack when the device has a parentId. This moves the device within its current container; it does not move a device into or out of a room or rack.",
+      "Reposition a device on the canvas. x and y are in the same coordinate space get_device/get_schematic report for that device â€” canvas coordinates for a top-level device, or coordinates relative to its room/rack when the device has a parentId. The editor containment rules may reparent it if the new position falls in a different enclosure. Returns the actual parent, position and absolute geometry. Use place_device_in_room for an explicit room-relative placement.",
     inputSchema: {
       type: "object",
       properties: {
@@ -318,13 +321,14 @@ export const TOOLS: ToolDef[] = [
   {
     name: "add_note",
     description:
-      "Add a text note (a sticky-note card) to the canvas to annotate or explain the schematic. The text is shown literally (it is escaped, and line breaks are kept). Returns the new note's id. Notes can't yet be listed, edited, or deleted through the assistant â€” do that in the editor.",
+      "Add a text note (a sticky-note card) to the canvas to annotate or explain the schematic. The text is shown literally (it is escaped, and line breaks are kept). Returns the new note's id. Read notes via get_schematic; update_note resizes/edits and delete_note removes them. width/height are optional; omitted height expands conservatively for plain text.",
     inputSchema: {
       type: "object",
       properties: {
         text: { type: "string", description: "The note's text. Shown literally; newlines become line breaks." },
         x: { type: "number", description: "Note top-left X position on the canvas." },
         y: { type: "number", description: "Note top-left Y position on the canvas." },
+        width: { type: "number", minimum: 120, maximum: 10000 }, height: { type: "number", minimum: 60, maximum: 10000 },
       },
       required: ["text", "x", "y"],
       additionalProperties: false,
@@ -437,9 +441,10 @@ export const TOOLS: ToolDef[] = [
       type: "object",
       properties: {
         noteId: { type: "string", description: "The note id from get_schematic's notes." },
-        text: { type: "string", description: "The new note text." },
+        text: { type: "string", description: "The new note text; omit to resize without replacing rich text." },
+        width: { type: "number", minimum: 120, maximum: 10000 }, height: { type: "number", minimum: 60, maximum: 10000 },
       },
-      required: ["noteId", "text"],
+      required: ["noteId"],
       additionalProperties: false,
     },
   },

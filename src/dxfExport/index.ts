@@ -143,6 +143,7 @@ export function exportDxf(rfInstance: ReactFlowInstance) {
       extMin,
       extMax,
       state.colorKeyColumns ?? 2,
+      state.colorKeyLabels,
     );
   }
 

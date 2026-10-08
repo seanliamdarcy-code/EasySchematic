@@ -57,7 +57,7 @@ test("Grok HTTP connector requires consent, PKCE and bearer auth before exposing
     client = new Client({ name: "grok-http-fixture", version: "1.0" });
     await client.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp"), { requestInit: { headers: { Authorization: `Bearer ${tokens.access_token}` } } }));
     const tools = await client.listTools();
-    assert.equal(tools.tools.length, 43);
+    assert.equal(tools.tools.length, 45);
     assert(tools.tools.some(tool => tool.name === "start_jetbuilt_schematic"));
     await client.callTool({ name: "get_schematic", arguments: {} });
     assert.deepEqual(calls, ["get_schematic"]);

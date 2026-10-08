@@ -8,7 +8,7 @@ import { getPrintableArea } from "../printUtils";
 export function sheetGeometry(s = useSchematicStore.getState()) {
   const paper = getPaperSize(s.printPaperId, s.printCustomWidthIn, s.printCustomHeightIn);
   const pages = computePageGrid(paper, s.printOrientation, s.printScale, s.nodes, s.titleBlockLayout.heightIn, s.printOriginOffsetX, s.printOriginOffsetY);
-  const entries = s.colorKeyEnabled ? collectColorKeyEntries(s.edges, s.signalColors, s.signalLineStyles, s.colorKeyOverrides) : [];
+  const entries = s.colorKeyEnabled ? collectColorKeyEntries(s.edges, s.signalColors, s.signalLineStyles, s.colorKeyOverrides, s.colorKeyLabels) : [];
   const pt = 96 / s.printScale / 72;
   const legend = layoutColorKey(entries, s.colorKeyColumns, 77 * pt, 6.5 * pt * 1.8, 5 * pt, 7.5 * pt * 1.8);
   const reference = computePageGrid(paper, s.printOrientation, s.printScale, [{ id: "reference", position: { x: s.printOriginOffsetX + 100 / s.printScale, y: s.printOriginOffsetY + 100 / s.printScale }, measured: { width: 1, height: 1 } }], s.titleBlockLayout.heightIn, s.printOriginOffsetX, s.printOriginOffsetY)[0];

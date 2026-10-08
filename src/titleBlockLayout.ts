@@ -180,3 +180,18 @@ export function createDefaultLayout(): TitleBlockLayout {
     ],
   };
 }
+
+/** Explicit house preset; existing/custom layouts are retained until selected. */
+export function createTatesideLayout(tb: TitleBlock): TitleBlockLayout {
+  const find = (key: string, fallback: string) => tb.customFields.find(f => [f.id, f.label].some(v => v.toLowerCase().replace(/[^a-z]/g, "") === key))?.id ?? fallback;
+  const drawingNo = find("drawingno", "drawingNo"), scale = find("scale", "scale");
+  const label = (r: number, c: number, text: string, span = 1) => cell(r, c, { type: "static", text }, { colSpan: span, fontSize: 7 });
+  const field = (r: number, c: number, name: string, span = 1) => cell(r, c, { type: "field", field: name }, { colSpan: span, fontSize: 8, fontWeight: "bold" });
+  return { widthIn: 6.5, heightIn: 1.55, columns: Array(8).fill(1), rows: Array(6).fill(1), cells: [
+    cell(0, 0, { type: "logo" }, { colSpan: 2, rowSpan: 2 }), field(0, 2, "company", 6),
+    label(1, 2, "Project"), field(1, 3, "showName", 5),
+    label(2, 0, "Client"), field(2, 1, "venue", 3), label(2, 4, "Drawn by"), field(2, 5, "designer", 3),
+    field(3, 0, "drawingTitle", 8), label(4, 0, "Drawing No.", 2), field(4, 2, drawingNo, 3), label(4, 5, "Rev"), field(4, 6, "revision", 2),
+    label(5, 0, "Date"), field(5, 1, "date", 2), label(5, 3, "Scale"), field(5, 4, scale), cell(5, 5, { type: "pageNumber" }, { colSpan: 3, fontSize: 7, align: "center" }),
+  ] };
+}

@@ -31,6 +31,20 @@ beforeEach(() => {
 });
 
 describe("Jetbuilt through the editor bridge", () => {
+  it("warns on mismatched reused Ports, overrides locally and maps placed Port ids", async () => {
+    const corrected = { ...template, shortName: "Codec", category: "Processing", ports: [...template.ports,
+      { id: "usb", label: "USB-C", signalType: "usb", connectorType: "usb-c", direction: "bidirectional" }] };
+    const reused = await handlers.create_local_device({ template: corrected }) as { warnings: string[]; portIdMap: Record<string, string>; ports: { id: string }[] };
+    expect(reused).toMatchObject({ reused: true, scope: "shared-existing" });
+    expect(reused.warnings).toHaveLength(1);
+    expect(reused.portIdMap.video).toBe(reused.ports[0].id);
+    const overridden = await handlers.create_local_device({ template: corrected, overrideExisting: true }) as typeof reused;
+    expect(overridden).toMatchObject({ reused: false, scope: "local", warnings: [] });
+    expect(overridden.ports).toHaveLength(2);
+    expect(overridden.portIdMap.usb).toBe(overridden.ports[1].id);
+    expect(template.ports).toHaveLength(1);
+    expect(useSchematicStore.getState().customTemplates).toHaveLength(1);
+  });
   it("searches and previews without changing the document", async () => {
     const before = useSchematicStore.getState().nodes;
     await handlers.search_jetbuilt_projects({ query: "P-TEST" });

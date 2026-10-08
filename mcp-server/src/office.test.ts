@@ -41,7 +41,7 @@ test("office bridge isolates staff accounts, rejects spoofed origins and keeps M
     bob.on('message', data => { const msg = JSON.parse(String(data)); if (msg.type === 'command') bob.send(JSON.stringify({ type: 'response', requestId: msg.requestId, ok: true, result: { account: 'bob' } })); });
     const client = new Client({ name: 'office-fixture', version: '1' }); clients.push(client);
     await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { 'cf-access-jwt-assertion': 'bob@fixture.test' } } }));
-    assert.equal((await client.listTools()).tools.length, 43);
+    assert.equal((await client.listTools()).tools.length, 45);
     const toolResult = await client.callTool({ name: 'get_schematic', arguments: {} });
     assert.match(JSON.stringify(toolResult), /bob/);
     const waiting = office.call('alice@fixture.test', 'get_schematic', {});

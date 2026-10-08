@@ -19,8 +19,9 @@ export function emitLegend(
   extMin: { x: number; y: number },
   extMax: { x: number; y: number },
   columns = 2,
+  labels?: Partial<Record<SignalType, string>>,
 ) {
-  const entries = collectColorKeyEntries(edges, signalColors, signalLineStyles, overrides);
+  const entries = collectColorKeyEntries(edges, signalColors, signalLineStyles, overrides, labels);
   if (entries.length === 0) return;
 
   // Inch-based cell layout (tuned to look good in CAD)

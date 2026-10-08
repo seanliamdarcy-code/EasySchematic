@@ -1,6 +1,19 @@
 # TateSide live schematic MCP (Beta)
 
-Ported from upstream EasySchematic `e2f178c` (5 October 2026), adapted to the TateSide fork's shared library and store. It provides 43 tools, including Jetbuilt project selection, missing-device research/placement and schematic layout controls. It works with an empty schematic or an existing one.
+Ported from upstream EasySchematic `e2f178c` (5 October 2026), adapted to the TateSide fork's shared library and store. It provides 45 tools, including Jetbuilt project selection, missing-device research/placement and schematic layout controls. It works with an empty schematic or an existing one.
+
+## Round 3 controls
+
+- `create_local_device({overrideExisting: true, template: ...})` always creates a new local definition, retaining the real manufacturer/model identity and corrected Ports. It never modifies the shared library. Default reuse now reports `portDifferences` and warnings instead of silently discarding different definitions. Placement returns actual `ports` and `portIdMap` from template ids to instance ids.
+- Ordinary USB-A/B/C cable combinations, HDMI/mini-HDMI and DisplayPort/mini-DisplayPort connect directly, retaining their real endpoints and cable-schedule entries. Adapter-only combinations and signal/direction/fanout validation remain enforced. This establishes drawable cable compatibility, not USB role, speed or power negotiation.
+- `update_room({roomId, label?, x?, y?, width?, height?})` edits unlocked room containers. x/y are absolute canvas coordinates, even for nested rooms; moving carries its children. `fitToChildren: true` (optional padding, default 32, plus header allowance) fits immediate children and preserves their absolute positions. Use fit separately from explicit geometry. `delete_room({roomId})` deletes only the container and unparents its immediate children without deleting Devices or Connections. These actions support undo. Locked rooms must be unlocked in the editor first.
+- `place_device_in_room` validates and confirms actual parenting for Devices including feathers. `move_device` now correctly interprets its documented parent-relative coordinates for parented Devices; the store still applies enclosure containment/reparenting rules. Read returned parent/absolute geometry afterward.
+- MCP endpoint creation preserves exact requested x/y and returns Port coordinates. Interactive editor feather creation retains its grid snapping.
+- `add_note` / `update_note` accept width and height. Omitted height expands conservatively for multiline/wrapped plain text; explicitly undersized height is rejected. `update_note` can omit text to resize without replacing existing rich text. Note text remains HTML-escaped; geometry/text changes share one undo step.
+- `configure_sheet({titleBlockLayout: "tateside", titleBlock: {...}})` selects an explicit house preset containing logo, company, project, client, drawn by, drawing title, Drawing No., revision, date, scale and page cells. Set customFields with ids `drawingNo` and `scale` before or with the preset; it also resolves ids through matching field labels (e.g. `Drawing No.`). Existing layouts are retained until this preset is selected. Long text fits horizontally inside its SVG/PDF cell. The real logo still needs an asset supplied by the user.
+- `configure_sheet({legend: {labels: {ethernet: "CAT6 / TPX", expansion: "CAT6 / TPX"}}})` replaces custom legend labels; equal custom labels with equal colours/line styles merge visually without changing electrical signal types or cable records. Empty labels map clears customization. Labels persist in schematic saves/exports and apply in print view, PDF and DXF.
+- Fit-to-sheet waits for routing to settle, so an old route immediately after a move cannot inflate the fit.
+- The MCP server reports version 0.2.0 and sends `notifications/tools/list_changed` on initialization to request fresh schema discovery. Client caches remain client-controlled; reconnect/restart the assistant's MCP connection to load a rebuilt local process. Reload/re-pair the editor after frontend changes. There are now 45 tools; the only new tool names are `update_room` and `delete_room`.
 
 ## Layout controls
 
@@ -98,7 +111,7 @@ If the editor says connected but a chat reports no editor, check which process o
 
 Search existing templates first, then read `get_library_taxonomy` and research official manufacturer specifications using the assistant's own browsing tools. Never invent ports or dimensions; include evidence and record uncertainty.
 
-**Default: `create_local_device`.** This validates and saves a local custom device in the current browser, then places it immediately. No Library Doctor approval is needed. It returns the template and placed device identities; read `get_device` for the actual port IDs before wiring. Use `placeOnCanvas=false` to save only the template. Matching existing identities are reused without overwriting them.
+**Default: `create_local_device`.** This validates and saves a local custom device in the current browser, then places it immediately. No Library Doctor approval is needed. It returns the template, placed instance ports and `portIdMap` for wiring. Use `placeOnCanvas=false` to save only the template. Matching existing identities are reused without overwriting them, with warnings for differing ports; use `overrideExisting=true` to create a separate corrected local template.
 
 Local devices persist in that browser and are included with schematic saves/exports. They travel with a shared schematic but are not published to everyone's device library. Clearing browser storage removes the browser copy; keep schematic files/server saves as backups. AI-created definitions are marked AI researched, retain evidence/confidence, and still need your engineering review. Device Properties offers **Add to TateSide Library** for human review and publication when ready.
 

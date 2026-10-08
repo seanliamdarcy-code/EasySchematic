@@ -845,6 +845,7 @@ export interface SchematicFile {
   colorKeyColumns?: number;
   colorKeyPage?: "first" | "last" | "all";
   colorKeyOverrides?: Partial<Record<SignalType, boolean>>;
+  colorKeyLabels?: Partial<Record<SignalType, string>>;
   /** Rack elevation pages */
   pages?: SchematicPage[];
   /** Show connector-level face-plate detail in rack views (default off; advanced) */

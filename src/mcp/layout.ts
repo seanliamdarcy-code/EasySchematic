@@ -6,6 +6,8 @@ import { PAPER_SIZES } from "../printConfig";
 import { runBatch, validatePosition } from "./validation";
 import { MAX_BATCH_ITEMS } from "./protocol";
 import { sheetGeometry, fitSheet } from "./sheet";
+import { getPortAbsolutePositions } from "../snapUtils";
+import { createTatesideLayout } from "../titleBlockLayout";
 
 const state = () => useSchematicStore.getState();
 function text(value: unknown, name: string): string {
@@ -50,8 +52,9 @@ function endpointPort(spec: Record<string, unknown>, original: Port): Port {
 function sheetSummary() {
   const s = state();
   return { paperId: s.printPaperId, orientation: s.printOrientation, scale: s.printScale, titleBlock: s.titleBlock,
+    titleBlockLayout: s.titleBlockLayout,
     offset: { x: s.printOriginOffsetX, y: s.printOriginOffsetY }, ...sheetGeometry(s),
-    legend: { enabled: s.colorKeyEnabled, corner: s.colorKeyCorner, columns: s.colorKeyColumns, page: s.colorKeyPage, overrides: s.colorKeyOverrides }, signalColors: s.signalColors };
+    legend: { enabled: s.colorKeyEnabled, corner: s.colorKeyCorner, columns: s.colorKeyColumns, page: s.colorKeyPage, overrides: s.colorKeyOverrides, labels: s.colorKeyLabels }, signalColors: s.signalColors };
 }
 
 export const layoutHandlers = {
@@ -64,9 +67,10 @@ export const layoutHandlers = {
       const data = createExternalEndpointData(label);
       data.ports = [endpointPort(spec, data.ports[0])];
       const before = new Set(state().nodes.map(n => n.id));
-      state().addExternalEndpoint(pos, data);
+      state().addExternalEndpoint(pos, data, true);
       const n = state().nodes.find(n => !before.has(n.id))!;
-      return { nodeId: n.id, ports: data.ports, position: n.position };
+      return { nodeId: n.id, ports: data.ports, position: n.position, parentId: n.parentId,
+        portCoordinates: getPortAbsolutePositions(n, new Map(state().nodes.map(n => [n.id, n]))) };
     });
     if (!result.ok) throw new Error(result.error);
     return result;
@@ -155,18 +159,30 @@ export const layoutHandlers = {
     return edge(e.id);
   },
   configure_sheet: (params: Record<string, unknown>) => {
+    if (params.titleBlockLayout !== undefined && params.titleBlockLayout !== "tateside") throw new Error("titleBlockLayout must be tateside.");
     const offset = params.offset === undefined ? undefined : object(params.offset);
     if (offset) position(offset.x, offset.y);
     if (params.fitToSheet !== undefined && !["preview", "apply"].includes(params.fitToSheet as string)) throw new Error("fitToSheet must be preview or apply.");
     if (params.fitToSheet !== undefined && (Object.keys(params).length !== 1)) throw new Error("Use fitToSheet separately after configuring the sheet.");
     if (params.fitToSheet !== undefined) {
-      const fit = fitSheet();
-      if (params.fitToSheet === "apply") {
-        if (!fit.fits) throw new Error("Content cannot fit at the minimum scale; use larger paper or reduce content.");
-        state().setPrintScale(fit.scale);
-        state().setPrintOriginOffset(fit.offset.x, fit.offset.y);
-      }
-      return { ...sheetSummary(), fit };
+      return (async () => {
+        const { loadSeq, activePage } = state();
+        // The router debounces geometry changes by 50ms; old routes can inflate the fit.
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const deadline = Date.now() + 5000;
+        while (state().isRouting) {
+          if (Date.now() > deadline) throw new Error("Routing is still running; retry fit after it finishes.");
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        if (state().loadSeq !== loadSeq || state().activePage !== activePage) throw new Error("Editor session changed; retry fit.");
+        const fit = fitSheet();
+        if (params.fitToSheet === "apply") {
+          if (!fit.fits) throw new Error("Content cannot fit at the minimum scale; use larger paper or reduce content.");
+          state().setPrintScale(fit.scale);
+          state().setPrintOriginOffset(fit.offset.x, fit.offset.y);
+        }
+        return { ...sheetSummary(), fit };
+      })();
     }
     if (params.paperId !== undefined && !PAPER_SIZES.some(p => p.id === params.paperId)) throw new Error("Unknown paperId.");
     if (params.orientation !== undefined && !["landscape", "portrait"].includes(params.orientation as string)) throw new Error("Invalid orientation.");
@@ -194,7 +210,11 @@ export const layoutHandlers = {
       tb[key as keyof Omit<TitleBlock, "customFields">] = value;
     }
     const legend = params.legend === undefined ? {} : object(params.legend);
-    for (const key of Object.keys(legend)) if (!["enabled", "corner", "columns", "page"].includes(key)) throw new Error(`Unknown legend field: ${key}`);
+    for (const key of Object.keys(legend)) if (!["enabled", "corner", "columns", "page", "labels"].includes(key)) throw new Error(`Unknown legend field: ${key}`);
+    const labels = legend.labels === undefined ? undefined : object(legend.labels);
+    if (labels) for (const [key, value] of Object.entries(labels)) {
+      if (!Object.hasOwn(SIGNAL_LABELS, key) || typeof value !== "string" || !value.trim() || value.length > 100) throw new Error("legend.labels must map known signals to non-empty labels up to 100 characters.");
+    }
     if (legend.enabled !== undefined && typeof legend.enabled !== "boolean") throw new Error("legend.enabled must be boolean.");
     if (legend.corner !== undefined && !["top-left", "top-right", "bottom-left", "bottom-right"].includes(legend.corner as string)) throw new Error("Invalid legend corner.");
     if (legend.columns !== undefined && (typeof legend.columns !== "number" || !Number.isInteger(legend.columns) || legend.columns < 1 || legend.columns > 4)) throw new Error("legend.columns must be 1–4.");
@@ -211,11 +231,13 @@ export const layoutHandlers = {
     if (params.scale !== undefined) s.setPrintScale(params.scale as number);
     if (offset) s.setPrintOriginOffset(offset.x as number, offset.y as number);
     if (params.titleBlock !== undefined) s.setTitleBlock(tb);
+    if (params.titleBlockLayout === "tateside") s.setTitleBlockLayout(createTatesideLayout(tb));
     if (params.signalColors !== undefined) s.setSignalColors(colors);
     if (legend.enabled !== undefined) s.setColorKeyEnabled(legend.enabled as boolean);
     if (legend.corner !== undefined) s.setColorKeyCorner(legend.corner as typeof s.colorKeyCorner);
     if (legend.columns !== undefined) s.setColorKeyColumns(legend.columns as number);
     if (legend.page !== undefined) s.setColorKeyPage(legend.page as typeof s.colorKeyPage);
+    if (labels) s.setColorKeyLabels(labels as Partial<Record<SignalType, string>>);
     return sheetSummary();
   },
 };

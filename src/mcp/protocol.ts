@@ -59,6 +59,8 @@ export type CommandType =
   | "add_devices"
   | "connect_devices_batch"
   | "create_room"
+  | "update_room"
+  | "delete_room"
   | "place_device_in_room"
   | "add_note"
   | "list_slot_cards"

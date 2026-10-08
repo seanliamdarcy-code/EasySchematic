@@ -33,6 +33,7 @@ function PrintViewBar() {
   const colorKeyColumns = useSchematicStore((s) => s.colorKeyColumns);
   const colorKeyPage = useSchematicStore((s) => s.colorKeyPage);
   const colorKeyOverrides = useSchematicStore((s) => s.colorKeyOverrides);
+  const colorKeyLabels = useSchematicStore((s) => s.colorKeyLabels);
   const signalColors = useSchematicStore((s) => s.signalColors);
   const signalLineStyles = useSchematicStore((s) => s.signalLineStyles);
   const storeEdges = useSchematicStore((s) => s.edges);
@@ -63,8 +64,8 @@ function PrintViewBar() {
 
   // Compute auto-detected entries for the checklist
   const autoEntries = useMemo(
-    () => collectColorKeyEntries(storeEdges, signalColors, signalLineStyles, undefined),
-    [storeEdges, signalColors, signalLineStyles],
+    () => collectColorKeyEntries(storeEdges, signalColors, signalLineStyles, undefined, colorKeyLabels),
+    [storeEdges, signalColors, signalLineStyles, colorKeyLabels],
   );
 
   const paperSize = getPaperSize(printPaperId, printCustomWidthIn, printCustomHeightIn);
