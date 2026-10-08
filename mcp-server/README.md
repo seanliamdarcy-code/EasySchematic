@@ -1,6 +1,19 @@
 # TateSide live schematic MCP (Beta)
 
-Ported from upstream EasySchematic `e2f178c` (5 October 2026), adapted to the TateSide fork's shared library and store. It provides 26 upstream editing tools, five TateSide missing-device tools and three Jetbuilt project tools. It works with an empty schematic or an existing one.
+Ported from upstream EasySchematic `e2f178c` (5 October 2026), adapted to the TateSide fork's shared library and store. It provides 43 tools, including Jetbuilt project selection, missing-device research/placement and schematic layout controls. It works with an empty schematic or an existing one.
+
+## Layout controls
+
+Keep EasySchematic's appearance and use Tateside drawing conventions for arrangement and routing. The tool guidance and `build-schematic` prompt cover this in every client.
+
+- `add_external_endpoints` creates independent service/off-sheet feathers; `update_external_endpoint` edits them. They are one-Port Devices, so ordinary connect/delete/room tools apply. Creation/position edits use absolute canvas coordinates. Connected feathers cannot change direction, signal or connector until disconnected.
+- `set_connection_stubs` converts/restores paired references for an existing logical cable. Reread ids after conversion. `update_stub` edits presentation labels and placement (coordinates relative to its parent room); empty label restores automatic counterpart text. `delete_connection` cascades both legs and labels.
+- `rename_ports` changes only labels on a Device instance and preserves Port ids/Connections and library data.
+- `set_connection_properties` exposes cable, endpoint and bundle labels, colour and line style. Linked legs share appearance; cable metadata remains on the canonical source leg. `set_connection_waypoints` edits absolute routing points; empty array clears them.
+- `configure_sheet` reads/patches existing paper, orientation, scale, title fields, signal colours and legend. Settings follow existing editor persistence; sheet-settings undo and page-specific print layouts are not added.
+- `capture_canvas` returns a native MCP PNG image without downloading. Current canvas only, maximum dimension 1600px; print title block and other pages are excluded.
+
+Bundle labels do not create individual cable records, physical splitters or junction dots. Model actual splitters as Devices when needed. Layout review uses the canvas image and assistant guidance; no automated geometry audit is claimed. Hardware specifications must still come from verified manufacturer information.
 
 Local stdio connections run on the laptop with token pairing. The shared office connection runs on the VPS with Cloudflare staff sign-in and a separate active editor for each account. Both use the same tools. Pairing stays in memory and turns off on reload.
 

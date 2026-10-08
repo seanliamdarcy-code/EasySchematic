@@ -153,11 +153,10 @@ describe("planConnectionRemoval", () => {
     if (!r.ok) expect(r.error).toMatch(/No connection found/);
   });
 
-  it("rejects a stubbed (linked) connection rather than orphaning its partner leg", () => {
+  it("allows linked connection removal through the cascading store action", () => {
     const edges = [{ id: "edge-1", data: { linkedConnectionId: "cable-7" } }];
     const r = planConnectionRemoval(edges, "edge-1");
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/stubbed/);
+    expect(r).toEqual({ ok: true, removeId: "edge-1" });
   });
 });
 

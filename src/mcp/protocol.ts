@@ -29,6 +29,15 @@ export const PROTOCOL_VERSION = 1;
  *  delete_note — get_schematic also now reports rooms + notes), and the two Ship-9
  *  "batch structural" tools (install_card_batch, place_device_in_rack_batch). */
 export type CommandType =
+  | "add_external_endpoints"
+  | "update_external_endpoint"
+  | "rename_ports"
+  | "set_connection_stubs"
+  | "update_stub"
+  | "set_connection_properties"
+  | "set_connection_waypoints"
+  | "configure_sheet"
+  | "capture_canvas"
   | "search_jetbuilt_projects"
   | "get_jetbuilt_project"
   | "start_jetbuilt_schematic"

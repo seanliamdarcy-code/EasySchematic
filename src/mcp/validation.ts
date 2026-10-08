@@ -215,10 +215,8 @@ export type ConnectionRemovalPlan =
 /**
  * Decide whether a single connection can be removed by id.
  *   - id not found            -> error
- *   - stubbed/linked edge      -> rejected (it has a partner leg + stub-label node
- *     that a plain edge-remove would orphan; cascading that is out of scope for
- *     this Beta slice, so we fail honestly instead of corrupting the drawing)
- *   - plain edge               -> ok, remove just that edge
+ * The caller must use store.deleteConnection, which cascades linked stub legs
+ * and labels. Never use a plain edge-array removal for a linked connection.
  */
 export function planConnectionRemoval(
   edges: RemovableEdge[],
@@ -227,15 +225,6 @@ export function planConnectionRemoval(
   const edge = edges.find((e) => e.id === connectionId);
   if (!edge) {
     return { ok: false, error: `No connection found with id "${connectionId}".` };
-  }
-  if (edge.data?.linkedConnectionId) {
-    return {
-      ok: false,
-      error:
-        `Connection "${connectionId}" is a stubbed (linked) connection; removing it ` +
-        `via the AI bridge isn't supported yet — remove it in the editor, or delete ` +
-        `one of its devices.`,
-    };
   }
   return { ok: true, removeId: connectionId };
 }

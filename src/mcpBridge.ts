@@ -80,6 +80,8 @@ import { buildQuoteImportSchematic, importRoomLabel } from "./import/quoteSchema
 import { refreshTemplates } from "./templateApi";
 import { validateDeviceTemplate, normalizeDeviceTemplate } from "./deviceTemplateValidation";
 import { CONNECTOR_LABELS, SIGNAL_LABELS } from "./types";
+import { layoutHandlers, sheetSummary } from "./mcp/layout";
+import { captureCanvas } from "./exportUtils";
 
 export type BridgeStatus = "off" | "connecting" | "connected" | "error";
 
@@ -118,7 +120,7 @@ function requireDevice(nodeId: string): SchematicNode {
 }
 
 function portSummary(p: Port) {
-  return { id: p.id, label: p.label, direction: p.direction, signalType: p.signalType };
+  return { id: p.id, label: p.label, direction: p.direction, signalType: p.signalType, connectorType: p.connectorType, section: p.section };
 }
 
 /** Compact view of a room (container) node for get_schematic. `parentId`/`position`
@@ -495,6 +497,8 @@ function placeDeviceInRackCore(p: PlaceDeviceInRackParams) {
 // Command handlers — each returns a JSON-serializable result or throws CommandError.
 // ---------------------------------------------------------------------------
 export const handlers: Record<CommandType, (params: Record<string, unknown>) => unknown | Promise<unknown>> = {
+  ...layoutHandlers,
+  capture_canvas: () => captureCanvas(),
   search_jetbuilt_projects: async (params) => {
     return searchJetbuiltProjects(requiredText(params.query, "query"));
   },
@@ -629,6 +633,7 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
       sourceHandle: e.sourceHandle,
       target: e.target,
       targetHandle: e.targetHandle,
+      ...e.data,
     }));
     const rooms = st().nodes.filter((n) => n.type === "room").map(roomSummary);
     const notes = st().nodes.filter((n) => n.type === "note").map(noteSummary);
@@ -642,6 +647,8 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
       connections,
       rooms,
       notes,
+      stubs: st().nodes.filter(n => n.type === "stub-label").map(n => ({ stubId: n.id, position: n.position, parentId: n.parentId, ...n.data })),
+      sheet: sheetSummary(),
     };
   },
 

@@ -21,6 +21,10 @@ export interface ToolDef {
 }
 
 const noArgs = { type: "object", properties: {}, additionalProperties: false };
+const str = { type: "string" };
+const num = { type: "number" };
+const endpointFields = { label: str, x: num, y: num, direction: { enum: ["input", "output", "bidirectional"] }, signalType: str, connectorType: str };
+const toolObject = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", additionalProperties: false, properties, required });
 
 const templateSchema = { type: "object", required: ["manufacturer", "modelNumber", "label", "shortName", "category", "deviceType", "ports"], additionalProperties: false,
         properties: { manufacturer: {type: "string"}, modelNumber: {type: "string"}, label: {type: "string"}, shortName: {type: "string"}, category: {type: "string"}, deviceType: {type: "string"},
@@ -31,6 +35,28 @@ const templateSchema = { type: "object", required: ["manufacturer", "modelNumber
             properties: {id: {type: "string"}, label: {type: "string"}, section: {type: "string"}, connectorType: {type: "string"}, signalType: {type: "string"}, direction: {enum: ["input", "output", "bidirectional", "passthrough"]}}} } } };
 
 export const TOOLS: ToolDef[] = [
+  { name: "add_external_endpoints", description: "Create service/off-sheet feathers in a batch: AV NETWORK, MAINS POWER, BYOD, speaker destinations. These are compact one-Port Devices, never library templates. Specify the actual signal/connector and direction: output feeds a Device input; input receives a Device output; bidirectional uses in/out faces. Coordinates are absolute canvas coordinates. Returns independent ids/Ports; wire using connect_devices_batch and group with place_device_in_room. Best-effort per-item results. Delete with delete_device.", inputSchema: toolObject({ endpoints: { type: "array", minItems: 1, maxItems: 100, items: toolObject(endpointFields, ["label", "x", "y", "signalType", "connectorType", "direction"]) } }, ["endpoints"]) },
+  { name: "update_external_endpoint", description: "Edit a compact external endpoint label or absolute canvas position. Direction/signal/connector edits are allowed only while disconnected. Retains its Port id. To delete use delete_device.", inputSchema: toolObject({ nodeId: str, ...endpointFields }, ["nodeId"]) },
+  { name: "rename_ports", description: "Rename existing Ports on one Device instance without changing their ids, signal types, directions or Connections. Never edits the shared library. Read get_device first; supply actual portIds. Rejects the whole request if any id is invalid or duplicated.", inputSchema: toolObject({ nodeId: str, ports: { type: "array", minItems: 1, maxItems: 500, items: toolObject({ portId: str, label: str }, ["portId", "label"]) } }, ["nodeId", "ports"]) },
+  { name: "set_connection_stubs", description: "Convert an existing Connection into paired stubs/feathers (enabled=true), or restore its continuous run (false). Preserves the logical cable and real Device Ports. Conversion changes Connection ids; reread get_schematic afterward. Does not create a new electrical Connection. Deleting either leg via delete_connection deletes the complete pair.", inputSchema: toolObject({ connectionId: str, enabled: { type: "boolean" } }, ["connectionId", "enabled"]) },
+  { name: "update_stub", description: "Move a paired stub label and configure counterpart Port/room/page display. Coordinates are relative to its parentId, or absolute if no parent. label overrides the counterpart name/Port/room text; an empty label restores automatic text. Electrical linkage stays intact.", inputSchema: toolObject({ stubId: str, label: str, x: num, y: num, showPort: { type: "boolean" }, showRoom: { type: "boolean" }, pageMode: { enum: ["always", "cross-page", "never"] } }, ["stubId"]) },
+  { name: "set_connection_properties", description: "Set Connection labels, per-end labels, cableId, cableLength, multicableLabel (e.g. 8x CAT6), color or lineStyle. Does not change topology or compatibility. A bundle label describes an existing run; it does not create individual cables or a physical tee/junction. For paired-stub presentation text use update_stub.label. Color is #RRGGBB.", inputSchema: toolObject({ connectionId: str, properties: toolObject({ label: str, sourceLabel: str, targetLabel: str, cableId: str, cableLength: str, multicableLabel: str, color: str, lineStyle: { enum: ["solid", "dashed", "dotted", "dash-dot"] } }) }, ["connectionId", "properties"]) },
+  { name: "set_connection_waypoints", description: "Set manual routing points in absolute canvas coordinates, preserving the editor's orthogonal router. An empty array clears manual routing. Use get_schematic to obtain ids and existing points; inspect capture_canvas for crossings and readability.", inputSchema: toolObject({ connectionId: str, waypoints: { type: "array", maxItems: 100, items: toolObject({ x: num, y: num }, ["x", "y"]) } }, ["connectionId", "waypoints"]) },
+  {
+    name: "configure_sheet",
+    description: "Read settings with no arguments, or patch existing print paper/orientation/scale, title fields, colours and legend. A3 is iso-a3. showName is project, venue is client/location, designer is drawn by. customFields replaces custom metadata; existing layout cells refer to their ids. No PDF/download/external save. Uses existing editor persistence; page-specific print layouts remain separate.",
+    inputSchema: toolObject({
+      paperId: str,
+      orientation: { enum: ["landscape", "portrait"] },
+      scale: { type: "number", minimum: 0.25, maximum: 2 },
+      titleBlock: toolObject({ showName: str, venue: str, designer: str, engineer: str, date: str, drawingTitle: str, company: str, revision: str,
+        customFields: { type: "array", maxItems: 50, items: toolObject({ id: str, label: str, value: str }, ["id", "label", "value"]) } }),
+      signalColors: { type: "object", additionalProperties: str },
+      legend: toolObject({ enabled: { type: "boolean" }, corner: { enum: ["top-left", "top-right", "bottom-left", "bottom-right"] },
+        columns: { type: "integer", minimum: 1, maximum: 4 }, page: { enum: ["first", "last", "all"] } }),
+    }),
+  },
+  { name: "capture_canvas", description: "Return a PNG image of the current schematic canvas to inspect Device spacing, routing and label readability. Read-only; no download. Maximum dimension 1600 pixels. Excludes print title block and other pages; an empty/unmounted canvas returns an error.", inputSchema: noArgs },
   { name: "search_jetbuilt_projects", description: "Read-only project search by P number, name or Jetbuilt id through the paired editor's authenticated API. Returns project ids for get_jetbuilt_project. Never changes the canvas or writes Jetbuilt.", inputSchema: {
     type: "object", additionalProperties: false, required: ["query"], properties: { query: { type: "string", minLength: 1 } }
   } },
@@ -184,7 +210,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "delete_connection",
     description:
-      "Remove a single connection from the canvas by its id (the connection ids are returned by get_schematic and connect_devices). Stubbed connections cannot be removed this way yet.",
+      "Remove a Connection by its id. For paired stubs, removes both legs and both labels as one logical cable; Device Ports remain intact.",
     inputSchema: {
       type: "object",
       properties: {

@@ -27,6 +27,8 @@ Golden rules:
 - Prefer the batch tools (add_devices, connect_devices_batch, install_card_batch, place_device_in_rack_batch) over repeated single calls; each reports per-item success so you can retry only what failed.
 - Re-read get_device after a structural change (e.g. installing a card) before wiring the new Ports.
 
+Layout guidance: retain EasySchematic's visual style. Follow the user's specified Connections; a kit list does not define wiring. Arrange sources → switching/extension → processing → destinations. Keep inputs left, outputs right; use orthogonal runs and avoid crossings/overlaps. Group Devices by room/rack/desk, allowing room for feathers inside each enclosure. Use add_external_endpoints for services and off-sheet destinations, one per network/PSU Port as appropriate. Only annotate PoE when verified. set_connection_stubs shows an existing cable as a paired reference; reread ids afterward. rename_ports changes labels only, not hardware. Use set_connection_properties for cable/endpoint/bundle labels and set_connection_waypoints for routing. A bundle label does not create individual cables or a physical splitter. configure_sheet exposes existing print metadata/legend settings. Inspect capture_canvas before reporting completion and correct unreadable labels or overlapping runs; it shows the current canvas, not a PDF or other pages. Record unknowns and engineering assumptions in notes; do not invent physical Ports.
+
 Four prompts hold step-by-step playbooks: "jetbuilt-project" (preview a P number and start selected rooms), "build-schematic" (lay out and wire a system), "rack-elevation" (build and populate a rack), and "modular-chassis" (fit cards into a chassis).`;
 
 /** Definitions returned by the prompts/list handler. */
@@ -67,7 +69,9 @@ const BUILD_SCHEMATIC = `You are building or extending an AV signal-flow schemat
 4. If the brief names rooms or areas, create them with create_room BEFORE placing Devices, then place Devices with place_device_in_room. Creating a room on top of Devices that already exist absorbs them and makes their coordinates room-relative — if that happens, call get_schematic again before reusing any old position.
 5. Make Connections with connect_devices_batch. For two-sided Ports give the face: bidirectional Ports use "in"/"out", passthrough Ports use "rear"/"front"; plain Ports need no face. Connections are validated, so read the per-item results and retry only the failures.
 6. After any structural change that adds Ports (e.g. installing a card) re-read get_device before wiring the new Ports.
-7. In anything you say to the user, use the AV terms Device, Connection and Port.`;
+7. Follow the user's wiring instructions. Use add_external_endpoints for service feathers, set_connection_stubs for paired references and rename_ports for instance label corrections. Use update_stub for custom reference labels/placement. Keep network and power services separate per physical Port; annotate PoE only from verified specifications.
+8. Keep orthogonal routing clear of Devices. Use set_connection_waypoints and Connection cable/bundle labels where helpful; a drawn bundle or label does not establish an electrical junction. Inspect capture_canvas, fix crossings/overlaps and record assumptions with add_note. configure_sheet manages existing paper/title fields/colours/legend; keep EasySchematic's appearance.
+9. In anything you say to the user, use the AV terms Device, Connection and Port.`;
 
 const RACK_ELEVATION = `You are creating or populating an equipment rack elevation in EasySchematic through the live MCP bridge. Rack elevations are a separate view from the schematic canvas. Work in this order:
 

@@ -414,6 +414,8 @@ export interface AnnotationData {
 export type AnnotationNode = Node<AnnotationData, "annotation">;
 
 export interface StubLabelData {
+  /** Optional presentation label; electrical linkage still follows linkedConnectionId. */
+  label?: string;
   [key: string]: unknown;
   /** Signal type — controls border color, matches the linked connection */
   signalType: SignalType;

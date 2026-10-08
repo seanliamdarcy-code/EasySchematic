@@ -31,6 +31,7 @@ import ViewOptionsPanel from "./components/ViewOptionsPanel";
 import MenuBar from "./components/MenuBar";
 import TateSideAutoSync from "./components/TateSideAutoSync";
 import { useMcpBridge } from "./mcpBridge";
+import { useMcpCanvasCapture } from "./exportUtils";
 import EdgeContextMenu from "./components/EdgeContextMenu";
 import IncompatibleConnectionDialog from "./components/IncompatibleConnectionDialog";
 import ParallelOutputConnectionDialog from "./components/ParallelOutputConnectionDialog";
@@ -306,6 +307,7 @@ function SchematicCanvas() {
   } = useSchematicStore();
 
   const rfInstance = useReactFlow();
+  useMcpCanvasCapture(rfInstance);
   const rfStore = useStoreApi();
   const updateNodeInternals = useUpdateNodeInternals();
   const { screenToFlowPosition } = rfInstance;

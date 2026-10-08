@@ -361,7 +361,7 @@ interface SchematicState {
   setCreatingNodeId: (id: string | null) => void;
   createAndEditDevice: (template: DeviceTemplate, position: { x: number; y: number }) => void;
   addRoom: (label: string, position: { x: number; y: number }, size?: { width: number; height: number }) => void;
-  addExternalEndpoint: (position: { x: number; y: number }) => void;
+  addExternalEndpoint: (position: { x: number; y: number }, data?: DeviceData) => void;
   addDrawBox: (position: { x: number; y: number }) => void;
   updateRoomLabel: (nodeId: string, label: string) => void;
   updateRoom: (nodeId: string, data: import("./types").RoomData) => void;
@@ -653,6 +653,7 @@ interface SchematicState {
   wrapDeviceLabels: boolean;
   setWrapDeviceLabels: (wrap: boolean) => void;
   patchStubLabelData: (nodeId: string, patch: Partial<import("./types").StubLabelData>) => void;
+  moveStubLabel: (nodeId: string, position: { x: number; y: number }) => void;
   cableIdMap: Record<string, string>;
   recomputeCableIds: () => void;
 
@@ -3079,14 +3080,14 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     get().saveToLocalStorage();
   },
 
-  addExternalEndpoint: (position) => {
+  addExternalEndpoint: (position, data) => {
     const state = get();
     pushUndo({ nodes: state.nodes, edges: state.edges });
     const newNode: DeviceNode = {
       id: nextNodeId(),
       type: "device",
       position: { ...position, y: snapExternalEndpointY(position.y) },
-      data: createExternalEndpointData(),
+      data: data ?? createExternalEndpointData(),
       style: { height: EXTERNAL_ENDPOINT_HEIGHT },
       selected: true,
     };
@@ -5464,6 +5465,15 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
         return { ...n, data: merged };
       }),
     });
+    get().saveToLocalStorage();
+  },
+
+  moveStubLabel: (nodeId, position) => {
+    const state = get();
+    if (!state.nodes.some(n => n.id === nodeId && n.type === "stub-label")) return;
+    pushUndo({ nodes: state.nodes, edges: state.edges });
+    set({ nodes: state.nodes.map(n => n.id === nodeId && n.type === "stub-label"
+      ? { ...n, position, data: { ...n.data, placed: true } } : n) });
     get().saveToLocalStorage();
   },
 

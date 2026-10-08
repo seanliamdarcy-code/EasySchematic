@@ -220,16 +220,16 @@ function StubLabelNodeComponent({ id, data, selected }: NodeProps<StubLabelNodeT
   const text = useMemo(() => {
     if (!labelStr) return "?";
     const [arrow, farLabel, farPort, farRoom, myPage, farPage] = labelStr.split("\0");
-    let t = `${arrow} ${farLabel}`;
-    if (effectiveShowPort && farPort) t += ` [${farPort}]`;
-    if (effectiveShowRoom && farRoom) t += ` (${farRoom})`;
+    let t = `${arrow} ${data.label || farLabel}`;
+    if (!data.label && effectiveShowPort && farPort) t += ` [${farPort}]`;
+    if (!data.label && effectiveShowRoom && farRoom) t += ` (${farRoom})`;
     const showPage = !!farPage && (
       effectivePageMode === "always" ||
       (effectivePageMode === "cross-page" && farPage !== myPage)
     );
     if (showPage) t += ` Pg ${farPage}`;
     return t;
-  }, [labelStr, effectiveShowPort, effectiveShowRoom, effectivePageMode]);
+  }, [labelStr, data.label, effectiveShowPort, effectiveShowRoom, effectivePageMode]);
 
   const color = SIGNAL_COLORS[data.signalType] ?? "#999";
   // Source-side stubs receive an incoming line (they're the TARGET of the edge);
