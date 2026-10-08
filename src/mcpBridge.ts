@@ -15,7 +15,7 @@
 import { useEffect } from "react";
 import type { Connection } from "@xyflow/react";
 import { useSchematicStore } from "./store";
-import { getPortAbsolutePositions } from "./snapUtils";
+import { absRect, getPortAbsolutePositions } from "./snapUtils";
 import { getBundledTemplates, getTemplateById, getCardsByFamily, fetchTemplates } from "./templateApi";
 import { inferRackForm, inferRackHeightU } from "./rackUtils";
 import {
@@ -273,6 +273,17 @@ function resolveTemplate(templateId: string, list: DeviceTemplate[]): DeviceTemp
 
 /** Resolve a (portId, face) to the React Flow handle id the UI would use, by
  *  asking the same geometry helper that lays out the node's handles. */
+function deviceGeometry(node: SchematicNode) {
+  const s = st();
+  const nodeMap = new Map(s.nodes.map(n => [n.id, n]));
+  const rect = absRect(node, nodeMap);
+  return {
+    absoluteBounds: { x: rect.left, y: rect.top, w: rect.right - rect.left, h: rect.bottom - rect.top },
+    geometryMeasured: node.measured?.width !== undefined && node.measured?.height !== undefined,
+    portCoordinates: getPortAbsolutePositions(node, nodeMap, s),
+  };
+}
+
 function resolveHandle(node: SchematicNode, portId: string, face: PortFace | undefined): string {
   const nodeMap = new Map(st().nodes.map((n) => [n.id, n] as const));
   const candidates = getPortAbsolutePositions(node, nodeMap)
@@ -498,7 +509,7 @@ function placeDeviceInRackCore(p: PlaceDeviceInRackParams) {
 // ---------------------------------------------------------------------------
 export const handlers: Record<CommandType, (params: Record<string, unknown>) => unknown | Promise<unknown>> = {
   ...layoutHandlers,
-  capture_canvas: () => captureCanvas(),
+  capture_canvas: (params) => captureCanvas(params),
   search_jetbuilt_projects: async (params) => {
     return searchJetbuiltProjects(requiredText(params.query, "query"));
   },
@@ -623,6 +634,7 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
         manufacturer: d.manufacturer,
         position: n.position,
         parentId: n.parentId,
+        ...deviceGeometry(n),
         slotCount: (d.slots ?? []).length,
         ports: (d.ports ?? []).map(portSummary),
       };
@@ -679,6 +691,7 @@ export const handlers: Record<CommandType, (params: Record<string, unknown>) => 
       modelNumber: d.modelNumber,
       position: node.position,
       parentId: node.parentId,
+      ...deviceGeometry(node),
       ports: (d.ports ?? []).map(portSummary),
       slots: (d.slots ?? []).map(slotSummary),
     };

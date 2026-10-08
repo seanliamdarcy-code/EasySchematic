@@ -13,6 +13,50 @@ beforeEach(() => {
 });
 
 describe("MCP layout controls", () => {
+  it("connects service references across connector types but still rejects different signals", () => {
+    handlers.add_external_endpoints({ endpoints: [{ label: "SERVICE", x: 300, y: 300, direction: "output", signalType: "hdmi", connectorType: "usb-c" }] });
+    const n = s().nodes.find(n => n.type === "device" && n.data.label === "SERVICE")!;
+    handlers.delete_connection({ connectionId: s().edges[0].id });
+    expect(handlers.connect_devices({ sourceNodeId: n.id, sourcePortId: "endpoint", targetNodeId: "target", targetPortId: "target-port" })).toMatchObject({ connected: true });
+    expect(s().pendingIncompatibleConnection).toBeNull();
+    handlers.delete_connection({ connectionId: s().edges[0].id });
+    handlers.update_external_endpoint({ nodeId: n.id, signalType: "power" });
+    expect(() => handlers.connect_devices({ sourceNodeId: n.id, sourcePortId: "endpoint", targetNodeId: "target", targetPortId: "target-port" })).toThrow();
+    expect(s().edges).toHaveLength(0);
+    // Physical plugs still need an adapter between real Devices.
+    useSchematicStore.setState({ nodes: [fixture("physical", "output", 50), fixture("target", "input", 600)] });
+    s().patchDeviceData("physical", { ports: [{ id: "physical-port", label: "USB-C", direction: "output", signalType: "hdmi", connectorType: "usb-c" }] });
+    expect(() => handlers.connect_devices({ sourceNodeId: "physical", sourcePortId: "physical-port", targetNodeId: "target", targetPortId: "target-port" })).toThrow(/adapter/);
+  });
+  it("reports absolute Device bounds and Port coordinates inside rooms", () => {
+    useSchematicStore.setState({ nodes: [{ id: "room", type: "room", position: { x: 400, y: 300 }, data: { label: "Room" } } as SchematicNode,
+      { ...fixture("nested", "input", 50), parentId: "room", measured: { width: 180, height: 100 } }] });
+    const result = handlers.get_device({ nodeId: "nested" });
+    expect(result).toMatchObject({ position: { x: 50, y: 50 }, absoluteBounds: { x: 450, y: 350, w: 180, h: 100 }, geometryMeasured: true,
+      portCoordinates: [{ portId: "nested-port", side: "left", absX: 450 }] });
+    expect(handlers.get_schematic({})).toMatchObject({ devices: [{ absoluteBounds: { x: 450, y: 350 }, portCoordinates: [{ absX: 450 }] }] });
+    s().patchDeviceData("nested", { ports: [{ id: "network", label: "LAN", direction: "bidirectional", signalType: "ethernet", connectorType: "rj45" }] });
+    expect(handlers.get_device({ nodeId: "nested" })).toMatchObject({ portCoordinates: [
+      { handleId: "network-in", side: "left", absX: 450 }, { handleId: "network-out", side: "right", absX: 630 },
+    ] });
+  });
+  it("reports sheet geometry, previews/applies fit without moving Devices, and rejects invalid patches atomically", () => {
+    const nodes = s().nodes;
+    const logo = "data:image/png;base64,fixture";
+    expect(() => handlers.configure_sheet({ paperId: "iso-a3", offset: { x: NaN, y: 0 } })).toThrow();
+    expect(() => handlers.configure_sheet({ titleBlock: { logo: "javascript:bad" } })).toThrow();
+    const configured = handlers.configure_sheet({ paperId: "iso-a3", titleBlock: { logo }, offset: { x: -100, y: -100 }, legend: { enabled: true } });
+    expect(configured).toMatchObject({ offset: { x: -100, y: -100 }, titleBlock: { logo }, pageCount: 1,
+      pages: [{ rect: { x: -100, y: -100 }, drawingArea: { w: expect.any(Number) }, titleBlock: { h: expect.any(Number) }, legend: { w: expect.any(Number) } }] });
+    const scale = s().printScale;
+    expect(handlers.configure_sheet({ fitToSheet: "preview" })).toMatchObject({ fit: { fits: true } });
+    expect(s().printScale).toBe(scale);
+    expect(handlers.configure_sheet({ fitToSheet: "apply" })).toMatchObject({ pageCount: 1 });
+    expect(s().nodes).toBe(nodes);
+    useSchematicStore.setState({ nodes: [fixture("huge", "input", 0)], routedEdges: { huge: { waypoints: [{ x: 100000, y: 100000 }] } } as unknown as ReturnType<typeof s>["routedEdges"] });
+    expect(handlers.configure_sheet({ fitToSheet: "preview" })).toMatchObject({ fit: { fits: false } });
+    expect(() => handlers.configure_sheet({ fitToSheet: "apply" })).toThrow(/cannot fit/);
+  });
   it("creates service endpoints independently, rejects invalid items and undoes creation", () => {
     const result = handlers.add_external_endpoints({ endpoints: [
       { label: "AV NETWORK", x: 300, y: 300, direction: "output", signalType: "ethernet", connectorType: "rj45" },

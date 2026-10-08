@@ -5,6 +5,7 @@ import type { ConnectionData, DeviceData, Port, SignalType, TitleBlock } from ".
 import { PAPER_SIZES } from "../printConfig";
 import { runBatch, validatePosition } from "./validation";
 import { MAX_BATCH_ITEMS } from "./protocol";
+import { sheetGeometry, fitSheet } from "./sheet";
 
 const state = () => useSchematicStore.getState();
 function text(value: unknown, name: string): string {
@@ -49,6 +50,7 @@ function endpointPort(spec: Record<string, unknown>, original: Port): Port {
 function sheetSummary() {
   const s = state();
   return { paperId: s.printPaperId, orientation: s.printOrientation, scale: s.printScale, titleBlock: s.titleBlock,
+    offset: { x: s.printOriginOffsetX, y: s.printOriginOffsetY }, ...sheetGeometry(s),
     legend: { enabled: s.colorKeyEnabled, corner: s.colorKeyCorner, columns: s.colorKeyColumns, page: s.colorKeyPage, overrides: s.colorKeyOverrides }, signalColors: s.signalColors };
 }
 
@@ -153,11 +155,29 @@ export const layoutHandlers = {
     return edge(e.id);
   },
   configure_sheet: (params: Record<string, unknown>) => {
+    const offset = params.offset === undefined ? undefined : object(params.offset);
+    if (offset) position(offset.x, offset.y);
+    if (params.fitToSheet !== undefined && !["preview", "apply"].includes(params.fitToSheet as string)) throw new Error("fitToSheet must be preview or apply.");
+    if (params.fitToSheet !== undefined && (Object.keys(params).length !== 1)) throw new Error("Use fitToSheet separately after configuring the sheet.");
+    if (params.fitToSheet !== undefined) {
+      const fit = fitSheet();
+      if (params.fitToSheet === "apply") {
+        if (!fit.fits) throw new Error("Content cannot fit at the minimum scale; use larger paper or reduce content.");
+        state().setPrintScale(fit.scale);
+        state().setPrintOriginOffset(fit.offset.x, fit.offset.y);
+      }
+      return { ...sheetSummary(), fit };
+    }
     if (params.paperId !== undefined && !PAPER_SIZES.some(p => p.id === params.paperId)) throw new Error("Unknown paperId.");
     if (params.orientation !== undefined && !["landscape", "portrait"].includes(params.orientation as string)) throw new Error("Invalid orientation.");
     if (params.scale !== undefined && (typeof params.scale !== "number" || !Number.isFinite(params.scale) || params.scale < 0.25 || params.scale > 2)) throw new Error("scale must be between 0.25 and 2.");
     const tb = { ...state().titleBlock };
     if (params.titleBlock !== undefined) for (const [key, value] of Object.entries(object(params.titleBlock))) {
+      if (key === "logo") {
+        if (typeof value !== "string" || value.length > 2_000_000 || (value !== "" && !/^(https?:\/\/|\/[^/]|data:image\/(png|jpeg|webp|svg\+xml)[;,])/i.test(value))) throw new Error("logo must be an image URL, /asset path, image data URI, or empty text to clear.");
+        tb.logo = value;
+        continue;
+      }
       if (key === "customFields") {
         if (!Array.isArray(value) || value.length > 50) throw new Error("customFields must be an array of at most 50 fields.");
         const ids = new Set<string>();
@@ -189,6 +209,7 @@ export const layoutHandlers = {
     if (params.paperId !== undefined) s.setPrintPaperId(params.paperId as string);
     if (params.orientation !== undefined) s.setPrintOrientation(params.orientation as "landscape" | "portrait");
     if (params.scale !== undefined) s.setPrintScale(params.scale as number);
+    if (offset) s.setPrintOriginOffset(offset.x as number, offset.y as number);
     if (params.titleBlock !== undefined) s.setTitleBlock(tb);
     if (params.signalColors !== undefined) s.setSignalColors(colors);
     if (legend.enabled !== undefined) s.setColorKeyEnabled(legend.enabled as boolean);

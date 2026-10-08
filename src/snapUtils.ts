@@ -132,7 +132,7 @@ function absoluteNodePos(
 
 /** Node rect in absolute world coords. Single allocation per call (parent
  *  chain walk inlined; intermediate nodeRect/absoluteNodePos avoided). */
-function absRect(node: SchematicNode, nodeMap: Map<string, SchematicNode>): Rect {
+export function absRect(node: SchematicNode, nodeMap: Map<string, SchematicNode>): Rect {
   const isExternalEndpoint = node.type === "device" && isExternalEndpointData(node.data as DeviceData);
   const w = node.measured?.width ?? (node.width as number) ?? (node.style?.width as number) ?? (node.type === "room" ? 400 : isExternalEndpoint ? estimateExternalEndpointWidth((node.data as DeviceData).label, (node.data as DeviceData).ports?.[0]?.direction) : 180);
   const h = node.measured?.height ?? (node.height as number) ?? (node.style?.height as number) ?? (node.type === "room" ? 300 : estimateDeviceHeight(node));

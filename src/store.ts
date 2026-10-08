@@ -1621,7 +1621,9 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     );
 
     // Check if connector types are mismatched (any mismatch, not just CONNECTOR_ACCEPTS pairs)
-    const connectorsDiffer = sourcePort && targetPort &&
+    // Service references have no physical plug; real Devices still require connector compatibility.
+    const serviceReference = isExternalEndpointNode(state.nodes, connection.source) || isExternalEndpointNode(state.nodes, connection.target);
+    const connectorsDiffer = !serviceReference && sourcePort && targetPort &&
       sourcePort.connectorType && targetPort.connectorType &&
       sourcePort.connectorType !== targetPort.connectorType &&
       !areConnectorsCompatible(sourcePort.connectorType, targetPort.connectorType);
@@ -1648,7 +1650,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     }
 
     // Also handle CONNECTOR_ACCEPTS adapter pairs (compatible but needs adapter cable)
-    if (sourcePort && targetPort && needsAdapter(sourcePort.connectorType, targetPort.connectorType)) {
+    if (!serviceReference && sourcePort && targetPort && needsAdapter(sourcePort.connectorType, targetPort.connectorType)) {
       const allTemplates = [...DEVICE_TEMPLATES, ...state.customTemplates];
       const adapterMatches = findAdaptersForConnectorBridge(
         sourcePort.connectorType!,

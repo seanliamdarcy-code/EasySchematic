@@ -49,6 +49,46 @@ test('layout tools preserve editable topology and return a real canvas PNG throu
     const imagePath = testInfo.outputPath('mcp-layout-capture.png');
     await writeFile(imagePath, png);
     await testInfo.attach('MCP canvas image', { path: imagePath, contentType: 'image/png' });
+    const fit = await call('configure_sheet', { fitToSheet: 'apply' });
+    expect(fit.pageCount).toBe(1);
+    expect(fit.pages[0].legend.w).toBeGreaterThan(0);
+    const viewBefore = await page.evaluate(async () => (await import('/src/store.ts')).useSchematicStore.getState().printView);
+    const print = await client.callTool({ name: 'capture_canvas', arguments: { view: 'print', page: 1 } });
+    expect(print.isError).not.toBe(true);
+    const printImage = (print.content as Array<{ type: string; data: string }>).find(c => c.type === 'image')!;
+    const printPng = Buffer.from(printImage.data, 'base64');
+    expect(printPng.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+    expect(printPng.readUInt32BE(16)).toBeLessThanOrEqual(1600);
+    expect(printPng.equals(png)).toBe(false);
+    const pixelsSeen = await page.evaluate(async (data) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${data}`;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width; canvas.height = img.height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      const pixels = ctx.getImageData(0, 0, img.width, img.height).data;
+      let count = 0;
+      let wireCount = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] < 220 || pixels[i + 1] < 220 || pixels[i + 2] < 220) count++;
+        if (pixels[i] > 200 && pixels[i + 1] < 100 && pixels[i + 2] < 100) wireCount++;
+      }
+      return { count, wireCount };
+    }, printImage.data);
+    expect(pixelsSeen.count).toBeGreaterThan(3000);
+    expect(pixelsSeen.wireCount).toBeGreaterThan(600);
+    const printPath = testInfo.outputPath('mcp-print-capture.png');
+    await writeFile(printPath, printPng);
+    await testInfo.attach('MCP print image', { path: printPath, contentType: 'image/png' });
+    expect((await client.callTool({ name: 'capture_canvas', arguments: { view: 'print', page: 2 } })).isError).toBe(true);
+    expect(await page.evaluate(async () => (await import('/src/store.ts')).useSchematicStore.getState().printView)).toBe(viewBefore);
+    await call('move_device', { nodeId: display.nodeId, x: 2800, y: 200 });
+    const multipage = await call('configure_sheet');
+    expect(multipage.pageCount).toBeGreaterThan(1);
+    expect((await client.callTool({ name: 'capture_canvas', arguments: { view: 'print', page: multipage.pageCount } })).isError).not.toBe(true);
+    await call('move_device', { nodeId: display.nodeId, x: display.absoluteBounds.x, y: display.absoluteBounds.y });
     await call('set_connection_stubs', { connectionId: schematic.connections[0].id, enabled: false });
     schematic = await call('get_schematic');
     expect(schematic.connections).toHaveLength(1);
