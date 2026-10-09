@@ -30,8 +30,25 @@ assistant command. Account mismatch is checked by comparing those emails; the
 server never exposes another staff member's editor to infer a mismatch. There is
 no separate "no saved schematic" error because saved IDs are not required.
 
-Validation: application tests, API tests, MCP tests, lint and all 13 isolated
+Validation: 302 application tests, 104 API tests, 19 MCP tests, lint and all 13 isolated
 browser tests passed. Browser regression verifies office sign-in, verified email,
 relay status, a real `get_schematic` bridge call and disconnect on reload. MCP
 tests verify two-account and two-environment isolation, status access protection,
 disconnected/expired relay diagnostics and matching logged email/subject.
+
+The frontend and production connector patch `954dc56292cae87af511cac1f060c06c3500f607`
+passed GitHub CI run `37943149296` and was activated on the VPS. The unchanged API
+remains at `5b2572d`; the test office service remains at `ebfce54`. Frontend and
+connector hashes, Docker image digest, unsigned-read rejection, and automatic
+reconnection of the existing editor were verified. The deployed Preferences text
+was also checked in a separate unpaired browser tab, then that tab was closed.
+The original editor remained connected. The browser blocked a separate navigation
+to `/status`, so authenticated live `/status` was not verified; its authentication
+and per-account results passed fixture tests, and its live unsigned response is 401.
+
+Rollback configuration, artifact checksums, image/health reports and verification
+scripts are outside Git in `office-connector-fix-20261009/` in the parent workspace
+and `/home/debian/easyschematic-backups/20261009-office-connector-fix` on the VPS.
+A fresh encrypted off-VPS data snapshot `552e1887` was taken before activation.
+The private configuration rollback archive was copied off-host and checksum-checked;
+its local ACL is restricted to the executing user. No data migrations were needed.

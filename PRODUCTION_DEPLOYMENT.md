@@ -4,8 +4,11 @@ The production editor is `https://schematic.tateside.online`. It runs on the VPS
 not the inherited Cloudflare Workers/D1 deployment workflows. Git pushes run CI;
 they do not activate TateSide production. Read `STAGING_DEPLOYMENT.md` for test.
 
-Production was promoted on 9 October 2026 to application commit
-`5b2572d102db61f7e3113c12eb66c76c4b623eb5`. Its container is
+Production was promoted on 9 October 2026 to API/application commit
+`5b2572d102db61f7e3113c12eb66c76c4b623eb5`. Later that day, the frontend and
+production office connector received the status/diagnostics patch
+`954dc56292cae87af511cac1f060c06c3500f607`; the unchanged API remains pinned to
+`5b2572d`. See `MCP-PRODUCTION-CONNECTOR-2026-10-09.md`. Its frontend container is
 `easyschematic-production`, managed by
 `docker compose -p easyschematic-production -f /etc/easyschematic-production/compose.yml`.
 The previous `easyschematic-easyschematic-1` container is stopped and retained for
