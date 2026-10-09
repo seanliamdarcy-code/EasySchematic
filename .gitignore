@@ -62,6 +62,9 @@ backups/
 .vite/
 .tateside-data/
 .tateside-test-data/
+test-results/
+playwright-report/
+*-audit.local.json
 
 # Internal notes
 internal/

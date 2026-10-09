@@ -76,6 +76,7 @@ export default function MenuSubmenu({ label, children, minWidth = 160 }: Props) 
 
     // Measure-then-position pattern: we have to read DOM rects first, then
     // commit the resolved coordinates as state so the panel rerenders in place.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Position depends on DOM measurement after the submenu opens.
     setPos({ x, y, maxHeight, ready: true });
   }, [open]);
 

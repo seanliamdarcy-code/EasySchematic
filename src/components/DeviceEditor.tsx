@@ -15,11 +15,13 @@ import {
   type AuxRow,
   type DeviceData,
   type DeviceNode,
+  type DeviceTemplate,
   type DhcpServerConfig,
   type SlotDefinition,
 } from "../types";
 import { CONNECTORS_WITH_GENDER_VARIATION, DEFAULT_CONNECTOR, NETWORK_SIGNAL_TYPES, VIDEO_SIGNAL_TYPES, resolvePortGender, shouldDefaultMultiConnect } from "../connectorTypes";
-import { getBundledCardTemplates, getCardsByFamily, getTemplateById } from "../templateApi";
+import { getBundledCardTemplates, getCardsByFamily, getTemplateById, refreshTemplates } from "../templateApi";
+import ManageTatesideTemplateDialog from "./ManageTatesideTemplateDialog";
 import { getTemplateDrift } from "../templateSync";
 import CardCreatorDialog from "./CardCreatorDialog";
 import TemplateSyncDialog from "./TemplateSyncDialog";
@@ -143,6 +145,9 @@ export default function DeviceEditor() {
   /** Tri-state per-instance toggle: undefined = inherit schematic default. */
   const [useShortName, setUseShortName] = useState<boolean | undefined>(undefined);
   const [wrapLabel, setWrapLabelState] = useState<boolean | undefined>(undefined);
+  const [headerLine2, setHeaderLine2] = useState("");
+  const [showManufacturerModel, setShowManufacturerModel] = useState<boolean | undefined>(undefined);
+  const [showDeviceType, setShowDeviceType] = useState<boolean | undefined>(undefined);
   const [hostname, setHostname] = useState("");
   const [deviceType, setDeviceType] = useState("");
   const [manufacturer, setManufacturer] = useState("");
@@ -153,6 +158,7 @@ export default function DeviceEditor() {
   const [textColor, setTextColor] = useState<string | undefined>(undefined);
   const [headerColor, setHeaderColor] = useState<string | undefined>(undefined);
   const [ports, setPorts] = useState<PortDraft[]>([]);
+  const [libraryDraft, setLibraryDraft] = useState<{ template: DeviceTemplate; nodeId: string; loadSeq: number } | null>(null);
 
   // Port visibility local state
   const [showAllPorts, setShowAllPorts] = useState(false);
@@ -220,6 +226,9 @@ export default function DeviceEditor() {
     setShortName(node.data.shortName ?? "");
     setUseShortName(node.data.useShortName);
     setWrapLabelState(node.data.wrapLabel);
+    setHeaderLine2(node.data.headerLine2 ?? "");
+    setShowManufacturerModel(node.data.showManufacturerModel);
+    setShowDeviceType(node.data.showDeviceType);
     setHostname(node.data.hostname ?? "");
     setDeviceType(node.data.deviceType);
     setManufacturer(node.data.manufacturer ?? "");
@@ -293,7 +302,7 @@ export default function DeviceEditor() {
     setEditingNodeId(null);
   }, [undo, setCreatingNodeId, setEditingNodeId]);
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback((closeAfter = true) => {
     if (!editingNodeId) return;
 
     const editingExternalEndpoint = isExternalEndpointData(node?.data);
@@ -343,6 +352,9 @@ export default function DeviceEditor() {
     }
 
     const data: DeviceData = {
+      headerLine2: headerLine2.trim() || undefined,
+      showManufacturerModel,
+      showDeviceType,
       label: label.trim() || "Untitled",
       ...(shortName.trim() ? { shortName: shortName.trim() } : {}),
       ...(useShortName !== undefined ? { useShortName } : {}),
@@ -388,8 +400,8 @@ export default function DeviceEditor() {
     };
     updateDevice(editingNodeId, data);
     setCreatingNodeId(null); // commit the node — close won't undo it
-    close();
-  }, [editingNodeId, ports, label, shortName, useShortName, wrapLabel, hostname, deviceType, manufacturer, modelNumber, referenceUrl, category, color, textColor, headerColor, node, updateDevice, close, setCreatingNodeId, showAllPorts, hiddenPorts, dhcpServer, powerDrawW, powerCapacityW, voltage, thermalBtuh, poeBudgetW, poeDrawW, unitCost, heightMm, widthMm, depthMm, weightKg, isCableAccessory, integratedWithCable, isVenueProvided, adapterVisibility, auxiliaryData, searchTermsRaw]);
+    if (closeAfter) close();
+  }, [editingNodeId, ports, label, shortName, useShortName, wrapLabel, headerLine2, showManufacturerModel, showDeviceType, hostname, deviceType, manufacturer, modelNumber, referenceUrl, category, color, textColor, headerColor, node, updateDevice, close, setCreatingNodeId, showAllPorts, hiddenPorts, dhcpServer, powerDrawW, powerCapacityW, voltage, thermalBtuh, poeBudgetW, poeDrawW, unitCost, heightMm, widthMm, depthMm, weightKg, isCableAccessory, integratedWithCable, isVenueProvided, adapterVisibility, auxiliaryData, searchTermsRaw]);
 
   // Ctrl+Enter anywhere in the editor → Apply & Close
   const onCtrlEnter = useCallback((e: React.KeyboardEvent) => {
@@ -400,7 +412,7 @@ export default function DeviceEditor() {
     }
   }, [handleSave]);
 
-  const handleSaveAsTemplate = useCallback(() => {
+  const buildUserTemplate = useCallback((): DeviceTemplate => {
     const finalPorts: Port[] = ports
       .filter((p) => p.label.trim())
       .map((p, i) => ({
@@ -412,8 +424,21 @@ export default function DeviceEditor() {
     const trimmedAux = trimTrailingEmpty(auxiliaryData);
     const existing = node?.data;
 
-    addCustomTemplate({
+    const source = existing?.templateId ? getTemplateById(existing.templateId, customTemplates) : undefined;
+    return {
+      // Retain research metadata without restoring editable fields the user cleared.
+      evidenceRefs: source?.evidenceRefs,
+      classificationConfidence: source?.classificationConfidence,
+      reviewStatus: source?.reviewStatus,
+      aiMetadata: source?.aiMetadata,
+      importNormalization: source?.importNormalization,
+      identityAliases: source?.identityAliases,
+      roleTags: source?.roleTags,
+      deviceCapabilities: source?.deviceCapabilities,
+      protocols: source?.protocols,
+      rackForm: source?.rackForm,
       id: `custom-${Date.now()}`,
+      version: undefined,
       deviceType: deviceType.trim() || "custom",
       label: label.trim() || "Custom Device",
       ...(shortName.trim() ? { shortName: shortName.trim() } : {}),
@@ -451,8 +476,20 @@ export default function DeviceEditor() {
       ...(existing?.slotFamily ? { slotFamily: existing.slotFamily as string } : {}),
       ...(trimmedAux.some((r) => r.text.trim()) ? { auxiliaryData: trimmedAux } : {}),
       ...(() => { const t = searchTermsRaw.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 20); return t.length > 0 ? { searchTerms: t } : {}; })(),
-    });
-  }, [ports, label, shortName, hostname, addCustomTemplate, node, powerDrawW, powerCapacityW, voltage, thermalBtuh, poeBudgetW, poeDrawW, unitCost, heightMm, widthMm, depthMm, weightKg, isVenueProvided, deviceType, color, manufacturer, modelNumber, referenceUrl, category, auxiliaryData, searchTermsRaw]);
+    };
+  }, [ports, label, shortName, hostname, customTemplates, node, powerDrawW, powerCapacityW, voltage, thermalBtuh, poeBudgetW, poeDrawW, unitCost, heightMm, widthMm, depthMm, weightKg, isVenueProvided, deviceType, color, manufacturer, modelNumber, referenceUrl, category, auxiliaryData, searchTermsRaw]);
+
+  const handleSaveAsTemplate = useCallback(() => {
+    addCustomTemplate(buildUserTemplate());
+  }, [addCustomTemplate, buildUserTemplate]);
+
+  const handleAddToLibrary = () => {
+    if (!editingNodeId) return;
+    const template = { ...buildUserTemplate(), id: undefined, version: undefined, reviewStatus: "human-reviewed" as const };
+    // Apply the current Properties edits before reviewing the reusable library definition.
+    handleSave(false);
+    setLibraryDraft({ template, nodeId: editingNodeId, loadSeq: useSchematicStore.getState().loadSeq });
+  };
 
   const handleUpdateUserTemplate = useCallback(() => {
     if (!node?.data.templateId) return;
@@ -803,6 +840,13 @@ export default function DeviceEditor() {
             </Field>
             {!isExternalEndpoint && (
               <>
+                <Field label="Make/model header override">
+                  <input aria-label="Make/model header override" maxLength={2000} value={headerLine2} onChange={(e) => setHeaderLine2(e.target.value)} placeholder="Automatic from manufacturer and model" className="w-full text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1.5" />
+                </Field>
+                <div className="text-xs flex flex-col gap-1">
+                  <label>Make/model <select aria-label="Device make/model visibility" value={showManufacturerModel === undefined ? "inherit" : String(showManufacturerModel)} onChange={(e) => setShowManufacturerModel(e.target.value === "inherit" ? undefined : e.target.value === "true")}><option value="inherit">Sheet default</option><option value="true">Show</option><option value="false">Hide</option></select></label>
+                  <label>Device type <select aria-label="Device type visibility" value={showDeviceType === undefined ? "inherit" : String(showDeviceType)} onChange={(e) => setShowDeviceType(e.target.value === "inherit" ? undefined : e.target.value === "true")}><option value="inherit">Sheet default</option><option value="true">Show</option><option value="false">Hide</option></select></label>
+                </div>
                 <Field label="Short Name">
                   <input
                     className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1.5 text-xs text-[var(--color-text-heading)] outline-none focus:border-blue-500"
@@ -1571,9 +1615,16 @@ export default function DeviceEditor() {
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-3 border-t border-[var(--color-border)] flex items-center gap-2">
+        <div className="px-4 py-3 border-t border-[var(--color-border)] flex flex-wrap items-center gap-2">
           {!isExternalEndpoint && (
             <>
+            <button
+              onClick={handleAddToLibrary}
+              className="px-3 py-1.5 text-xs rounded bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] cursor-pointer"
+              title="Review this device and save a reusable definition to the shared TateSide library"
+            >
+              Add to TateSide Library
+            </button>
             <button
               onClick={handleSaveAsTemplate}
               className="px-3 py-1.5 text-xs rounded bg-[var(--color-surface)] text-[var(--color-text)] hover:text-[var(--color-text-heading)] border border-[var(--color-border)] transition-colors cursor-pointer"
@@ -1618,21 +1669,38 @@ export default function DeviceEditor() {
             )}
             </>
           )}
-          <div className="flex-1" />
-          <button
-            onClick={close}
-            className="px-3 py-1.5 text-xs rounded bg-[var(--color-surface)] text-[var(--color-text)] hover:text-[var(--color-text-heading)] border border-[var(--color-border)] transition-colors cursor-pointer"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white hover:bg-blue-500 transition-colors cursor-pointer"
-          >
-            Apply
-          </button>
+          <div className="basis-full flex justify-end gap-2">
+            <button
+              onClick={close}
+              className="px-3 py-1.5 text-xs rounded bg-[var(--color-surface)] text-[var(--color-text)] hover:text-[var(--color-text-heading)] border border-[var(--color-border)] transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => handleSave()}
+              className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white hover:bg-blue-500 transition-colors cursor-pointer"
+            >
+              Apply
+            </button>
+          </div>
         </div>
       </div>
+      <ManageTatesideTemplateDialog
+        open={!!libraryDraft}
+        template={libraryDraft?.template ?? null}
+        saveMode="create"
+        saveSource="device-properties-review"
+        title="Add Device to TateSide Library"
+        onClose={() => setLibraryDraft(null)}
+        onSaved={(saved) => {
+          const current = useSchematicStore.getState();
+          if (libraryDraft && current.loadSeq === libraryDraft.loadSeq && current.nodes.some((entry) => entry.id === libraryDraft.nodeId)) {
+            // Keep instance Port ids and Connections; publication only links the shared identity.
+            current.patchDeviceData(libraryDraft.nodeId, { templateId: saved.id, templateVersion: saved.version });
+          }
+          void refreshTemplates().catch(() => current.addToast("Device saved. Reload the library to see it in searches.", "info"));
+        }}
+      />
       {showFacePlateEditor && node && (
         <FacePlateEditor
           deviceData={node.data as DeviceData}

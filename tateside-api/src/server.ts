@@ -1,16 +1,58 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { URL } from "node:url";
+import { readFileSync } from "node:fs";
 import { getConfig } from "./config.js";
 import { openDatabase, runMigrations } from "./db.js";
 import { bulkDeleteTemplates, bulkEditTemplates, deleteTemplate, listCurrentTemplates, saveTemplates, updateTemplate } from "./deviceStore.js";
-import type { ExtractedQuoteDevice, QuoteImportResearchJobResponse, QuoteImportResearchResponse } from "../../src/quoteImportTypes.js";
+import { auditLibraryTemplates } from "./libraryAudit.js";
+import {
+  createImportNormalizationRule,
+  deleteImportNormalizationRule,
+  listImportNormalizationRules,
+  resolveImportNormalization,
+  updateImportNormalizationRule,
+} from "./importNormalizationStore.js";
+import {
+  enqueueLibraryDoctorCandidates,
+  previewLibraryDoctorGeneration,
+} from "./libraryDoctorProposalGenerator.js";
+import {
+  LibraryDoctorStoreError,
+  createLibraryDoctorProposal,
+  getLibraryDoctorProposal,
+  listLibraryDoctorProposalHistory,
+  listLibraryDoctorProposals,
+  reviewLibraryDoctorProposal,
+  supersedeLibraryDoctorProposal,
+} from "./libraryDoctorStore.js";
+import { publishApprovedNewTemplate } from "./libraryDoctorPublish.js";
+import { createLibraryDoctorNewTemplateProposal } from "./libraryDoctorNewTemplate.js";
+import { listProjectGapCandidateResults, listProjectGapProposalIdentities } from "./jetbuiltProjectLibraryGap.js";
+import { getTaxonomyVocabularies, inspectTemplateTaxonomy, listTaxonomyAliases, previewTemplateTaxonomy } from "./taxonomy.js";
+import {
+  TaxonomyRegistryError,
+  commitTaxonomyRegistryChange,
+  dynamicRegistrySummary,
+  getRegistryValue,
+  listRegistryAliases,
+  listRegistryHistory,
+  listRegistryValues,
+  previewTaxonomyRegistryChange,
+  seedTaxonomyRegistry,
+  type TaxonomyRegistryKind,
+} from "./taxonomyRegistryStore.js";
+import { validateDeviceTemplate } from "./validation.js";
+import type { ExtractedQuoteDevice, ProductBundleDefinition, ProductBundlePreviewRequest, QuoteImportResearchJobResponse, QuoteImportResearchResponse } from "../../src/quoteImportTypes.js";
+import { listProductBundles, resolveProductBundle, saveProductBundle } from "./productBundleStore.js";
 import {
   ensureJetbuiltIndexReady,
   getJetbuiltIndexStatus,
   importJetbuiltProject,
   initializeJetbuiltIndex,
   listJetbuiltProjectsForClient,
+  listLatestJetbuiltProjects,
+  previewProductBundleComponents,
   searchJetbuiltClients,
   searchJetbuiltProjects,
 } from "./jetbuilt.js";
@@ -80,6 +122,10 @@ function sendEmpty(res: http.ServerResponse, status: number, headers: Record<str
     ...headers,
   });
   res.end();
+}
+
+function isRegistryKind(value: string): value is TaxonomyRegistryKind {
+  return ["category", "deviceType", "roleTag", "deviceCapability", "protocol"].includes(value);
 }
 
 function readBody(req: http.IncomingMessage, maxBytes: number): Promise<Buffer> {
@@ -164,12 +210,27 @@ function readPositiveSafeInteger(value: string | null, label: string): number {
   return parsed;
 }
 
+function isClientErrorMessage(message: string): boolean {
+  return /\b(invalid|required|large|duplicates?|maximum|must be|not found|select at least|choose at least|matches a previously deleted)\b/i.test(message);
+}
+
 async function readJsonObject(req: http.IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): Promise<Record<string, unknown>> {
   const body = await readJson(req, maxBytes);
   if (!isObject(body)) {
     throw new RequestError(400, "Request body must be a JSON object");
   }
   return body;
+}
+
+function readTemplateFromBody(body: Record<string, unknown>): Record<string, unknown> {
+  if (!isObject(body.template)) {
+    throw new RequestError(400, "template must be a JSON object");
+  }
+  const validation = validateDeviceTemplate(body.template);
+  if (!validation.ok) {
+    throw new RequestError(400, `template is invalid: ${validation.errors.join("; ")}`);
+  }
+  return body.template;
 }
 
 function readSequenceFromBody(value: unknown): number {
@@ -212,9 +273,17 @@ function requireIdentity(ctx: RequestContext, requireAccessIdentity: boolean): s
   return email;
 }
 
+const apiBuild = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL("../../build-info.json", import.meta.url), "utf8")) as unknown;
+  } catch { return null; }
+})();
 const config = getConfig();
 const db = openDatabase(config.dbPath);
 runMigrations(db);
+if (config.dynamicTaxonomyEnabled) {
+  seedTaxonomyRegistry(db);
+}
 const quoteResearchJobs = new Map<string, ResearchJobRecord>();
 if (process.env.JETBUILT_API_KEY) {
   initializeJetbuiltIndex({
@@ -329,7 +398,7 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
   const path = ctx.url.pathname;
 
   if (ctx.req.method === "GET" && path === "/health") {
-    sendJson(ctx.res, 200, { ok: true, service: "tateside-api" }, corsHeaders);
+    sendJson(ctx.res, 200, { ok: true, service: "tateside-api", build: apiBuild }, corsHeaders);
     return;
   }
 
@@ -337,6 +406,437 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     const email = requireIdentity(ctx, config.requireAccessIdentity);
     if (email === undefined) return;
     sendJson(ctx.res, 200, listCurrentTemplates(db), corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/taxonomy/vocabularies") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    sendJson(ctx.res, 200, getTaxonomyVocabularies(), corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/taxonomy/aliases") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    sendJson(ctx.res, 200, { entries: listTaxonomyAliases() }, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "POST" && path === "/api/tateside/taxonomy/inspect") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    const body = await readJsonObject(ctx.req);
+    sendJson(ctx.res, 200, inspectTemplateTaxonomy(readTemplateFromBody(body) as never), corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "POST" && path === "/api/tateside/taxonomy/proposals/preview") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    const body = await readJsonObject(ctx.req);
+    sendJson(ctx.res, 200, previewTemplateTaxonomy(readTemplateFromBody(body) as never), corsHeaders);
+    return;
+  }
+
+  if (path === "/api/tateside/taxonomy/registry" || path.startsWith("/api/tateside/taxonomy/registry/")) {
+    if (!config.dynamicTaxonomyEnabled) {
+      sendJson(ctx.res, 404, { error: "Dynamic taxonomy registry is not enabled" }, corsHeaders);
+      return;
+    }
+
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/taxonomy/registry") {
+      sendJson(ctx.res, 200, {
+        values: listRegistryValues(db),
+        aliases: listRegistryAliases(db),
+        summary: dynamicRegistrySummary(db),
+      }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/taxonomy/registry/values") {
+      const kind = ctx.url.searchParams.get("kind") ?? "";
+      sendJson(ctx.res, 200, { values: kind && isRegistryKind(kind) ? listRegistryValues(db, kind) : listRegistryValues(db) }, corsHeaders);
+      return;
+    }
+
+    const valueMatch = path.match(/^\/api\/tateside\/taxonomy\/registry\/values\/([^/]+)\/(.+)$/);
+    if (ctx.req.method === "GET" && valueMatch) {
+      const kind = decodeURIComponent(valueMatch[1]);
+      if (!isRegistryKind(kind)) throw new RequestError(400, "Invalid registry kind");
+      sendJson(ctx.res, 200, getRegistryValue(db, kind, decodeURIComponent(valueMatch[2])), corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/taxonomy/registry/aliases") {
+      const kind = ctx.url.searchParams.get("kind") ?? "";
+      sendJson(ctx.res, 200, { aliases: kind && isRegistryKind(kind) ? listRegistryAliases(db, kind) : listRegistryAliases(db) }, corsHeaders);
+      return;
+    }
+
+    const historyMatch = path.match(/^\/api\/tateside\/taxonomy\/registry\/history\/([^/]+)\/([^/]+)$/);
+    if (ctx.req.method === "GET" && historyMatch) {
+      const entityType = decodeURIComponent(historyMatch[1]);
+      if (entityType !== "value" && entityType !== "alias") throw new RequestError(400, "Invalid history entityType");
+      sendJson(ctx.res, 200, { events: listRegistryHistory(db, entityType, decodeURIComponent(historyMatch[2])) }, corsHeaders);
+      return;
+    }
+
+    if (!config.dynamicTaxonomyWriteEnabled) {
+      sendJson(ctx.res, 404, { error: "Dynamic taxonomy registry writes are not enabled" }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/taxonomy/registry/preview") {
+      const body = await readJsonObject(ctx.req);
+      sendJson(ctx.res, 200, previewTaxonomyRegistryChange(db, listCurrentTemplates(db), body), corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/taxonomy/registry/changes/commit") {
+      const body = await readJsonObject(ctx.req);
+      sendJson(ctx.res, 201, commitTaxonomyRegistryChange(db, listCurrentTemplates(db), {
+        ...body,
+        actor: typeof body.actor === "string" ? body.actor : email,
+      }), corsHeaders);
+      return;
+    }
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/library/audit") {
+    if (!config.libraryAuditEnabled) {
+      sendJson(ctx.res, 404, { error: "Library audit is not enabled" }, corsHeaders);
+      return;
+    }
+
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+
+    sendJson(ctx.res, 200, auditLibraryTemplates(listCurrentTemplates(db), {
+      manufacturer: ctx.url.searchParams.get("manufacturer") ?? undefined,
+      severity: ctx.url.searchParams.get("severity") ?? undefined,
+      code: ctx.url.searchParams.get("code") ?? undefined,
+      currentValue: ctx.url.searchParams.get("currentValue") ?? undefined,
+      templateId: ctx.url.searchParams.get("templateId") ?? undefined,
+    }), corsHeaders);
+    return;
+  }
+
+  if (path.startsWith("/api/tateside/library-doctor/generation")) {
+    if (!config.libraryDoctorEnabled || !config.libraryDoctorGenerationEnabled) {
+      sendJson(ctx.res, 404, { error: "Library Doctor generation is not enabled" }, corsHeaders);
+      return;
+    }
+
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/library-doctor/generation/preview") {
+      const body = await readJsonObject(ctx.req);
+      const result = previewLibraryDoctorGeneration(db, listCurrentTemplates(db), {
+        templateIds: Array.isArray(body.templateIds) ? body.templateIds as string[] : undefined,
+        manufacturer: typeof body.manufacturer === "string" ? body.manufacturer : undefined,
+        issueCodes: Array.isArray(body.issueCodes) ? body.issueCodes as string[] : undefined,
+        fields: Array.isArray(body.fields) ? body.fields as string[] : undefined,
+        maxCandidates: typeof body.maxCandidates === "number" ? body.maxCandidates : undefined,
+      });
+      // Preview is read-only: no queue writes and no template mutation.
+      sendJson(ctx.res, 200, result, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/library-doctor/generation/enqueue") {
+      const body = await readJsonObject(ctx.req);
+      if (!Array.isArray(body.candidateKeys)) {
+        throw new RequestError(400, "candidateKeys must be an array of strings");
+      }
+      // Recompute candidates server-side from current templates; never trust client proposed values.
+      const result = enqueueLibraryDoctorCandidates(
+        db,
+        listCurrentTemplates(db),
+        body.candidateKeys as string[],
+        email,
+      );
+      sendJson(ctx.res, 201, result, corsHeaders);
+      return;
+    }
+  }
+
+  if (path.startsWith("/api/tateside/library-doctor/proposals")) {
+    if (!config.libraryDoctorEnabled) {
+      sendJson(ctx.res, 404, { error: "Library Doctor is not enabled" }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/library-doctor/proposals/new-template") {
+      const supplied = ctx.req.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      if (!config.libraryDoctorProposalToken || supplied !== config.libraryDoctorProposalToken) {
+        sendJson(ctx.res, 401, { error: "Invalid proposal service credential" }, corsHeaders);
+        return;
+      }
+      const body = await readJsonObject(ctx.req);
+      const result = createLibraryDoctorNewTemplateProposal(db, {
+        ...body,
+        createdBy: "chatgpt-mcp",
+      } as Parameters<typeof createLibraryDoctorNewTemplateProposal>[1]);
+      sendJson(ctx.res, result.success ? 201 : 400, result, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/library-doctor/proposals/identities") {
+      const supplied = ctx.req.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      if (!config.libraryDoctorProposalToken || supplied !== config.libraryDoctorProposalToken) {
+        sendJson(ctx.res, 401, { error: "Invalid proposal service credential" }, corsHeaders);
+        return;
+      }
+      const projectNumber = ctx.url.searchParams.get("projectNumber") ?? undefined;
+      sendJson(ctx.res, 200, {
+        proposals: listProjectGapProposalIdentities(db),
+        candidateResults: listProjectGapCandidateResults(db, projectNumber),
+      }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/library-doctor/proposals/editor-new-template") {
+      const actor = requireIdentity(ctx, true);
+      if (!actor) return;
+      const body = await readJsonObject(ctx.req);
+      const result = createLibraryDoctorNewTemplateProposal(db, {
+        proposedTemplate: body.proposedTemplate, identityAliases: body.identityAliases,
+        evidenceRefs: body.evidenceRefs, rationale: body.rationale,
+        classificationConfidence: body.classificationConfidence, qualityGates: body.qualityGates,
+        operationalNotes: body.operationalNotes, createdBy: actor,
+      });
+      sendJson(ctx.res, result.success ? 201 : 400, result, corsHeaders);
+      return;
+    }
+    const publishMatch = path.match(/^\/api\/tateside\/library-doctor\/proposals\/([^/]+)\/publish$/);
+    if (ctx.req.method === "POST" && publishMatch) {
+      const actor = requireIdentity(ctx, true);
+      if (!actor) return;
+      sendJson(ctx.res, 200, publishApprovedNewTemplate(db, decodeURIComponent(publishMatch[1]), actor), corsHeaders);
+      return;
+    }
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/library-doctor/proposals") {
+      const proposals = listLibraryDoctorProposals(db, {
+        status: ctx.url.searchParams.get("status") ?? undefined,
+        manufacturer: ctx.url.searchParams.get("manufacturer") ?? undefined,
+        templateId: ctx.url.searchParams.get("templateId") ?? undefined,
+        field: ctx.url.searchParams.get("field") ?? undefined,
+        proposalType: ctx.url.searchParams.get("proposalType") ?? undefined,
+        confidence: ctx.url.searchParams.get("confidence") ?? undefined,
+        risk: ctx.url.searchParams.get("risk") ?? undefined,
+        sourceIssueCode: ctx.url.searchParams.get("sourceIssueCode") ?? undefined,
+      });
+      sendJson(ctx.res, 200, { proposals }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/library-doctor/proposals") {
+      const body = await readJsonObject(ctx.req);
+      const proposal = createLibraryDoctorProposal(db, {
+        templateId: body.templateId,
+        manufacturer: body.manufacturer,
+        modelNumber: body.modelNumber,
+        sourceIssueCode: body.sourceIssueCode,
+        sourceIssueGroup: body.sourceIssueGroup,
+        sourceCurrentValue: body.sourceCurrentValue,
+        field: body.field,
+        currentValue: body.currentValue,
+        proposedValue: body.proposedValue,
+        proposalType: body.proposalType,
+        confidence: body.confidence,
+        risk: body.risk,
+        evidenceRefs: body.evidenceRefs,
+        rationale: body.rationale,
+        createdBy: email,
+        supersedesProposalId: body.supersedesProposalId,
+      });
+      sendJson(ctx.res, 201, { proposal }, corsHeaders);
+      return;
+    }
+
+    const proposalMatch = path.match(/^\/api\/tateside\/library-doctor\/proposals\/([^/]+)$/);
+    if (proposalMatch) {
+      const proposalId = decodeURIComponent(proposalMatch[1]);
+      if (ctx.req.method === "GET") {
+        const proposal = getLibraryDoctorProposal(db, proposalId);
+        sendJson(ctx.res, 200, { proposal }, corsHeaders);
+        return;
+      }
+    }
+
+    const reviewMatch = path.match(/^\/api\/tateside\/library-doctor\/proposals\/([^/]+)\/review$/);
+    if (reviewMatch && ctx.req.method === "POST") {
+      const proposalId = decodeURIComponent(reviewMatch[1]);
+      const body = await readJsonObject(ctx.req);
+      const proposal = reviewLibraryDoctorProposal(db, proposalId, {
+        status: body.status,
+        reviewNote: body.reviewNote,
+        reviewedBy: email,
+      });
+      sendJson(ctx.res, 200, { proposal }, corsHeaders);
+      return;
+    }
+
+    const historyMatch = path.match(/^\/api\/tateside\/library-doctor\/proposals\/([^/]+)\/history$/);
+    if (historyMatch && ctx.req.method === "GET") {
+      const proposalId = decodeURIComponent(historyMatch[1]);
+      const history = listLibraryDoctorProposalHistory(db, proposalId);
+      sendJson(ctx.res, 200, { history }, corsHeaders);
+      return;
+    }
+
+    const supersedeMatch = path.match(/^\/api\/tateside\/library-doctor\/proposals\/([^/]+)\/supersede$/);
+    if (supersedeMatch && ctx.req.method === "POST") {
+      const proposalId = decodeURIComponent(supersedeMatch[1]);
+      const body = await readJsonObject(ctx.req);
+      const result = supersedeLibraryDoctorProposal(db, proposalId, {
+        reviewNote: body.reviewNote,
+        reviewedBy: email,
+        replacement: isObject(body.replacement)
+          ? {
+              templateId: body.replacement.templateId,
+              manufacturer: body.replacement.manufacturer,
+              modelNumber: body.replacement.modelNumber,
+              sourceIssueCode: body.replacement.sourceIssueCode,
+              sourceIssueGroup: body.replacement.sourceIssueGroup,
+              sourceCurrentValue: body.replacement.sourceCurrentValue,
+              field: body.replacement.field,
+              currentValue: body.replacement.currentValue,
+              proposedValue: body.replacement.proposedValue,
+              proposalType: body.replacement.proposalType,
+              confidence: body.replacement.confidence,
+              risk: body.replacement.risk,
+              evidenceRefs: body.replacement.evidenceRefs,
+              rationale: body.replacement.rationale,
+              createdBy: email,
+            }
+          : undefined,
+      });
+      sendJson(ctx.res, 200, result, corsHeaders);
+      return;
+    }
+  }
+
+  if (path.startsWith("/api/tateside/import-normalization-rules")) {
+    if (!config.importNormalizationEnabled) {
+      sendJson(ctx.res, 404, { error: "Import normalization is not enabled" }, corsHeaders);
+      return;
+    }
+
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+
+    if (ctx.req.method === "GET" && path === "/api/tateside/import-normalization-rules") {
+      sendJson(ctx.res, 200, { rules: listImportNormalizationRules(db) }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/import-normalization-rules") {
+      const body = await readJsonObject(ctx.req);
+      const rule = createImportNormalizationRule(db, {
+        fieldKind: body.fieldKind,
+        rawValue: body.rawValue,
+        manufacturer: body.manufacturer,
+        modelNumber: body.modelNumber,
+        canonicalValue: body.canonicalValue,
+        scope: body.scope,
+        trustLevel: body.trustLevel,
+        notes: body.notes,
+        actorEmail: email,
+        source: "manual",
+      });
+      sendJson(ctx.res, 201, { rule }, corsHeaders);
+      return;
+    }
+
+    if (ctx.req.method === "POST" && path === "/api/tateside/import-normalization-rules/resolve") {
+      const body = await readJsonObject(ctx.req);
+      const resolution = resolveImportNormalization(db, {
+        templates: Array.isArray(body.templates) ? body.templates as never[] : [],
+        draftRules: Array.isArray(body.draftRules) ? body.draftRules as never[] : [],
+      });
+      sendJson(ctx.res, 200, resolution, corsHeaders);
+      return;
+    }
+
+    const ruleMatch = path.match(/^\/api\/tateside\/import-normalization-rules\/([^/]+)$/);
+    if (ruleMatch) {
+      const ruleId = decodeURIComponent(ruleMatch[1]);
+
+      if (ctx.req.method === "PUT") {
+        const body = await readJsonObject(ctx.req);
+        const rule = updateImportNormalizationRule(db, ruleId, {
+          fieldKind: body.fieldKind,
+          rawValue: body.rawValue,
+          manufacturer: body.manufacturer,
+          modelNumber: body.modelNumber,
+          canonicalValue: body.canonicalValue,
+          scope: body.scope,
+          trustLevel: body.trustLevel,
+          notes: body.notes,
+          actorEmail: email,
+        });
+        sendJson(ctx.res, 200, { rule }, corsHeaders);
+        return;
+      }
+
+      if (ctx.req.method === "DELETE") {
+        deleteImportNormalizationRule(db, ruleId, email);
+        sendEmpty(ctx.res, 204, corsHeaders);
+        return;
+      }
+    }
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/product-bundles") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    sendJson(ctx.res, 200, { bundles: listProductBundles(db) }, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "POST" && path === "/api/tateside/product-bundles") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    const body = await readJson(ctx.req) as ProductBundleDefinition | null;
+    if (!body) throw new RequestError(400, "Bundle definition is required");
+    const bundle = saveProductBundle(db, body);
+    sendJson(ctx.res, 201, { bundle }, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "POST" && path === "/api/tateside/product-bundles/preview") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    const body = await readJson(ctx.req) as ProductBundlePreviewRequest | null;
+    if (!body) throw new RequestError(400, "Bundle preview request is required");
+    sendJson(ctx.res, 200, { components: previewProductBundleComponents(db, body) }, corsHeaders);
+    return;
+  }
+
+  if (ctx.req.method === "GET" && path === "/api/tateside/product-bundles/resolve") {
+    const email = requireIdentity(ctx, config.requireAccessIdentity);
+    if (email === undefined) return;
+    void email;
+    const manufacturer = ctx.url.searchParams.get("manufacturer");
+    const sku = ctx.url.searchParams.get("sku");
+    sendJson(ctx.res, 200, { bundle: resolveProductBundle(db, manufacturer, sku) }, corsHeaders);
     return;
   }
 
@@ -530,7 +1030,8 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
     }
 
     const query = (ctx.url.searchParams.get("query") ?? "").trim();
-    if (!query) {
+    const latest = ctx.url.searchParams.get("latest") === "true";
+    if (!query && !latest) {
       sendJson(ctx.res, 200, { projects: [] }, corsHeaders);
       return;
     }
@@ -541,6 +1042,19 @@ async function handleRequest(ctx: RequestContext): Promise<void> {
       indexPath: config.jetbuiltIndexPath,
       refreshMs: config.jetbuiltIndexRefreshMs,
     });
+    if (latest) {
+      const limit = Number(ctx.url.searchParams.get("limit") ?? "50");
+      const rawOffset = Number(ctx.url.searchParams.get("offset") ?? "0");
+      const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0;
+      const projects = listLatestJetbuiltProjects(limit, offset);
+      const status = getJetbuiltIndexStatus();
+      if (status.projectCount === 0 && status.lastError) {
+        sendJson(ctx.res, 503, { error: "Latest Jetbuilt projects could not be loaded. Try again later." }, corsHeaders);
+        return;
+      }
+      sendJson(ctx.res, 200, { projects, total: status.projectCount, hasMore: offset + projects.length < status.projectCount }, corsHeaders);
+      return;
+    }
     const projects = searchJetbuiltProjects(query);
     sendJson(ctx.res, 200, { projects }, corsHeaders);
     return;
@@ -899,6 +1413,14 @@ const server = http.createServer((req, res) => {
       sendJson(res, err.status, { error: err.message }, corsHeaders);
       return;
     }
+    if (err instanceof LibraryDoctorStoreError) {
+      sendJson(res, err.status, { error: err.message }, corsHeaders);
+      return;
+    }
+    if (err instanceof TaxonomyRegistryError) {
+      sendJson(res, err.status, { error: err.message }, corsHeaders);
+      return;
+    }
     if (err instanceof RequestError) {
       sendJson(res, err.status, { error: err.message }, corsHeaders);
       return;
@@ -908,7 +1430,7 @@ const server = http.createServer((req, res) => {
       return;
     }
     const message = err instanceof Error ? err.message : "Internal server error";
-    const status = message.includes("invalid") || message.includes("required") || message.includes("large") ? 400 : 500;
+    const status = isClientErrorMessage(message) ? 400 : 500;
     sendJson(res, status, { error: status === 400 ? message : "Internal server error" }, corsHeaders);
   });
 });

@@ -55,6 +55,7 @@ export function useSpreadsheetSelection<TRow>(options: Options<TRow>) {
   useEffect(() => {
     if (prevRowCount.current !== rowCount) {
       prevRowCount.current = rowCount;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Selected row indices become invalid when the external row set changes.
       clearSelection();
     }
   }, [rowCount, clearSelection]);

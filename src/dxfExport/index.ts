@@ -81,7 +81,7 @@ export function exportDxf(rfInstance: ReactFlowInstance) {
 
   // ─── Devices ────────────────────────────────────────────────────────
   for (const node of nodes) {
-    if (node.type === "device") emitDevice(writer, node, rfInstance, edges, state.signalColors, state.currency, { useShortNames: state.useShortNames, wrapDeviceLabels: state.wrapDeviceLabels });
+    if (node.type === "device") emitDevice(writer, node, rfInstance, edges, state.signalColors, state.currency, { useShortNames: state.useShortNames, deviceHeader: state.deviceHeader, wrapDeviceLabels: state.wrapDeviceLabels });
   }
 
   // ─── Annotations ────────────────────────────────────────────────────
@@ -143,6 +143,7 @@ export function exportDxf(rfInstance: ReactFlowInstance) {
       extMin,
       extMax,
       state.colorKeyColumns ?? 2,
+      state.colorKeyLabels,
     );
   }
 

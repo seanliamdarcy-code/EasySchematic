@@ -56,6 +56,7 @@ const SIGNAL_PREFIX: Record<SignalType, string> = {
   fiber: "F",
   displayport: "DP",
   hdbaset: "HB",
+  "dm-lite": "DML",
   srt: "SR",
   genlock: "G",
   gpio: "GP",
@@ -89,6 +90,7 @@ const SIGNAL_PREFIX: Record<SignalType, string> = {
   artnet: "AN",
   sacn: "SC",
   ir: "IR",
+  "ir-serial": "IS",
   timecode: "TC",
   gigaace: "GA",
   dx5: "DX",
@@ -108,7 +110,11 @@ const SIGNAL_PREFIX: Record<SignalType, string> = {
   pots: "PT",
   "blu-link": "BL",
   cresnet: "CN",
+  dmnet: "DN",
   sensor: "SNS",
+  can: "CAN",
+  vch: "VCH",
+  expansion: "EXP",
   custom: "X",
 };
 

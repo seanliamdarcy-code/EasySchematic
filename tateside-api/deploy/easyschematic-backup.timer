@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted EasySchematic backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+RandomizedDelaySec=5min
+Persistent=true
+Unit=easyschematic-backup.service
+
+[Install]
+WantedBy=timers.target

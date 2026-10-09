@@ -20,6 +20,7 @@ import CsvImportWizard from "./CsvImportWizard";
 import SignalColorPanel from "./SignalColorPanel";
 import { useTheme } from "../hooks/useTheme";
 import SharePointProjectDialog from "./SharePointProjectDialog";
+import LibraryDoctorDialog from "./LibraryDoctorDialog";
 
 const MICROSOFT_LOGOUT_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/logout";
 const MENU_NAMES = ["File", "Edit", "Insert", "View", "Export", "Reports", "Help"] as const;
@@ -255,6 +256,7 @@ export default function MenuBar() {
   const [showRoomDistances, setShowRoomDistances] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [showSharePointProjects, setShowSharePointProjects] = useState(false);
+  const [showLibraryDoctor, setShowLibraryDoctor] = useState(false);
   const fileHandle = useSchematicStore((s) => s.fileHandle);
   const isHydrated = useSchematicStore((s) => s.isHydrated);
   const isOnline = useSchematicStore((s) => s.isOnline);
@@ -607,6 +609,12 @@ export default function MenuBar() {
       { type: "item", label: "Save Device Archive", onClick: handleSaveArchive },
       { type: "item", label: "Import Local Device Templates (Legacy)...", onClick: handleOpenArchive },
       { type: "item", label: "Import Cable Schedule...", onClick: () => setShowCsvImport(true) },
+      {
+        type: "item",
+        label: "Library Doctor...",
+        title: "Preview candidates and review the proposal queue (accepted does not apply template changes)",
+        onClick: () => setShowLibraryDoctor(true),
+      },
       { type: "separator" },
       { type: "item", label: "Preferences...", onClick: () => setShowPreferences(true) },
     ],
@@ -1076,6 +1084,9 @@ export default function MenuBar() {
           onClose={() => setShowSharePointProjects(false)}
           onPublishPdf={buildCurrentPdfForSharePoint}
         />
+      )}
+      {showLibraryDoctor && (
+        <LibraryDoctorDialog onClose={() => setShowLibraryDoctor(false)} />
       )}
     </div>
   );

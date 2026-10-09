@@ -6,9 +6,14 @@ import type {
   JetbuiltClientSearchResult,
   JetbuiltIndexStatus,
   JetbuiltProjectSearchResult,
+  ProductBundleComponent,
+  ProductBundlePreviewRequest,
+  QuoteImportBundleGroup,
   QuoteImportExtractionResponse,
+  QuoteImportResultItem,
 } from "../../src/quoteImportTypes.js";
 import { inspectQuoteDevicesAgainstLibrary, normalizedLookupKey } from "./quoteImport.js";
+import { resolveProductBundle } from "./productBundleStore.js";
 
 const DEFAULT_BASE_URL = "https://app.jetbuilt.com/api";
 const DEFAULT_HEADERS = {
@@ -26,6 +31,11 @@ export interface JetbuiltClientOptions {
   baseUrl?: string;
   indexPath: string;
   refreshMs: number;
+  maxRetries?: number;
+  retryBaseMs?: number;
+  fetchImpl?: typeof fetch;
+  sleepImpl?: (ms: number) => Promise<void>;
+  onRequest?: () => void;
 }
 
 interface JetbuiltRawProject {
@@ -58,7 +68,7 @@ interface JetbuiltRawClient {
   primary_contact_last_name?: unknown;
 }
 
-interface JetbuiltRawItem {
+export interface JetbuiltRawItem {
   manufacturer_name?: unknown;
   manufacturer?: unknown;
   model?: unknown;
@@ -107,6 +117,22 @@ function sleep(ms: number): Promise<void> {
 
 function compact(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function compactJetbuiltLabel(value: unknown): string {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    return compact(
+      record.name
+        ?? record.room_name
+        ?? record.system_name
+        ?? record.label
+        ?? record.title
+        ?? record.description
+        ?? record.id,
+    );
+  }
+  return compact(value);
 }
 
 function normalizeText(value: unknown): string {
@@ -213,43 +239,67 @@ function toClientSearchResult(client: JetbuiltRawClient, projectCount: number): 
   };
 }
 
-async function requestJson<T>(url: string, options: JetbuiltClientOptions): Promise<T> {
-  const elapsed = Date.now() - lastRequestAt;
-  if (elapsed < REQUEST_GAP_MS) {
-    await sleep(REQUEST_GAP_MS - elapsed);
+export function createJetbuiltGetOnlyFetch(fetchImpl: typeof fetch = fetch): typeof fetch {
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+    if (method !== "GET") throw new Error(`Jetbuilt history importer only permits GET requests, received ${method}`);
+    return fetchImpl(input, { ...init, method: "GET" });
+  }) as typeof fetch;
+}
+
+async function fetchResponse(url: string, options: JetbuiltClientOptions): Promise<Response> {
+  if (!options.apiKey.trim()) throw new Error("JETBUILT_API_KEY is not configured");
+  const wait = options.sleepImpl ?? sleep;
+  const getOnlyFetch = createJetbuiltGetOnlyFetch(options.fetchImpl ?? fetch);
+  const maxRetries = options.maxRetries ?? 3;
+  const retryBaseMs = options.retryBaseMs ?? 750;
+  let bearerFallbackUsed = false;
+
+  for (let attempt = 0; ; attempt += 1) {
+    const elapsed = Date.now() - lastRequestAt;
+    if (elapsed < REQUEST_GAP_MS) await wait(REQUEST_GAP_MS - elapsed);
+    lastRequestAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new Error(`Jetbuilt request timed out after ${REQUEST_TIMEOUT_MS}ms`)), REQUEST_TIMEOUT_MS);
+    options.onRequest?.();
+    let response: Response;
+    try {
+      response = await getOnlyFetch(url, {
+        headers: {
+          ...DEFAULT_HEADERS,
+          Authorization: authMode === "Bearer" ? `Bearer ${options.apiKey}` : `Token token=${options.apiKey}`,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (response.status === 401 && authMode === "Bearer" && !bearerFallbackUsed) {
+      authMode = "Token";
+      bearerFallbackUsed = true;
+      continue;
+    }
+    if ((response.status === 429 || response.status >= 500) && attempt < maxRetries) {
+      const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
+      await wait(Math.max(retryAfter, Math.min(retryBaseMs * (2 ** attempt), 30_000)));
+      continue;
+    }
+    return response;
   }
-  lastRequestAt = Date.now();
+}
 
-  const headers = {
-    ...DEFAULT_HEADERS,
-    Authorization: authMode === "Bearer" ? `Bearer ${options.apiKey}` : `Token token=${options.apiKey}`,
-  };
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error(`Jetbuilt request timed out after ${REQUEST_TIMEOUT_MS}ms`)), REQUEST_TIMEOUT_MS);
-  const response = await fetch(url, {
-    headers,
-    signal: controller.signal,
-  });
-  clearTimeout(timeout);
-
-  if (response.status === 401 && authMode === "Bearer") {
-    authMode = "Token";
-    return requestJson<T>(url, options);
-  }
-
-  if (response.status === 429 || response.status >= 500) {
-    const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
-    await sleep(Math.max(retryAfter, 750));
-    return requestJson<T>(url, options);
-  }
-
+export async function jetbuiltGetJson<T>(url: string, options: JetbuiltClientOptions): Promise<T> {
+  const response = await fetchResponse(url, options);
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`Jetbuilt request failed (${response.status})${text ? `: ${text}` : ""}`);
   }
-
-  return response.json() as Promise<T>;
+  try {
+    return await response.json() as T;
+  } catch {
+    throw new Error(`Jetbuilt request returned malformed JSON (${response.status})`);
+  }
 }
 
 function extractCollectionItems(json: unknown): unknown[] {
@@ -260,52 +310,27 @@ function extractCollectionItems(json: unknown): unknown[] {
     if (Array.isArray(record.clients)) return record.clients;
     if (Array.isArray(record.items)) return record.items;
     if (Array.isArray(record.line_items)) return record.line_items;
+    if (Array.isArray(record.rooms)) return record.rooms;
+    if (Array.isArray(record.systems)) return record.systems;
+    if (Array.isArray(record.versions)) return record.versions;
     if (Array.isArray(record.data)) return record.data;
   }
   return [];
 }
 
-async function fetchPagedCollection(startUrl: string, options: JetbuiltClientOptions): Promise<unknown[]> {
+export async function fetchJetbuiltPagedCollection(startUrl: string, options: JetbuiltClientOptions, maxItems = Number.POSITIVE_INFINITY): Promise<unknown[]> {
   const all: unknown[] = [];
   let url: string | null = startUrl;
   while (url) {
-    const elapsed = Date.now() - lastRequestAt;
-    if (elapsed < REQUEST_GAP_MS) {
-      await sleep(REQUEST_GAP_MS - elapsed);
-    }
-    lastRequestAt = Date.now();
-
-    const headers = {
-      ...DEFAULT_HEADERS,
-      Authorization: authMode === "Bearer" ? `Bearer ${options.apiKey}` : `Token token=${options.apiKey}`,
-    };
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(new Error(`Jetbuilt request timed out after ${REQUEST_TIMEOUT_MS}ms`)), REQUEST_TIMEOUT_MS);
-    const response = await fetch(url, {
-      headers,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    if (response.status === 401 && authMode === "Bearer") {
-      authMode = "Token";
-      continue;
-    }
-
-    if (response.status === 429 || response.status >= 500) {
-      const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
-      await sleep(Math.max(retryAfter, 750));
-      continue;
-    }
-
+    const response = await fetchResponse(url, options);
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new Error(`Jetbuilt collection fetch failed (${response.status})${text ? `: ${text}` : ""}`);
     }
 
     const json = await response.json() as unknown;
-    all.push(...extractCollectionItems(json));
+    all.push(...extractCollectionItems(json).slice(0, Math.max(0, maxItems - all.length)));
+    if (all.length >= maxItems) break;
     url = getLinkHeaderNextUrl(response.headers.get("link"));
   }
   return all;
@@ -369,8 +394,8 @@ function sortByUpdatedDesc<T extends { updatedAt: string | null }>(items: T[]): 
 async function refreshIndex(options: JetbuiltClientOptions): Promise<void> {
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
   const [rawClients, rawProjects] = await Promise.all([
-    fetchPagedCollection(`${baseUrl}/clients`, options),
-    fetchPagedCollection(`${baseUrl}/projects`, options),
+    fetchJetbuiltPagedCollection(`${baseUrl}/clients`, options),
+    fetchJetbuiltPagedCollection(`${baseUrl}/projects`, options),
   ]);
 
   const projects = rawProjects
@@ -464,6 +489,14 @@ export function searchJetbuiltProjects(query: string): JetbuiltProjectSearchResu
     .sort((a, b) => b.score - a.score || (b.project.updatedAt ?? "").localeCompare(a.project.updatedAt ?? ""))
     .slice(0, 25)
     .map((entry) => entry.project);
+}
+
+export function listLatestJetbuiltProjects(limit = 50, offset = 0): JetbuiltProjectSearchResult[] {
+  const safeLimit = Number.isFinite(limit) ? Math.min(50, Math.max(1, Math.floor(limit))) : 50;
+  const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
+  return [...indexState.data.projects]
+    .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "") || a.id.localeCompare(b.id))
+    .slice(safeOffset, safeOffset + safeLimit);
 }
 
 export function searchJetbuiltClients(query: string): JetbuiltClientSearchResult[] {
@@ -589,7 +622,13 @@ export function canonicalizeJetbuiltModel(
 function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
   const merged = new Map<string, ExtractedQuoteDevice>();
   for (const device of devices) {
-    const key = device.normalizedLookupKey || normalizeToken(device.sourceLineText || device.description || device.model) || `device-${merged.size + 1}`;
+    // Bundle children must stay tied to their procurement parent. Standalone
+    // products still merge by model so repeated Jetbuilt rows combine quantity.
+    const key = device.sourceKind === "bundle_component" && device.importItemId
+      ? device.importItemId
+      : device.normalizedLookupKey
+      || normalizeToken(device.sourceLineText || device.description || device.model)
+      || `device-${merged.size + 1}`;
     const existing = merged.get(key);
     if (!existing) {
       merged.set(key, { ...device });
@@ -603,6 +642,17 @@ function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
       quantity: existing.quantity == null && device.quantity == null ? null : (existing.quantity ?? 0) + (device.quantity ?? 0),
       sourceLineText: compact(existing.sourceLineText).length >= compact(device.sourceLineText).length ? existing.sourceLineText : device.sourceLineText,
       normalizedLookupKey: existing.normalizedLookupKey || device.normalizedLookupKey,
+      commercialSku: existing.commercialSku ?? device.commercialSku,
+      sourceKind: existing.sourceKind ?? device.sourceKind,
+      bundleOrigin: existing.bundleOrigin ?? device.bundleOrigin,
+      bundleId: existing.bundleId ?? device.bundleId,
+      bundleLabel: existing.bundleLabel ?? device.bundleLabel,
+      bundleQuantity: existing.bundleQuantity ?? device.bundleQuantity,
+      componentQuantityPerBundle: existing.componentQuantityPerBundle ?? device.componentQuantityPerBundle,
+      room: existing.room ?? device.room,
+      system: existing.system ?? device.system,
+      importItemId: existing.importItemId ?? device.importItemId,
+      bundleGroupId: existing.bundleGroupId ?? device.bundleGroupId,
     });
   }
 
@@ -613,45 +663,204 @@ function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
   });
 }
 
-function extractItemsToDevices(items: JetbuiltRawItem[]): ExtractedQuoteDevice[] {
-  return mergeDevices(
-    items
-      .filter(isSchematicRelevant)
-      .map((item) => {
+interface JetbuiltExtractionData {
+  devices: ExtractedQuoteDevice[];
+  bundleGroups: QuoteImportBundleGroup[];
+}
+
+function isLikelyCommercialBundleSku(rawModel: string): boolean {
+  return /^([A-Z]+[0-9]+[A-Z0-9]*)-(\d{3,})$/i.test(compact(rawModel));
+}
+
+function explicitSuggestedBundleModels(rawModel: string, text: string): string[] {
+  const source = compact(text);
+  if (!source) return [];
+  const normalizedRaw = normalizeToken(rawModel);
+  const tokens = source.match(/\b[A-Za-z]{1,10}\d+[A-Za-z0-9-]*\b/g) ?? [];
+  const unique = new Map<string, string>();
+  for (const token of tokens) {
+    const candidate = compact(token);
+    const normalized = normalizeToken(candidate);
+    if (!normalized || normalized === normalizedRaw) continue;
+    if (!source.toLowerCase().includes(candidate.toLowerCase())) continue;
+    unique.set(normalized, candidate);
+  }
+  return [...unique.values()];
+}
+
+function createBundleComponents(
+  group: Omit<QuoteImportBundleGroup, "components">,
+  components: ProductBundleComponent[],
+  origin: "known_catalogue" | "suggested" | "manual",
+): ExtractedQuoteDevice[] {
+  const bundleQuantity = group.quantity ?? 1;
+  return components
+    .filter((component) => component.schematicRelevant)
+    .map((component, index) => ({
+      manufacturer: compact(component.manufacturer) || group.manufacturer,
+      model: compact(component.model),
+      description: group.description,
+      quantity: bundleQuantity * Math.max(1, Math.round(Number(component.quantityPerBundle) || 1)),
+      sourceLineText: group.sourceLineText,
+      normalizedLookupKey: normalizedLookupKey(component.manufacturer || group.manufacturer, component.model),
+      commercialSku: group.commercialSku,
+      sourceKind: "bundle_component",
+      bundleOrigin: origin,
+      bundleId: group.bundleId,
+      bundleLabel: group.label,
+      bundleQuantity,
+      componentQuantityPerBundle: Math.max(1, Math.round(Number(component.quantityPerBundle) || 1)),
+      room: group.room,
+      system: group.system,
+      importItemId: `${group.id}:component:${index + 1}`,
+      bundleGroupId: group.id,
+    } satisfies ExtractedQuoteDevice));
+}
+
+export function extractJetbuiltImportData(db: DatabaseSync, items: JetbuiltRawItem[]): JetbuiltExtractionData {
+  const bundleGroups: QuoteImportBundleGroup[] = [];
+  const devices = items.flatMap((item, itemIndex): ExtractedQuoteDevice[] => {
         const manufacturer = compact(item.manufacturer_name ?? item.manufacturer) || null;
         const rawModel = compact(item.model ?? item.part_number ?? item.product_name);
-        if (!rawModel) return null;
-        const model = canonicalizeJetbuiltModel(rawModel, {
-          description: compact(item.description),
-          productName: compact(item.product_name),
-          shortDescription: compact(item.short_description),
-        });
+        if (!rawModel) return [];
         const description = compact(item.short_description ?? item.description ?? item.product_name) || null;
         const quantity = sanitizeQuantity(item.quantity);
-        const room = compact(item.room_name ?? item.room);
-        const system = compact(item.system_name ?? item.system);
+        const room = compactJetbuiltLabel(item.room_name ?? item.room);
+        const system = compactJetbuiltLabel(item.system_name ?? item.system);
+        const bundle = resolveProductBundle(db, manufacturer, rawModel);
         const sourceLineText = [
           manufacturer,
-          model,
+          rawModel,
           description,
-          rawModel !== model ? `Jetbuilt SKU: ${rawModel}` : "",
+          `Jetbuilt SKU: ${rawModel}`,
           room ? `Room: ${room}` : "",
           system ? `System: ${system}` : "",
         ]
           .filter(Boolean)
           .join(" ")
           .trim();
-        return {
+        const groupId = `jetbuilt-bundle-${itemIndex + 1}`;
+        if (bundle) {
+          const group: QuoteImportBundleGroup = {
+            id: groupId,
+            manufacturer,
+            commercialSku: rawModel,
+            label: bundle.label,
+            description,
+            sourceLineText: sourceLineText || null,
+            quantity,
+            room: room || null,
+            system: system || null,
+            resolution: "known_catalogue",
+            accepted: true,
+            bundleId: bundle.id,
+            warnings: [],
+            components: [],
+          };
+          bundleGroups.push(group);
+          return createBundleComponents(group, bundle.components, "known_catalogue");
+        }
+
+        if (isLikelyCommercialBundleSku(rawModel)) {
+          const explicitModels = explicitSuggestedBundleModels(rawModel, [
+            item.short_description,
+            item.description,
+            item.product_name,
+          ].filter(Boolean).join(" "));
+          const suggestedComponents = explicitModels.length >= 2
+            ? explicitModels.map((model) => ({
+              manufacturer: manufacturer ?? "Unknown manufacturer",
+              model,
+              quantityPerBundle: 1,
+              schematicRelevant: true,
+            }))
+            : [];
+          const group: QuoteImportBundleGroup = {
+            id: groupId,
+            manufacturer,
+            commercialSku: rawModel,
+            label: `${manufacturer ? `${manufacturer} ` : ""}${rawModel} commercial bundle`,
+            description,
+            sourceLineText: sourceLineText || null,
+            quantity,
+            room: room || null,
+            system: system || null,
+            resolution: suggestedComponents.length > 0 ? "suggested" : "unresolved",
+            accepted: false,
+            bundleId: null,
+            warnings: suggestedComponents.length > 0
+              ? ["Suggested from models explicitly named in the Jetbuilt source text. Review before using these components."]
+              : ["Possible commercial bundle SKU. No component list was inferred because the source text did not explicitly name enough physical models."],
+            components: [],
+          };
+          bundleGroups.push(group);
+          return suggestedComponents.length > 0
+            ? createBundleComponents(group, suggestedComponents, "suggested")
+            : [];
+        }
+
+        if (!isSchematicRelevant(item)) return [];
+
+        const model = canonicalizeJetbuiltModel(rawModel, {
+          description: compact(item.description),
+          productName: compact(item.product_name),
+          shortDescription: compact(item.short_description),
+        });
+
+        return [{
           manufacturer,
           model,
           description,
           quantity,
           sourceLineText: sourceLineText || null,
           normalizedLookupKey: normalizedLookupKey(manufacturer, model),
-        } satisfies ExtractedQuoteDevice;
-      })
-      .filter((item): item is ExtractedQuoteDevice => item !== null),
-  );
+          commercialSku: rawModel,
+          sourceKind: "standalone",
+          bundleOrigin: null,
+          bundleId: null,
+          bundleLabel: null,
+          bundleQuantity: null,
+          componentQuantityPerBundle: null,
+          room: room || null,
+          system: system || null,
+          importItemId: `jetbuilt-line-${itemIndex + 1}`,
+          bundleGroupId: null,
+        } satisfies ExtractedQuoteDevice];
+      });
+
+  return {
+    devices: mergeDevices(devices),
+    bundleGroups,
+  };
+}
+
+export function extractItemsToDevices(db: DatabaseSync, items: JetbuiltRawItem[]): ExtractedQuoteDevice[] {
+  return extractJetbuiltImportData(db, items).devices;
+}
+
+export function previewProductBundleComponents(
+  db: DatabaseSync,
+  request: ProductBundlePreviewRequest,
+): QuoteImportResultItem[] {
+  const group = request.group;
+  if (!group || !compact(group.id) || !compact(group.commercialSku)) {
+    throw new Error("Bundle procurement line is required");
+  }
+  const components = request.components
+    .map((component) => ({
+      manufacturer: compact(component.manufacturer) || group.manufacturer || "",
+      model: compact(component.model),
+      quantityPerBundle: Math.max(1, Math.round(Number(component.quantityPerBundle) || 1)),
+      schematicRelevant: component.schematicRelevant === true,
+    }))
+    .filter((component) => component.manufacturer && component.model && component.schematicRelevant);
+  if (components.length === 0) throw new Error("At least one schematic-facing bundle component is required");
+  const preparedGroup: Omit<QuoteImportBundleGroup, "components"> = {
+    ...group,
+    resolution: "manual",
+    accepted: true,
+  };
+  return inspectQuoteDevicesAgainstLibrary(db, createBundleComponents(preparedGroup, components, "manual"));
 }
 
 export async function importJetbuiltProject(
@@ -660,10 +869,15 @@ export async function importJetbuiltProject(
   options: JetbuiltClientOptions,
 ): Promise<QuoteImportExtractionResponse> {
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
-  const project = await requestJson<JetbuiltRawProject>(`${baseUrl}/projects/${encodeURIComponent(projectId)}`, options).catch(() => null);
-  const items = await fetchPagedCollection(`${baseUrl}/projects/${encodeURIComponent(projectId)}/items`, options);
-  const devices = extractItemsToDevices(items as JetbuiltRawItem[]);
+  const project = await jetbuiltGetJson<JetbuiltRawProject>(`${baseUrl}/projects/${encodeURIComponent(projectId)}`, options).catch(() => null);
+  const items = await fetchJetbuiltPagedCollection(`${baseUrl}/projects/${encodeURIComponent(projectId)}/items`, options);
+  const extracted = extractJetbuiltImportData(db, items as JetbuiltRawItem[]);
+  const devices = extracted.devices;
   const results = inspectQuoteDevicesAgainstLibrary(db, devices);
+  const bundleGroups = extracted.bundleGroups.map((group) => ({
+    ...group,
+    components: results.filter((result) => result.bundleGroupId === group.id),
+  }));
   const summary = project ? toProjectSearchResult(project) : null;
 
   return {
@@ -673,6 +887,7 @@ export async function importJetbuiltProject(
     extractionModel: "jetbuilt-project-api",
     extractionReasoningEffort: "low",
     results,
+    bundleGroups,
     warnings: [
       "Imported directly from Jetbuilt project data without PDF scanning.",
       "Project/client search is powered by the cached Jetbuilt index and refreshes hourly.",

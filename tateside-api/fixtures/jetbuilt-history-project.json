@@ -1,0 +1,32 @@
+{
+  "project": {
+    "id": 7001,
+    "custom_id": "P-TEST-001",
+    "name": "Redacted Collaboration Upgrade",
+    "stage": "completed",
+    "active": true,
+    "version": 4,
+    "original_version_id": 6901,
+    "created_at": "2025-01-02T09:00:00Z",
+    "updated_at": "2025-02-03T10:00:00Z",
+    "client": { "id": 501, "company_name": "Redacted Client", "updated_at": "2025-02-01T08:00:00Z" }
+  },
+  "rooms": [
+    { "id": 7101, "name": "Meeting Room A", "quantity": 1, "active": true, "created_at": "2025-01-02T09:10:00Z", "updated_at": "2025-02-03T10:00:00Z" },
+    { "id": 7102, "name": "Meeting Room B", "multiplier": 2, "active": true, "created_at": "2025-01-02T09:11:00Z", "updated_at": "2025-02-03T10:00:00Z" }
+  ],
+  "systems": [
+    { "id": 7201, "name": "Video System", "created_at": "2025-01-02T09:20:00Z", "updated_at": "2025-02-03T10:00:00Z" },
+    { "id": 7202, "name": "Audio System", "created_at": "2025-01-02T09:21:00Z", "updated_at": "2025-02-03T10:00:00Z" }
+  ],
+  "items": [
+    { "id": 7301, "product_id": 8001, "manufacturer_name": "Acme", "model": "Display-55", "part_number": "D55", "short_description": "Display", "quantity": 2, "kind": "equipment", "hidden": false, "room": { "id": 7101, "name": "Meeting Room A" }, "system": { "id": 7201, "name": "Video System" }, "replacement_ids": [], "labour": [], "created_at": "2025-01-02T09:30:00Z", "updated_at": "2025-02-03T10:00:00Z" },
+    { "id": 7302, "manufacturer": "Acme", "model": "DSP-1", "description": "Audio processor", "quantity": "1.5", "kind": "equipment", "hidden": true, "room": { "id": 7101 }, "system": { "id": 7202 }, "replacement_ids": [7299], "labour": [{ "minutes": 30 }], "created_at": "2025-01-02T09:31:00Z", "updated_at": "2025-02-03T10:00:00Z" },
+    { "id": 7303, "manufacturer": "Acme", "model": "Speaker-1", "quantity": 0, "kind": "equipment", "hidden": false, "room": { "id": 7102 }, "system": { "id": 7202 }, "replacement_ids": [], "labour": [], "created_at": "2025-01-02T09:32:00Z", "updated_at": "2025-02-03T10:00:00Z" },
+    { "id": 7304, "manufacturer": "Other", "model": "Mic-1", "quantity": -2, "kind": "equipment", "hidden": false, "room": { "id": 7102 }, "system": { "id": 7202 }, "replacement_ids": [], "labour": [], "created_at": "2025-01-02T09:33:00Z", "updated_at": "2025-02-03T10:00:00Z" },
+    { "id": 7305, "manufacturer": "Other", "model": "Unknown", "quantity": "not-a-number", "kind": "equipment", "hidden": false, "room": { "id": 7102 }, "system": { "id": 7201 }, "option_id": 44, "replacement_ids": [], "labour": [], "created_at": "2025-01-02T09:34:00Z", "updated_at": "2025-02-03T10:00:00Z" }
+  ],
+  "versions": [
+    { "id": 7401, "name": "Version 4", "description": "Redacted fixture", "locked": true, "created_at": "2025-02-03T10:00:00Z" }
+  ]
+}

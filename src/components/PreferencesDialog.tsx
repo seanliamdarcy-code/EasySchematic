@@ -1,4 +1,5 @@
 import { useState } from "react";
+import McpConnectionSettings from "./McpConnectionSettings";
 import { useSchematicStore } from "../store";
 import { DEFAULT_SCROLL_CONFIG, DEFAULT_STUB_LABEL_SHOW_PORT, DEFAULT_STUB_LABEL_PAGE_MODE } from "../types";
 import type { LabelCaseMode, PanMode, ScrollAction, ScrollConfig, StubLabelPageMode } from "../types";
@@ -78,11 +79,12 @@ function SensitivityRow({
   );
 }
 
-type PrefTab = "canvas" | "display";
+type PrefTab = "canvas" | "display" | "ai";
 
 const TAB_LABELS: Record<PrefTab, string> = {
   canvas: "Canvas",
   display: "Display",
+  ai: "AI (Beta)",
 };
 
 export default function PreferencesDialog({ onClose }: { onClose: () => void }) {
@@ -106,6 +108,8 @@ export default function PreferencesDialog({ onClose }: { onClose: () => void }) 
   const setUseShortNames = useSchematicStore((s) => s.setUseShortNames);
   const wrapDeviceLabels = useSchematicStore((s) => s.wrapDeviceLabels);
   const setWrapDeviceLabels = useSchematicStore((s) => s.setWrapDeviceLabels);
+  const deviceHeader = useSchematicStore((s) => s.deviceHeader);
+  const setDeviceHeader = useSchematicStore((s) => s.setDeviceHeader);
   const [autoRoutePref, setAutoRoutePref] = useState(
     () => localStorage.getItem(AUTOROUTE_PREF_KEY) ?? "ask",
   );
@@ -413,6 +417,17 @@ export default function PreferencesDialog({ onClose }: { onClose: () => void }) 
                 </p>
               </div>
 
+              <div className="flex items-center justify-between py-1">
+                <label htmlFor="make-model-headers" className="text-xs text-[var(--color-text)]">Show manufacturer and model on Devices</label>
+                <input id="make-model-headers" type="checkbox" checked={deviceHeader?.showManufacturerModel ?? false} onChange={(e) => setDeviceHeader({ ...deviceHeader, showManufacturerModel: e.target.checked })} />
+              </div>
+              <div className="flex items-center justify-between py-1">
+                <label htmlFor="device-type-headers" className="text-xs text-[var(--color-text)]">Device type subtitle</label>
+                <select id="device-type-headers" value={deviceHeader?.showDeviceType === undefined ? "auto" : String(deviceHeader.showDeviceType)} onChange={(e) => setDeviceHeader({ ...deviceHeader, showDeviceType: e.target.value === "auto" ? undefined : e.target.value === "true" })} className="text-xs bg-[var(--color-surface)]">
+                  <option value="auto">Automatic</option><option value="true">Show</option><option value="false">Hide</option>
+                </select>
+              </div>
+
               {/* Stub labels */}
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
@@ -492,8 +507,8 @@ export default function PreferencesDialog({ onClose }: { onClose: () => void }) 
               </div>
             </>
           )}
+          {activeTab === "ai" && <McpConnectionSettings />}
         </div>
-
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-[var(--color-border)] shrink-0">
           {!isDefault ? (

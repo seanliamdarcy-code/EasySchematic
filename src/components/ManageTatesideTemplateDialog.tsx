@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { DEFAULT_CONNECTOR } from "../connectorTypes";
-import { ALL_CATEGORIES } from "../deviceTypeCategories";
+import { categoryOptionsForCurrent, useEffectiveTaxonomy } from "../effectiveTaxonomy";
 import { useSchematicStore } from "../store";
 import {
   CONNECTOR_GROUPS,
@@ -38,7 +38,9 @@ const CONNECTOR_GROUP_ENTRIES: Array<[string, ConnectorType[]]> = (() => {
   const grouped = new Set<ConnectorType>(groups.flatMap(([, list]) => list));
   const orphans = (Object.keys(CONNECTOR_LABELS) as ConnectorType[]).filter((c) => !grouped.has(c));
   if (orphans.length > 0) {
-    groups.push(["Other", orphans.sort((a, b) => CONNECTOR_LABELS[a].localeCompare(CONNECTOR_LABELS[b]))]);
+    const other = groups.find((group) => group[0] === "Other");
+    if (other) other[1] = [...other[1], ...orphans].sort((a, b) => CONNECTOR_LABELS[a].localeCompare(CONNECTOR_LABELS[b]));
+    else groups.push(["Other", orphans.sort((a, b) => CONNECTOR_LABELS[a].localeCompare(CONNECTOR_LABELS[b]))]);
   }
   return groups;
 })();
@@ -337,18 +339,12 @@ function ManageTatesideTemplateDialogContent({
   const [showCustomCategoryInput, setShowCustomCategoryInput] = useState(false);
   const [customCategoryDraft, setCustomCategoryDraft] = useState("");
   const jsonInputRef = useRef<HTMLInputElement>(null);
+  const { taxonomy } = useEffectiveTaxonomy();
+  const currentCategory = draft.category ?? "";
 
   const categoryOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const options: string[] = [];
-    for (const category of [...ALL_CATEGORIES, ...customCategories]) {
-      const trimmed = category.trim();
-      if (!trimmed || seen.has(trimmed)) continue;
-      seen.add(trimmed);
-      options.push(trimmed);
-    }
-    return options;
-  }, [customCategories]);
+    return categoryOptionsForCurrent(taxonomy, currentCategory, customCategories);
+  }, [customCategories, currentCategory, taxonomy]);
 
   const inputs = useMemo(() => draft?.ports.filter((port) => port.direction === "input") ?? [], [draft]);
   const outputs = useMemo(() => draft?.ports.filter((port) => port.direction === "output") ?? [], [draft]);
@@ -487,8 +483,7 @@ function ManageTatesideTemplateDialogContent({
   };
 
   const searchTermsCount = searchTermsRaw.split(",").map((term) => term.trim()).filter(Boolean).length;
-  const currentCategory = draft.category ?? "";
-  const categoryInList = currentCategory ? categoryOptions.includes(currentCategory) : false;
+  const categoryInList = currentCategory ? categoryOptions.some((category) => category.value === currentCategory) : false;
   const showCategoryInput = showCustomCategoryInput || (!!currentCategory && !categoryInList);
   const categoryInputValue = showCustomCategoryInput ? customCategoryDraft : (categoryInList ? "" : currentCategory);
 
@@ -544,6 +539,9 @@ function ManageTatesideTemplateDialogContent({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title ?? (saveMode === "create" ? "Draft Device Properties" : "Library Device Properties")}
         className="rounded-lg shadow-xl w-[860px] max-w-[95vw] max-h-[94vh] flex flex-col overflow-hidden"
         style={{
           backgroundColor: "var(--color-bg)",
@@ -648,7 +646,9 @@ function ManageTatesideTemplateDialogContent({
                 >
                   <option value="">Select category...</option>
                   {categoryOptions.map((category) => (
-                    <option key={category} value={category}>{category}</option>
+                    <option key={category.value} value={category.value}>
+                      {category.label}{category.status === "deprecated" ? " (deprecated)" : ""}
+                    </option>
                   ))}
                   <option value="__custom__">+ Add new category...</option>
                 </select>

@@ -1,15 +1,33 @@
 import type { DeviceData, DeviceTemplate, SchematicFile } from "./types";
+import { normalizeAuxRows, rowPosition } from "./auxiliaryData";
+import { isExternalEndpointData } from "./externalEndpoint";
 
 export interface SchematicDisplayDefaults {
   useShortNames?: boolean;
   wrapDeviceLabels?: boolean;
+  deviceHeader?: SchematicFile["deviceHeader"];
 }
 
-export function getSchematicDisplayDefaults(file: Pick<SchematicFile, "useShortNames" | "wrapDeviceLabels">): SchematicDisplayDefaults {
+export function getSchematicDisplayDefaults(file: Pick<SchematicFile, "useShortNames" | "wrapDeviceLabels" | "deviceHeader">): SchematicDisplayDefaults {
   return {
     useShortNames: file.useShortNames,
     wrapDeviceLabels: file.wrapDeviceLabels,
+    deviceHeader: file.deviceHeader,
   };
+}
+
+/** Shared by the canvas, exports, Port geometry and MCP readback. Never alters stored rows. */
+export function resolveDeviceHeader(device: DeviceData, defaults: SchematicDisplayDefaults = {}) {
+  const enabled = !isExternalEndpointData(device) && (device.showManufacturerModel ?? defaults.deviceHeader?.showManufacturerModel ?? false);
+  const manufacturer = String(device.manufacturer ?? "").trim();
+  const model = String(device.modelNumber ?? "").trim();
+  const computed = manufacturer && model.toLowerCase().startsWith(manufacturer.toLowerCase()) ? model : [manufacturer, model].filter(Boolean).join(" ");
+  const line2 = enabled ? (device.headerLine2?.trim() || computed) : "";
+  const label = enabled ? { ...resolveDeviceLabel(device, defaults), text: device.label, wrap: false } : resolveDeviceLabel(device, defaults);
+  const showType = device.showDeviceType ?? defaults.deviceHeader?.showDeviceType ?? !line2;
+  const auxiliaryData = normalizeAuxRows(device.auxiliaryData).filter(row => showType || rowPosition(row) !== "header" || row.text.trim() !== "{{deviceType}}");
+  if (showType && (device.showDeviceType === true || defaults.deviceHeader?.showDeviceType === true) && !auxiliaryData.some(row => rowPosition(row) === "header" && row.text.trim() === "{{deviceType}}")) auxiliaryData.unshift({ text: "{{deviceType}}", position: "header" });
+  return { enabled, label, line2, auxiliaryData, labelZone: (label.wrap ? 32 : 20) + (line2 ? 12 : 0), displayHeader: [label.text, ...(line2 ? [line2] : [])] };
 }
 
 export interface ResolvedDeviceLabel {

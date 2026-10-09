@@ -282,6 +282,8 @@ async function drawTitleBlock(
 
     doc.setFont(fontName, fontStyle);
     doc.setFontSize(cell.fontSize);
+    const textWidth = doc.getTextWidth(text);
+    if (textWidth > cellW - pad * 2) doc.setFontSize(cell.fontSize * Math.max(0.01, (cellW - pad * 2) / textWidth));
     const [r, g, b] = hexToRgb(color);
     doc.setTextColor(r, g, b);
 
@@ -803,7 +805,7 @@ export async function exportPdfBlob(
         const ckPage = storeState.colorKeyPage;
         const showOnThis = ckPage === "all" || (ckPage === "first" && i === 0) || (ckPage === "last" && i === pages.length - 1);
         if (showOnThis) {
-          const ckEntries = collectColorKeyEntries(storeState.edges, storeState.signalColors, storeState.signalLineStyles, storeState.colorKeyOverrides);
+          const ckEntries = collectColorKeyEntries(storeState.edges, storeState.signalColors, storeState.signalLineStyles, storeState.colorKeyOverrides, storeState.colorKeyLabels);
           drawColorKey(doc, pageWIn, pageHIn, ckEntries, storeState.colorKeyCorner, storeState.colorKeyColumns);
         }
       }

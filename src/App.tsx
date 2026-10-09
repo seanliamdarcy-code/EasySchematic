@@ -30,6 +30,8 @@ import ShowInfoPanel from "./components/ShowInfoPanel";
 import ViewOptionsPanel from "./components/ViewOptionsPanel";
 import MenuBar from "./components/MenuBar";
 import TateSideAutoSync from "./components/TateSideAutoSync";
+import { useMcpBridge } from "./mcpBridge";
+import { useMcpCanvasCapture } from "./exportUtils";
 import EdgeContextMenu from "./components/EdgeContextMenu";
 import IncompatibleConnectionDialog from "./components/IncompatibleConnectionDialog";
 import ParallelOutputConnectionDialog from "./components/ParallelOutputConnectionDialog";
@@ -305,6 +307,7 @@ function SchematicCanvas() {
   } = useSchematicStore();
 
   const rfInstance = useReactFlow();
+  useMcpCanvasCapture(rfInstance);
   const rfStore = useStoreApi();
   const updateNodeInternals = useUpdateNodeInternals();
   const { screenToFlowPosition } = rfInstance;
@@ -1329,7 +1332,7 @@ function SchematicCanvas() {
 
       const snap = computeSnap(draggedNode as SchematicNode, state.nodes, {
         useShortNames: state.useShortNames,
-        wrapDeviceLabels: state.wrapDeviceLabels,
+        deviceHeader: state.deviceHeader, wrapDeviceLabels: state.wrapDeviceLabels,
       }, state.edges);
       setSnapGuides(snap.guides);
 
@@ -1414,7 +1417,7 @@ function SchematicCanvas() {
       if (isGroupDrag) {
         const snap = computeSnap(draggedNode as SchematicNode, state.nodes, {
           useShortNames: state.useShortNames,
-          wrapDeviceLabels: state.wrapDeviceLabels,
+          deviceHeader: state.deviceHeader, wrapDeviceLabels: state.wrapDeviceLabels,
         }, state.edges);
         const dx = snap.x - draggedNode.position.x;
         const dy = snap.y - draggedNode.position.y;
@@ -1551,7 +1554,7 @@ function SchematicCanvas() {
       // computeSnap already handles port-priority + center-grid fallback.
       const snap = computeSnap(draggedNode as SchematicNode, state.nodes, {
         useShortNames: state.useShortNames,
-        wrapDeviceLabels: state.wrapDeviceLabels,
+        deviceHeader: state.deviceHeader, wrapDeviceLabels: state.wrapDeviceLabels,
       }, state.edges);
       let finalX = snap.x;
       let finalY = snap.y;
@@ -2200,6 +2203,7 @@ function DemoBanner() {
 }
 
 export default function App() {
+  useMcpBridge();
   const printView = useSchematicStore((s) => s.printView);
   const activePage = useSchematicStore((s) => s.activePage);
   const activePgType = useSchematicStore((s) => {

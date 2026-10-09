@@ -17,6 +17,11 @@ export interface ParseResult {
   fatalErrors: string[];
 }
 
+export interface ImportTaxonomyOptions {
+  allowedDeviceTypes?: Iterable<string>;
+  deviceTypeCategories?: Record<string, string>;
+}
+
 /** Generate a stable-ish ID for an imported template (matches CardCreatorDialog convention). */
 export function generateTemplateId(): string {
   return `import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

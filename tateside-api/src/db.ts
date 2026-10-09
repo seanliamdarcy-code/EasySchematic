@@ -45,3 +45,20 @@ export function runMigrations(db: DatabaseSync): void {
     }
   }
 }
+
+/** Read-only startup guard for processes that must not alter schema on launch. */
+export function assertMigrationsApplied(db: DatabaseSync): void {
+  const required = readdirSync(migrationsDir())
+    .filter((file) => file.endsWith(".sql"))
+    .sort();
+  let applied: Set<string>;
+  try {
+    applied = new Set((db.prepare("SELECT id FROM schema_migrations").all() as { id: string }[]).map((row) => row.id));
+  } catch {
+    throw new Error("TateSide database is not migrated; run the API migration workflow before starting MCP");
+  }
+  const missing = required.filter((file) => !applied.has(file));
+  if (missing.length > 0) {
+    throw new Error(`TateSide database is missing migrations: ${missing.join(", ")}`);
+  }
+}

@@ -2,8 +2,8 @@ import type { ConnectionEdge, DeviceData, SchematicNode } from "./types";
 import { portSide } from "./types";
 
 import { GRID_SIZE } from "./gridConstants";
-import { totalAuxHeight, headerBandHeight, HEADER_LABEL_ZONE_PX, HEADER_LABEL_ZONE_2_PX } from "./auxiliaryData";
-import { resolveDeviceLabel } from "./displayName";
+import { totalAuxHeight, headerBandHeight } from "./auxiliaryData";
+import { resolveDeviceHeader, type SchematicDisplayDefaults } from "./displayName";
 import { STUB_GAP as STUB_PORT_GAP, STUB_W_EST, STUB_H_EST } from "./stubPlacement";
 import {
   EXTERNAL_ENDPOINT_HEIGHT,
@@ -25,7 +25,7 @@ const MAX_SNAP_DISTANCE = 800;
 const NEAREST_K_DEVICE = 8;
 const NEAREST_K_STUB = 12;
 
-export interface DisplayDefaults {
+export interface DisplayDefaults extends SchematicDisplayDefaults {
   useShortNames: boolean;
   wrapDeviceLabels: boolean;
 }
@@ -69,8 +69,8 @@ function estimateDeviceHeight(node: SchematicNode): number {
   // totalAuxHeight adds (a) header band surplus above the 40-px baseline and (b) footer block height.
   // Per-instance wrapLabel override is honored here; schematic-wide default is not threaded — React Flow's
   // measured height supersedes this estimate after the first render.
-  const labelZone = data.wrapLabel ? HEADER_LABEL_ZONE_2_PX : HEADER_LABEL_ZONE_PX;
-  return 60 + portRows * 20 + totalAuxHeight(data.auxiliaryData, labelZone);
+  const header = resolveDeviceHeader(data);
+  return 60 + portRows * 20 + totalAuxHeight(header.auxiliaryData, header.labelZone);
 }
 
 function isDrawBoxNode(node: SchematicNode): boolean {
@@ -132,7 +132,7 @@ function absoluteNodePos(
 
 /** Node rect in absolute world coords. Single allocation per call (parent
  *  chain walk inlined; intermediate nodeRect/absoluteNodePos avoided). */
-function absRect(node: SchematicNode, nodeMap: Map<string, SchematicNode>): Rect {
+export function absRect(node: SchematicNode, nodeMap: Map<string, SchematicNode>): Rect {
   const isExternalEndpoint = node.type === "device" && isExternalEndpointData(node.data as DeviceData);
   const w = node.measured?.width ?? (node.width as number) ?? (node.style?.width as number) ?? (node.type === "room" ? 400 : isExternalEndpoint ? estimateExternalEndpointWidth((node.data as DeviceData).label, (node.data as DeviceData).ports?.[0]?.direction) : 180);
   const h = node.measured?.height ?? (node.height as number) ?? (node.style?.height as number) ?? (node.type === "room" ? 300 : estimateDeviceHeight(node));
@@ -295,9 +295,8 @@ export function getPortAbsolutePositions(
       { handleId: `${port.id}-out`, portId: port.id, side: "right", absX: deviceAbs.x + deviceW, absY },
     ];
   }
-  const resolved = resolveDeviceLabel(dd, displayDefaults);
-  const labelZone = resolved.wrap ? HEADER_LABEL_ZONE_2_PX : HEADER_LABEL_ZONE_PX;
-  const headerBand = headerBandHeight(dd.auxiliaryData, labelZone);
+  const header = resolveDeviceHeader(dd, displayDefaults);
+  const headerBand = headerBandHeight(header.auxiliaryData, header.labelZone);
   // Round to integer pixels — absoluteNodePos walks the parent chain summing
   // positions, and any sub-pixel ancestor (older saves, room dragged to non-
   // integer Y) propagates through everything emitted here. The downstream edge

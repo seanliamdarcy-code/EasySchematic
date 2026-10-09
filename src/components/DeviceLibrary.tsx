@@ -4,9 +4,10 @@ import { bulkDeleteTatesideDeviceTemplates, bulkEditTatesideDeviceTemplates, typ
 import { SIGNAL_LABELS } from "../types";
 import type { DeviceTemplate, CustomTemplateGroup, OwnedGearFile, OwnedGearItem, SchematicNode, DeviceData } from "../types";
 import { useSchematicStore, CATEGORY_ORDER_DEFAULT } from "../store";
-import { scoreTemplate } from "../templateSearch";
+import { scoreDeviceLibraryTemplate, scoreTemplate } from "../templateSearch";
 import { inventoryKeyFromDeviceData, inventoryKeyFromTemplate } from "../inventoryKey";
 import { compareTemplatesByModel } from "../templateOrdering";
+import { activeCategories, useEffectiveTaxonomy } from "../effectiveTaxonomy";
 import DeviceCreatorPicker from "./DeviceCreatorPicker";
 import ImportDevicesDialog from "./ImportDevicesDialog";
 import ImportQuoteDevicesDialog from "./ImportQuoteDevicesDialog";
@@ -1632,6 +1633,7 @@ export default function DeviceLibrary() {
   const [bulkPreviewState, setBulkPreviewState] = useState<{ signature: string; result: TatesideBulkEditResult } | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkDeleteConfirming, setBulkDeleteConfirming] = useState(false);
+  const { taxonomy } = useEffectiveTaxonomy();
   const bulkEditActive = selectedSharedTemplateIds.size > 0;
   const bulkPreviewSignature = useMemo(() => JSON.stringify({
     selectedTemplateIds: [...selectedSharedTemplateIds].sort(),
@@ -1745,7 +1747,7 @@ export default function DeviceLibrary() {
   const filteredCustom = useMemo(() => {
     let result = customTemplates;
     if (selectedSignalTypes.size > 0) result = result.filter(matchesSignalFilter);
-    if (query) result = result.filter((t) => scoreTemplate(t, query) > 0);
+    if (query) result = result.filter((t) => scoreDeviceLibraryTemplate(t, query) > 0);
     return result;
   }, [customTemplates, query, selectedSignalTypes, matchesSignalFilter]);
 
@@ -1756,7 +1758,7 @@ export default function DeviceLibrary() {
     if (selectedSignalTypes.size > 0) all = all.filter(matchesSignalFilter);
     const scored = all
       .map((t) => {
-        let score = scoreTemplate(t, query);
+        let score = scoreDeviceLibraryTemplate(t, query);
         // Boost favorites to the top of results
         if (score > 0 && favoriteSet.has(t.id ?? t.deviceType)) score += 200;
         return { template: t, score };
@@ -1825,11 +1827,14 @@ export default function DeviceLibrary() {
   }, [selectedSharedTemplateIds, templates]);
   const sharedCategoryOptions = useMemo(() => {
     const categories = new Set<string>();
+    for (const category of activeCategories(taxonomy)) {
+      if (category.value.trim()) categories.add(category.value.trim());
+    }
     for (const template of templates) {
       if (template.category?.trim()) categories.add(template.category.trim());
     }
     return [...categories].sort((a, b) => a.localeCompare(b));
-  }, [templates]);
+  }, [taxonomy, templates]);
   const totalResults = rankedResults?.length ?? (filteredCustom.length + totalLibraryResults);
   const ownedResults = useMemo(
     () => ownedGear.filter((item) => matchesOwnedGearQuery(item, query)).length,
@@ -2274,6 +2279,22 @@ export default function DeviceLibrary() {
               <line x1="5" y1="8" x2="11" y2="8" />
             </svg>
             Create New Device
+          </button>
+        )}
+
+        {/* Start New Project */}
+        {!hasFilter && (!query || "start new project jetbuilt".includes(query.toLowerCase())) && (
+          <button
+            onClick={() => setShowImportQuoteDialog(true)}
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded border border-emerald-400/50 bg-emerald-500/10 hover:bg-emerald-500/15 text-xs text-emerald-700 cursor-pointer transition-colors"
+          >
+            <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={1.5}>
+              <path d="M2.5 13.5h11" />
+              <path d="M3.5 11.5v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" />
+              <path d="M5.5 6.5h5" />
+              <path d="M5.5 8.5h5" />
+            </svg>
+            Start New Project
           </button>
         )}
 

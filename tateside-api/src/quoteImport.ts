@@ -7,7 +7,17 @@ import type {
   QuoteImportResultItem,
 } from "../../src/quoteImportTypes.js";
 import { listCurrentTemplates } from "./deviceStore.js";
+import {
+  buildLibraryIdentityIndex,
+  normalizedLookupKey,
+  resolveLibraryIdentity,
+  uniqueIdentityMatchReason,
+  type LibraryIdentityIndex,
+} from "./libraryIdentity.js";
 import { createOpenAiResponse, extractOutputText, getOpenAiWorkflowConfig, uploadOpenAiFile } from "./openaiResponses.js";
+
+// Re-export for existing import sites that used quoteImport.normalizedLookupKey
+export { normalizedLookupKey } from "./libraryIdentity.js";
 
 interface OpenAiExtractionPayload {
   devices?: Array<{
@@ -21,7 +31,7 @@ interface OpenAiExtractionPayload {
 
 interface MatchContext {
   templates: DeviceTemplate[];
-  byLookupKey: Map<string, DeviceTemplate[]>;
+  identityIndex: LibraryIdentityIndex;
   byModel: Map<string, DeviceTemplate[]>;
 }
 
@@ -44,13 +54,6 @@ function normalizeToken(value: string | null | undefined): string {
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "");
-}
-
-export function normalizedLookupKey(manufacturer?: string | null, model?: string | null): string {
-  const maker = normalizeToken(manufacturer);
-  const modelToken = normalizeToken(model);
-  if (maker && modelToken) return `${maker}::${modelToken}`;
-  return maker || modelToken;
 }
 
 function normalizeDescription(value: string | null | undefined): string {
@@ -102,6 +105,15 @@ function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
           ? existing.sourceLineText
           : device.sourceLineText,
       normalizedLookupKey: existing.normalizedLookupKey || device.normalizedLookupKey,
+      commercialSku: existing.commercialSku ?? device.commercialSku,
+      sourceKind: existing.sourceKind ?? device.sourceKind,
+      bundleOrigin: existing.bundleOrigin ?? device.bundleOrigin,
+      bundleId: existing.bundleId ?? device.bundleId,
+      bundleLabel: existing.bundleLabel ?? device.bundleLabel,
+      bundleQuantity: existing.bundleQuantity ?? device.bundleQuantity,
+      componentQuantityPerBundle: existing.componentQuantityPerBundle ?? device.componentQuantityPerBundle,
+      room: existing.room ?? device.room,
+      system: existing.system ?? device.system,
     });
   }
 
@@ -113,17 +125,9 @@ function mergeDevices(devices: ExtractedQuoteDevice[]): ExtractedQuoteDevice[] {
 }
 
 function buildMatchContext(templates: DeviceTemplate[]): MatchContext {
-  const byLookupKey = new Map<string, DeviceTemplate[]>();
   const byModel = new Map<string, DeviceTemplate[]>();
 
   for (const template of templates) {
-    const lookupKey = normalizedLookupKey(template.manufacturer, template.modelNumber || template.label);
-    if (lookupKey) {
-      const existing = byLookupKey.get(lookupKey) ?? [];
-      existing.push(template);
-      byLookupKey.set(lookupKey, existing);
-    }
-
     const modelKey = normalizeToken(template.modelNumber || template.label);
     if (modelKey) {
       const existing = byModel.get(modelKey) ?? [];
@@ -132,7 +136,11 @@ function buildMatchContext(templates: DeviceTemplate[]): MatchContext {
     }
   }
 
-  return { templates, byLookupKey, byModel };
+  return {
+    templates,
+    identityIndex: buildLibraryIdentityIndex(templates),
+    byModel,
+  };
 }
 
 function toCandidate(template: DeviceTemplate, matchReason: string): QuoteImportCandidateMatch {
@@ -156,6 +164,7 @@ function findPossibleMatches(device: ExtractedQuoteDevice, context: MatchContext
   const candidates = new Map<string, QuoteImportCandidateMatch>();
   const modelKey = normalizeToken(device.model);
   const manufacturerKey = normalizeToken(device.manufacturer);
+  const commercialSkuKey = device.sourceKind === "bundle_component" ? normalizeToken(device.commercialSku) : "";
 
   for (const template of context.byModel.get(modelKey) ?? []) {
     addCandidate(candidates, template, "Same model text as a library device");
@@ -167,6 +176,7 @@ function findPossibleMatches(device: ExtractedQuoteDevice, context: MatchContext
     const templateLabel = normalizeToken(template.label);
 
     if (manufacturerKey && templateMaker && manufacturerKey !== templateMaker) continue;
+    if (commercialSkuKey && templateModel === commercialSkuKey) continue;
 
     if (modelKey && templateModel && (templateModel.includes(modelKey) || modelKey.includes(templateModel))) {
       addCandidate(candidates, template, "Manufacturer matches and model text is very similar");
@@ -210,6 +220,8 @@ function portReuseScore(device: ExtractedQuoteDevice, template: DeviceTemplate):
 
   const deviceModel = normalizeToken(device.model);
   const templateModel = normalizeToken(template.modelNumber || template.label);
+  const commercialSkuKey = device.sourceKind === "bundle_component" ? normalizeToken(device.commercialSku) : "";
+  if (commercialSkuKey && templateModel === commercialSkuKey) return 0;
   const prefix = commonPrefixLength(deviceModel, templateModel);
   const deviceTokens = new Set([
     ...tokenizeText(device.model),
@@ -254,16 +266,27 @@ export function matchQuoteDevicesAgainstLibrary(
   const context = buildMatchContext(templates);
 
   return devices.map((device) => {
-    const exactMatches = device.normalizedLookupKey
-      ? context.byLookupKey.get(device.normalizedLookupKey) ?? []
-      : [];
+    // Always resolve from manufacturer+model; do not trust caller-supplied lookup keys alone.
+    const resolution = resolveLibraryIdentity(context.identityIndex, device.manufacturer, device.model);
 
-    if (exactMatches.length > 0) {
+    if (resolution.kind === "unique") {
       return {
         ...device,
-        status: "already_in_library",
-        exactMatch: toCandidate(exactMatches[0], "Exact manufacturer/model match in TateSide library"),
+        status: "already_in_library" as const,
+        exactMatch: toCandidate(resolution.template, uniqueIdentityMatchReason(resolution.sources)),
         possibleMatches: [],
+        portReuseCandidates: [],
+      };
+    }
+
+    if (resolution.kind === "ambiguous") {
+      return {
+        ...device,
+        status: "possible_match" as const,
+        exactMatch: null,
+        possibleMatches: resolution.templates.map((template) =>
+          toCandidate(template, "Ambiguous library identity"),
+        ),
         portReuseCandidates: [],
       };
     }
@@ -273,7 +296,7 @@ export function matchQuoteDevicesAgainstLibrary(
       .filter((candidate) => !possibleMatches.some((match) => match.id === candidate.id));
     return {
       ...device,
-      status: possibleMatches.length > 0 ? "possible_match" : "missing",
+      status: possibleMatches.length > 0 ? "possible_match" as const : "missing" as const,
       exactMatch: null,
       possibleMatches,
       portReuseCandidates,

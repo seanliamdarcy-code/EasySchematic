@@ -292,6 +292,17 @@ interface SchematicState {
   edges: ConnectionEdge[];
   schematicName: string;
   isHydrated: boolean;
+  // Session-only pairing credentials: never included in schematic saves.
+  mcpBridgeEnabled: boolean;
+  mcpBridgeToken: string;
+  mcpBridgePort: number;
+  mcpBridgeOffice: boolean;
+  mcpBridgeStatus: "off" | "connecting" | "connected" | "error";
+  mcpBridgeStatusDetail?: string;
+  mcpBridgeLastCommand?: string;
+  moveDevice: (nodeId: string, position: { x: number; y: number }) => void;
+  placeDeviceInRoom: (nodeId: string, roomId: string, position: { x: number; y: number }) => boolean;
+  deleteConnection: (connectionId: string) => { removedStubLinks: number };
   /** Bumped when a new schematic is wholesale-loaded (import, share link, demo, autosave hydrate). Canvas refits its viewport when this changes. */
   loadSeq: number;
   editingNodeId: string | null;
@@ -350,10 +361,11 @@ interface SchematicState {
   setEditingNodeId: (id: string | null) => void;
   setCreatingNodeId: (id: string | null) => void;
   createAndEditDevice: (template: DeviceTemplate, position: { x: number; y: number }) => void;
-  addRoom: (label: string, position: { x: number; y: number }) => void;
-  addExternalEndpoint: (position: { x: number; y: number }) => void;
+  addRoom: (label: string, position: { x: number; y: number }, size?: { width: number; height: number }) => void;
+  addExternalEndpoint: (position: { x: number; y: number }, data?: DeviceData, exact?: boolean) => void;
   addDrawBox: (position: { x: number; y: number }) => void;
   updateRoomLabel: (nodeId: string, label: string) => void;
+  patchContainerNode: (nodeId: string, patch: { position?: { x: number; y: number }; width?: number; height?: number; label?: string; html?: string }, options?: { skipUndo?: boolean; preserveChildren?: boolean }) => void;
   updateRoom: (nodeId: string, data: import("./types").RoomData) => void;
   updateAnnotation: (nodeId: string, data: Partial<import("./types").AnnotationData>) => void;
   toggleRoomLock: (nodeId: string) => void;
@@ -500,6 +512,10 @@ interface SchematicState {
   colorKeyColumns: number;
   colorKeyPage: "first" | "last" | "all";
   colorKeyOverrides: Partial<Record<SignalType, boolean>> | undefined;
+  colorKeyLabels: Partial<Record<SignalType, string>> | undefined;
+  deviceHeader: SchematicFile["deviceHeader"];
+  setDeviceHeader: (settings: SchematicFile["deviceHeader"]) => void;
+  setColorKeyLabels: (labels: Partial<Record<SignalType, string>>) => void;
   cableCosts: Record<string, number> | undefined;
   setCableCost: (key: string, cost: number | undefined) => void;
   // Room distance + cable-length estimation (#146)
@@ -643,6 +659,7 @@ interface SchematicState {
   wrapDeviceLabels: boolean;
   setWrapDeviceLabels: (wrap: boolean) => void;
   patchStubLabelData: (nodeId: string, patch: Partial<import("./types").StubLabelData>) => void;
+  moveStubLabel: (nodeId: string, position: { x: number; y: number }) => void;
   cableIdMap: Record<string, string>;
   recomputeCableIds: () => void;
 
@@ -793,6 +810,8 @@ function getPersistedSchematicFile(state: SchematicState): SchematicFile {
     colorKeyColumns: state.colorKeyColumns !== 1 ? state.colorKeyColumns : undefined,
     colorKeyPage: state.colorKeyPage !== "all" ? state.colorKeyPage : undefined,
     colorKeyOverrides: state.colorKeyOverrides && Object.keys(state.colorKeyOverrides).length > 0 ? state.colorKeyOverrides : undefined,
+    colorKeyLabels: state.colorKeyLabels,
+    deviceHeader: state.deviceHeader,
     pages: state.pages.length > 0 ? state.pages : undefined,
     cableCosts: state.cableCosts && Object.keys(state.cableCosts).length > 0 ? state.cableCosts : undefined,
     roomDistances: state.roomDistances && Object.keys(state.roomDistances).length > 0 ? state.roomDistances : undefined,
@@ -1383,6 +1402,11 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   edges: [],
   schematicName: "Untitled Schematic",
   isHydrated: false,
+  mcpBridgeEnabled: false,
+  mcpBridgeToken: "",
+  mcpBridgePort: 8765,
+  mcpBridgeOffice: false,
+  mcpBridgeStatus: "off",
   loadSeq: 0,
   editingNodeId: null,
   creatingNodeId: null,
@@ -1438,6 +1462,8 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   colorKeyColumns: 1,
   colorKeyPage: "all" as "first" | "last" | "all",
   colorKeyOverrides: undefined,
+  colorKeyLabels: undefined,
+  deviceHeader: undefined,
   cableCosts: undefined,
   roomDistances: undefined,
   distanceSettings: undefined,
@@ -1605,7 +1631,9 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     );
 
     // Check if connector types are mismatched (any mismatch, not just CONNECTOR_ACCEPTS pairs)
-    const connectorsDiffer = sourcePort && targetPort &&
+    // Service references have no physical plug; real Devices still require connector compatibility.
+    const serviceReference = isExternalEndpointNode(state.nodes, connection.source) || isExternalEndpointNode(state.nodes, connection.target);
+    const connectorsDiffer = !serviceReference && sourcePort && targetPort &&
       sourcePort.connectorType && targetPort.connectorType &&
       sourcePort.connectorType !== targetPort.connectorType &&
       !areConnectorsCompatible(sourcePort.connectorType, targetPort.connectorType);
@@ -1632,7 +1660,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     }
 
     // Also handle CONNECTOR_ACCEPTS adapter pairs (compatible but needs adapter cable)
-    if (sourcePort && targetPort && needsAdapter(sourcePort.connectorType, targetPort.connectorType)) {
+    if (!serviceReference && sourcePort && targetPort && needsAdapter(sourcePort.connectorType, targetPort.connectorType)) {
       const allTemplates = [...DEVICE_TEMPLATES, ...state.customTemplates];
       const adapterMatches = findAdaptersForConnectorBridge(
         sourcePort.connectorType!,
@@ -3004,7 +3032,46 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     set({ editingNodeId: newNodeId, creatingNodeId: newNodeId });
   },
 
-  addRoom: (label, position) => {
+  moveDevice: (nodeId, position) => {
+    const state = get();
+    const node = state.nodes.find((n) => n.id === nodeId && n.type === "device");
+    if (!node) return;
+    pushUndo({ nodes: state.nodes, edges: state.edges });
+    set({ nodes: state.nodes.map((n) => n.id === nodeId ? { ...n, parentId: undefined, position } : n) });
+    get().reparentNode(nodeId, position, { skipUndo: true });
+    get().saveToLocalStorage();
+  },
+
+  placeDeviceInRoom: (nodeId, roomId, position) => {
+    const state = get();
+    const map = new Map(state.nodes.map((node) => [node.id, node]));
+    const room = map.get(roomId);
+    const device = map.get(nodeId);
+    if (room?.type !== "room" || device?.type !== "device") return false;
+    const roomAbs = getAbsolutePosition(roomId, map);
+    const absolute = { x: roomAbs.x + position.x, y: roomAbs.y + position.y };
+    const winner = findBestEnclosingRoom(nodeId, false, absolute.x + fallbackNodeWidth(device) / 2,
+      absolute.y + fallbackNodeHeight(device) / 2, state.nodes, map);
+    if (winner?.id !== roomId) return false;
+    get().moveDevice(nodeId, absolute);
+    return get().nodes.find((node) => node.id === nodeId)?.parentId === roomId;
+  },
+
+  deleteConnection: (connectionId) => {
+    const state = get();
+    const selectedNodes = new Set(state.nodes.filter((node) => node.selected).map((node) => node.id));
+    const selectedEdges = new Set(state.edges.filter((edge) => edge.selected).map((edge) => edge.id));
+    set({ nodes: state.nodes.map((node) => ({ ...node, selected: false })),
+      edges: state.edges.map((edge) => ({ ...edge, selected: edge.id === connectionId })) });
+    const before = get().edges.length;
+    get().removeSelected();
+    const removedStubLinks = Math.max(0, before - get().edges.length - 1);
+    set({ nodes: get().nodes.map((node) => ({ ...node, selected: selectedNodes.has(node.id) })),
+      edges: get().edges.map((edge) => ({ ...edge, selected: selectedEdges.has(edge.id) })) });
+    return { removedStubLinks };
+  },
+
+  addRoom: (label, position, size) => {
     const state = get();
     pushUndo({ nodes: state.nodes, edges: state.edges });
     const newRoom: SchematicNode = {
@@ -3012,7 +3079,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
       type: "room",
       position,
       data: { label },
-      style: { width: 400, height: 300 },
+      style: size ?? { width: 400, height: 300 },
       selected: true,
       zIndex: -1,
     };
@@ -3025,14 +3092,14 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     get().saveToLocalStorage();
   },
 
-  addExternalEndpoint: (position) => {
+  addExternalEndpoint: (position, data, exact = false) => {
     const state = get();
     pushUndo({ nodes: state.nodes, edges: state.edges });
     const newNode: DeviceNode = {
       id: nextNodeId(),
       type: "device",
-      position: { ...position, y: snapExternalEndpointY(position.y) },
-      data: createExternalEndpointData(),
+      position: exact ? position : { ...position, y: snapExternalEndpointY(position.y) },
+      data: data ?? createExternalEndpointData(),
       style: { height: EXTERNAL_ENDPOINT_HEIGHT },
       selected: true,
     };
@@ -3073,6 +3140,23 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
         return { ...n, data: { ...n.data, label } } as SchematicNode;
       }),
     });
+    get().saveToLocalStorage();
+  },
+
+  patchContainerNode: (nodeId, patch, options) => {
+    const state = get();
+    const node = state.nodes.find(n => n.id === nodeId && (n.type === "room" || n.type === "note"));
+    if (!node) return;
+    if (!options?.skipUndo) pushUndo({ nodes: state.nodes, edges: state.edges });
+    const dx = (patch.position?.x ?? node.position.x) - node.position.x;
+    const dy = (patch.position?.y ?? node.position.y) - node.position.y;
+    set({ nodes: state.nodes.map(n => {
+      if (options?.preserveChildren && n.parentId === nodeId) return { ...n, position: { x: n.position.x - dx, y: n.position.y - dy } };
+      if (n.id !== nodeId) return n;
+      const dimensions = { ...(patch.width !== undefined ? { width: patch.width } : {}), ...(patch.height !== undefined ? { height: patch.height } : {}) };
+      return { ...n, ...dimensions, position: patch.position ?? n.position, style: { ...n.style, ...dimensions }, measured: { ...n.measured, ...dimensions },
+        data: { ...n.data, ...(patch.label !== undefined ? { label: patch.label } : {}), ...(patch.html !== undefined ? { html: patch.html } : {}) } } as SchematicNode;
+    }) });
     get().saveToLocalStorage();
   },
 
@@ -3868,6 +3952,8 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   setColorKeyCorner: (c) => { set({ colorKeyCorner: c }); get().saveToLocalStorage(); },
   setColorKeyColumns: (n) => { set({ colorKeyColumns: Math.max(1, Math.min(4, n)) }); get().saveToLocalStorage(); },
   setColorKeyPage: (p) => { set({ colorKeyPage: p }); get().saveToLocalStorage(); },
+  setDeviceHeader: (deviceHeader) => { set({ deviceHeader }); get().saveToLocalStorage(); },
+  setColorKeyLabels: (labels) => { set({ colorKeyLabels: labels }); get().saveToLocalStorage(); },
   setColorKeyOverrides: (o) => { set({ colorKeyOverrides: o && Object.keys(o).length > 0 ? o : undefined }); get().saveToLocalStorage(); },
   setCableCost: (key, cost) => {
     const current = { ...get().cableCosts };
@@ -4911,6 +4997,8 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
             colorKeyColumns: data.colorKeyColumns ?? 1,
             colorKeyPage: data.colorKeyPage ?? "all",
             colorKeyOverrides: data.colorKeyOverrides ?? undefined,
+            colorKeyLabels: data.colorKeyLabels ?? undefined,
+            deviceHeader: data.deviceHeader,
             pages: data.pages ?? [],
             cableCosts: data.cableCosts ?? undefined,
             roomDistances: data.roomDistances ?? undefined,
@@ -4993,6 +5081,8 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
         colorKeyColumns: data.colorKeyColumns ?? 1,
         colorKeyPage: data.colorKeyPage ?? "all",
         colorKeyOverrides: data.colorKeyOverrides ?? undefined,
+        colorKeyLabels: data.colorKeyLabels ?? undefined,
+        deviceHeader: data.deviceHeader,
         pages: data.pages ?? [],
         cableCosts: data.cableCosts ?? undefined,
         roomDistances: data.roomDistances ?? undefined,
@@ -5075,6 +5165,8 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
       colorKeyColumns: state.colorKeyColumns !== 1 ? state.colorKeyColumns : undefined,
       colorKeyPage: state.colorKeyPage !== "all" ? state.colorKeyPage : undefined,
       colorKeyOverrides: state.colorKeyOverrides && Object.keys(state.colorKeyOverrides).length > 0 ? state.colorKeyOverrides : undefined,
+      colorKeyLabels: state.colorKeyLabels,
+      deviceHeader: state.deviceHeader,
       pages: state.pages.length > 0 ? state.pages : undefined,
       cableCosts: state.cableCosts && Object.keys(state.cableCosts).length > 0 ? state.cableCosts : undefined,
       roomDistances: state.roomDistances && Object.keys(state.roomDistances).length > 0 ? state.roomDistances : undefined,
@@ -5169,6 +5261,8 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
       colorKeyColumns: data.colorKeyColumns ?? 1,
       colorKeyPage: data.colorKeyPage ?? "all",
       colorKeyOverrides: data.colorKeyOverrides ?? undefined,
+      colorKeyLabels: data.colorKeyLabels ?? undefined,
+      deviceHeader: data.deviceHeader,
       pages: data.pages ?? [],
       activePage: "schematic",
       cableCosts: data.cableCosts ?? undefined,
@@ -5241,6 +5335,8 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
         fileHandle: null,
         titleBlock: { showName: "", venue: "", designer: "", engineer: "", date: "", drawingTitle: "", company: "", revision: "", logo: "", customFields: [] },
         titleBlockLayout: createDefaultLayout(),
+        colorKeyLabels: undefined,
+        deviceHeader: undefined,
         hiddenSignalTypes: "",
         hiddenPinSignalTypes: "",
         hideUnconnectedPorts: false,
@@ -5413,6 +5509,15 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     get().saveToLocalStorage();
   },
 
+  moveStubLabel: (nodeId, position) => {
+    const state = get();
+    if (!state.nodes.some(n => n.id === nodeId && n.type === "stub-label")) return;
+    pushUndo({ nodes: state.nodes, edges: state.edges });
+    set({ nodes: state.nodes.map(n => n.id === nodeId && n.type === "stub-label"
+      ? { ...n, position, data: { ...n.data, placed: true } } : n) });
+    get().saveToLocalStorage();
+  },
+
   convertEdgeToStubs: (edgeId) => {
     const state = get();
     const edge = state.edges.find((e) => e.id === edgeId);
@@ -5445,6 +5550,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     const displayDefaults = {
       useShortNames: state.useShortNames,
       wrapDeviceLabels: state.wrapDeviceLabels,
+      deviceHeader: state.deviceHeader,
     };
     const handlePosFor = (
       deviceNode: typeof state.nodes[number],

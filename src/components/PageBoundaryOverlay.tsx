@@ -464,6 +464,24 @@ function ColorKeyLegend({
 
 // ─── Main overlay ─────────────────────────────────────────────────
 
+/** Reuse the print overlay artwork for an off-screen MCP capture. */
+export function PrintCaptureArtwork({ pageIndex, width, height, zoom }: { pageIndex: number; width: number; height: number; zoom: number }) {
+  const s = useSchematicStore.getState();
+  const pages = computePageGrid(getPaperSize(s.printPaperId, s.printCustomWidthIn, s.printCustomHeightIn), s.printOrientation, s.printScale, s.nodes, s.titleBlockLayout.heightIn, s.printOriginOffsetX, s.printOriginOffsetY);
+  const page = pages[pageIndex];
+  if (!page) throw new Error("Print page does not exist.");
+  const pt = 96 / s.printScale / 72;
+  const entries = s.colorKeyEnabled ? collectColorKeyEntries(s.edges, s.signalColors, s.signalLineStyles, s.colorKeyOverrides, s.colorKeyLabels) : [];
+  const showLegend = s.colorKeyPage === "all" || (s.colorKeyPage === "first" ? pageIndex === 0 : pageIndex === pages.length - 1);
+  return <svg width={width} height={height} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+    <g transform={`scale(${zoom}) translate(${-page.x},${-page.y})`}>
+      <PageOverlay page={page} zoom={zoom} titleBlock={s.titleBlock} layout={s.titleBlockLayout} totalPages={pages.length} minCol={Math.min(...pages.map(p => p.col))} minRow={Math.min(...pages.map(p => p.row))} />
+      <CrossingLabels labels={computeCrossingLabels(pages, s.routedEdges, s.edges, s.nodes, pt, s.signalColors)} pxPerPt={pt} />
+      {showLegend && <ColorKeyLegend entries={entries} pages={[page]} corner={s.colorKeyCorner} columns={s.colorKeyColumns} pageFilter="all" pxPerPt={pt} />}
+    </g>
+  </svg>;
+}
+
 function PageBoundaryOverlay() {
   const { x: vx, y: vy, zoom } = useViewport();
   const rfInstance = useReactFlow();
@@ -484,6 +502,7 @@ function PageBoundaryOverlay() {
   const colorKeyCorner = useSchematicStore((s) => s.colorKeyCorner);
   const colorKeyColumns = useSchematicStore((s) => s.colorKeyColumns);
   const colorKeyPage = useSchematicStore((s) => s.colorKeyPage);
+  const colorKeyLabels = useSchematicStore((s) => s.colorKeyLabels);
   const colorKeyOverrides = useSchematicStore((s) => s.colorKeyOverrides);
   const printOriginOffsetX = useSchematicStore((s) => s.printOriginOffsetX);
   const printOriginOffsetY = useSchematicStore((s) => s.printOriginOffsetY);
@@ -509,8 +528,8 @@ function PageBoundaryOverlay() {
   );
 
   const colorKeyEntries = useMemo(
-    () => colorKeyEnabled ? collectColorKeyEntries(storeEdges, signalColors, signalLineStyles, colorKeyOverrides) : [],
-    [colorKeyEnabled, storeEdges, signalColors, signalLineStyles, colorKeyOverrides],
+    () => colorKeyEnabled ? collectColorKeyEntries(storeEdges, signalColors, signalLineStyles, colorKeyOverrides, colorKeyLabels) : [],
+    [colorKeyEnabled, storeEdges, signalColors, signalLineStyles, colorKeyOverrides, colorKeyLabels],
   );
 
   if (pages.length === 0) return null;
@@ -810,6 +829,8 @@ function PageOverlay({
                 textAnchor={anchor}
                 fill={fillColor}
                 fontSize={cellFontSize}
+                textLength={textContent.length * cellFontSize * 0.6 > cellW - pad * 2 ? Math.max(1, cellW - pad * 2) : undefined}
+                lengthAdjust="spacingAndGlyphs"
                 fontFamily={fontFamily}
                 fontWeight={cell.fontWeight === "bold" ? "600" : "normal"}
                 fontStyle={isPlaceholder ? "italic" : undefined}

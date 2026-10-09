@@ -19,6 +19,7 @@ export function collectColorKeyEntries(
   signalColors: Partial<Record<SignalType, string>> | undefined,
   signalLineStyles: Partial<Record<SignalType, LineStyle>> | undefined,
   overrides: Partial<Record<SignalType, boolean>> | undefined,
+  labels?: Partial<Record<SignalType, string>>,
 ): ColorKeyEntry[] {
   // Collect signal types from actual connections (including stubbed)
   const used = new Set<SignalType>();
@@ -43,14 +44,14 @@ export function collectColorKeyEntries(
     const lineStyle = signalLineStyles?.[type] ?? "solid";
     entries.push({
       signalType: type,
-      label: SIGNAL_LABELS[type],
+      label: labels?.[type] ?? SIGNAL_LABELS[type],
       color,
       lineStyle,
       dashArray: LINE_STYLE_DASHARRAY[lineStyle],
     });
   }
   entries.sort((a, b) => a.label.localeCompare(b.label));
-  return entries;
+  return entries.filter((entry, i) => !labels?.[entry.signalType] || !entries.slice(0, i).some(other => other.label === entry.label && other.color === entry.color && other.lineStyle === entry.lineStyle));
 }
 
 export interface PositionedEntry {

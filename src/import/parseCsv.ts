@@ -1,7 +1,7 @@
 import type { DeviceTemplate, Port } from "../types";
 import { DEVICE_TYPE_TO_CATEGORY } from "../deviceTypeCategories";
 import { validateTemplate } from "./validate";
-import { generatePortId, generateTemplateId, type ParseResult, type ParsedTemplate } from "./types";
+import { generatePortId, generateTemplateId, type ImportTaxonomyOptions, type ParseResult, type ParsedTemplate } from "./types";
 
 const REQUIRED_COLUMNS = ["model_number", "label", "device_type", "port_label", "port_signal_type", "port_direction"];
 
@@ -16,7 +16,7 @@ const DEVICE_FIELDS = [
  * Optional device columns: manufacturer, category, reference_url, height_mm, width_mm, depth_mm, weight_kg, power_draw_w, voltage, thermal_btuh
  * Optional port columns: port_connector_type, port_section
  */
-export function parseCsvImport(raw: string): ParseResult {
+export function parseCsvImport(raw: string, taxonomy: ImportTaxonomyOptions = {}): ParseResult {
   const rows = parseCsvRows(raw);
   if (rows.length === 0) {
     return { templates: [], fatalErrors: ["CSV is empty"] };
@@ -82,7 +82,7 @@ export function parseCsvImport(raw: string): ParseResult {
 
     const deviceType = deviceData.device_type;
     const derivedCategory = DEVICE_TYPE_TO_CATEGORY[deviceType];
-    const category = deviceData.category || derivedCategory || "Uncategorized";
+    const category = deviceData.category || taxonomy.deviceTypeCategories?.[deviceType] || derivedCategory || "Uncategorized";
 
     const template: Partial<DeviceTemplate> = {
       id: generateTemplateId(),
@@ -102,7 +102,7 @@ export function parseCsvImport(raw: string): ParseResult {
       ports: ports as Port[],
     };
 
-    const validation = validateTemplate(template);
+    const validation = validateTemplate(template, taxonomy.allowedDeviceTypes);
     const start = group.rowNumbers[0];
     const end = group.rowNumbers[group.rowNumbers.length - 1];
     templates.push({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scoreTemplate } from "../templateSearch";
+import { scoreDeviceLibraryTemplate, scoreTemplate } from "../templateSearch";
 import type { DeviceTemplate } from "../types";
 
 const speakerTemplate: DeviceTemplate = {
@@ -10,6 +10,19 @@ const speakerTemplate: DeviceTemplate = {
   modelNumber: "Cannon C8",
   ports: [
     { id: "speaker-in", label: "Speaker In", signalType: "speaker-level", direction: "input" },
+  ],
+};
+
+const bodypackTemplate: DeviceTemplate = {
+  id: "sennheiser-sl-bodypack",
+  deviceType: "wireless-transmitter",
+  label: "SL Bodypack DW Wireless Transmitter",
+  manufacturer: "Sennheiser",
+  modelNumber: "SL Bodypack DW",
+  searchTerms: ["Sennheiser", "SpeechLine", "SL Bodypack DW", "bodypack transmitter"],
+  ports: [
+    { id: "audio-in", label: "Analog Audio", signalType: "analog-audio", direction: "input" },
+    { id: "power-in", label: "Power", signalType: "power", direction: "input" },
   ],
 };
 
@@ -38,5 +51,21 @@ describe("scoreTemplate", () => {
 
   it("supports useful prefixes for real words", () => {
     expect(scoreTemplate(speakerTemplate, "speak")).toBeGreaterThan(0);
+  });
+
+  it("does not match bose against bodypack results", () => {
+    expect(scoreTemplate(bodypackTemplate, "bose")).toBe(0);
+  });
+
+  it("still matches bodypack for the shorter bo prefix", () => {
+    expect(scoreTemplate(bodypackTemplate, "bo")).toBeGreaterThan(0);
+  });
+
+  it("keeps the device library stricter for bose vs bodypack", () => {
+    expect(scoreDeviceLibraryTemplate(bodypackTemplate, "bose")).toBe(0);
+  });
+
+  it("still lets the device library use exact curated aliases like screen", () => {
+    expect(scoreDeviceLibraryTemplate(displayTemplate, "screen")).toBeGreaterThan(0);
   });
 });

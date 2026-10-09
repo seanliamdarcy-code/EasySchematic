@@ -15,6 +15,7 @@ export const SIGNAL_TO_CABLE: Record<SignalType, string> = {
   ethernet: "Ethernet",
   srt: "Ethernet",
   hdbaset: "Ethernet",
+  "dm-lite": "Category Cable",
   "analog-audio": "Analog Audio",
   "speaker-level": "Speaker",
   bluetooth: "Wireless",
@@ -54,6 +55,7 @@ export const SIGNAL_TO_CABLE: Record<SignalType, string> = {
   artnet: "Ethernet",
   sacn: "Ethernet",
   ir: "IR Emitter Cable",
+  "ir-serial": "IR / Serial Control",
   timecode: "BNC",
   gigaace: "Ethercon",
   dx5: "Ethercon",
@@ -73,7 +75,11 @@ export const SIGNAL_TO_CABLE: Record<SignalType, string> = {
   pots: "Phone (RJ11)",
   "blu-link": "BLU link",
   cresnet: "Cresnet",
+  dmnet: "DMNet",
   sensor: "Sensor",
+  can: "CAN Bus",
+  vch: "Cat6",
+  expansion: "Proprietary",
   custom: "Other",
 };
 

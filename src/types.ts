@@ -1,24 +1,26 @@
 import type { Node, Edge } from "@xyflow/react";
+import type { ImportNormalizationMetadata } from "./importNormalization.js";
 
 export type ConnectorType =
   | "bnc" | "hdmi" | "displayport" | "vga"
-  | "xlr-3" | "xlr-4" | "xlr-5" | "trs-quarter" | "trs-eighth" | "combo-xlr-trs"
+  | "xlr-3" | "xlr-4" | "xlr-5" | "trs-quarter" | "trs-eighth" | "ts-eighth" | "combo-xlr-trs"
   | "rj45" | "ethercon" | "sfp" | "lc" | "sc"
   | "usb-a" | "usb-b" | "usb-c"
   | "db7w2" | "db9" | "db15" | "db25" | "din-5" | "phoenix" | "terminal-block" | "powercon" | "edison" | "iec" | "iec-c5" | "iec-c7" | "iec-c15" | "iec-c20"
-  | "speakon" | "socapex" | "multipin" | "rca" | "toslink" | "barrel"
+  | "speakon" | "spring-clamp" | "snapconnect" | "fastcon" | "cable-clamp" | "butt-splice" | "lever-lock-connector" | "socapex" | "multipin" | "rca" | "toslink" | "barrel" | "locking-dc"
   | "banana" | "binding-post" | "binding-post-banana" | "dvi" | "mini-xlr" | "opticalcon"
   | "l5-20" | "l6-20" | "l6-30" | "l21-30" | "cam-lok" | "powercon-true1"
   | "qsfp" | "qsfp28" | "mpo" | "digilink" | "pcie-6pin"
-  | "mini-din-4" | "mini-din-7"
+  | "mini-din-4" | "mini-din-6" | "mini-din-7" | "mini-din-8" | "mini-din-9"
   | "mini-hdmi" | "mini-displayport"
-  | "rj11" | "rj12" | "usb-mini" | "usb-micro" | "trs-2.5mm"
+  | "rj11" | "rj12" | "rj50" | "usb-mini" | "usb-micro" | "trs-2.5mm"
   | "reverse-tnc" | "sma" | "db37"
-  | "d-tap" | "v-mount" | "f-connector"
+  | "d-tap" | "v-mount" | "f-connector" | "belling-lee" | "ci-slot" | "ops-80pin" | "iiyama-slot-pc" | "iiyama-wifi-module" | "micro-sd-slot" | "sd-card-slot"
   | "lemo-2pin" | "lemo-4pin" | "lemo-5pin"
+  | "lightning"
   | "wireless"
-  | "solder-cup" | "punch-down-110" | "punch-down-66" | "krone-idc" | "d-hole-insert"
-  | "none" | "other";
+  | "solder-cup" | "punch-down-110" | "punch-down-66" | "krone-idc" | "d-hole-insert" | "ground-lug"
+  | "proprietary" | "none" | "other";
 
 export interface PortNetworkConfig {
   ip?: string;
@@ -67,6 +69,7 @@ export type SignalType =
   | "fiber"
   | "displayport"
   | "hdbaset"
+  | "dm-lite"
   | "srt"
   | "genlock"
   | "gpio"
@@ -99,6 +102,7 @@ export type SignalType =
   | "artnet"
   | "sacn"
   | "ir"
+  | "ir-serial"
   | "timecode"
   | "gigaace"
   | "dx5"
@@ -120,7 +124,11 @@ export type SignalType =
   | "pots"
   | "blu-link"
   | "cresnet"
+  | "dmnet"
   | "sensor"
+  | "can"
+  | "vch"
+  | "expansion"
   | "custom";
 
 export type LineStyle = "solid" | "dashed" | "dotted" | "dash-dot";
@@ -187,6 +195,7 @@ export interface Port {
   linkSpeed?: string;
   /** Stable link back to the template port this was cloned from — used for template-sync reconciliation. */
   templatePortId?: string;
+  importNormalization?: ImportNormalizationMetadata;
 }
 
 export interface SlotDefinition {
@@ -228,6 +237,9 @@ export interface DeviceData {
   /** Per-instance override for wrapping the device label across multiple lines.
    *  undefined = inherit SchematicFile.wrapDeviceLabels. */
   wrapLabel?: boolean;
+  headerLine2?: string;
+  showManufacturerModel?: boolean;
+  showDeviceType?: boolean;
   hostname?: string;
   deviceType: string;
   ports: Port[];
@@ -405,6 +417,8 @@ export interface AnnotationData {
 export type AnnotationNode = Node<AnnotationData, "annotation">;
 
 export interface StubLabelData {
+  /** Optional presentation label; electrical linkage still follows linkedConnectionId. */
+  label?: string;
   [key: string]: unknown;
   /** Signal type — controls border color, matches the linked connection */
   signalType: SignalType;
@@ -500,6 +514,25 @@ export interface ConnectionData {
 
 export type ConnectionEdge = Edge<ConnectionData>;
 
+export type TaxonomyReviewStatus =
+  | "imported"
+  | "ai-researched"
+  | "needs-review"
+  | "human-reviewed"
+  | "trusted-standard"
+  | "deprecated";
+
+export type TaxonomyClassificationConfidence = "low" | "medium" | "high";
+
+export interface TaxonomyEvidenceRef {
+  type: string;
+  url?: string;
+  title?: string;
+  excerpt?: string;
+  note?: string;
+  capturedAt?: string;
+}
+
 export interface DeviceTemplate {
   id?: string;
   version?: number;
@@ -513,6 +546,12 @@ export interface DeviceTemplate {
   ports: Port[];
   color?: string;
   searchTerms?: string[];
+  /**
+   * Reviewed commercial SKU / regional / procurement spellings that are safe for
+   * exact library identity resolution (import + project gap). Not for UI discovery —
+   * use searchTerms for that.
+   */
+  identityAliases?: string[];
   manufacturer?: string;
   modelNumber?: string;
   imageUrl?: string;
@@ -534,7 +573,16 @@ export interface DeviceTemplate {
   rackForm?: "full" | "half" | "shelf-only"; // Optional override for the size-based rack-form heuristic
   auxiliaryData?: AuxRow[];      // Aux rows shown on the node (each row carries its own header/footer slot)
   facePlateLayout?: FacePlateLayout; // Custom face-plate connector positions
+  importNormalization?: ImportNormalizationMetadata;
   aiMetadata?: AiDeviceGenerationMetadata;
+  roleTags?: string[];
+  deviceCapabilities?: string[];
+  protocols?: string[];
+  reviewStatus?: TaxonomyReviewStatus;
+  classificationConfidence?: TaxonomyClassificationConfidence;
+  evidenceRefs?: TaxonomyEvidenceRef[];
+  lastReviewedBy?: string;
+  lastReviewedAt?: string;
 }
 
 export interface CustomTemplateGroup {
@@ -800,6 +848,8 @@ export interface SchematicFile {
   colorKeyColumns?: number;
   colorKeyPage?: "first" | "last" | "all";
   colorKeyOverrides?: Partial<Record<SignalType, boolean>>;
+  colorKeyLabels?: Partial<Record<SignalType, string>>;
+  deviceHeader?: { showManufacturerModel?: boolean; showDeviceType?: boolean };
   /** Rack elevation pages */
   pages?: SchematicPage[];
   /** Show connector-level face-plate detail in rack views (default off; advanced) */
@@ -898,6 +948,7 @@ export const SIGNAL_COLORS: Record<SignalType, string> = {
   fiber: "var(--color-fiber)",
   displayport: "var(--color-displayport)",
   hdbaset: "var(--color-hdbaset)",
+  "dm-lite": "var(--color-dm-lite)",
   srt: "var(--color-srt)",
   genlock: "var(--color-genlock)",
   gpio: "var(--color-gpio)",
@@ -931,6 +982,7 @@ export const SIGNAL_COLORS: Record<SignalType, string> = {
   artnet: "var(--color-artnet)",
   sacn: "var(--color-sacn)",
   ir: "var(--color-ir)",
+  "ir-serial": "var(--color-ir-serial)",
   timecode: "var(--color-timecode)",
   gigaace: "var(--color-gigaace)",
   dx5: "var(--color-dx5)",
@@ -951,7 +1003,11 @@ export const SIGNAL_COLORS: Record<SignalType, string> = {
   pots: "var(--color-pots)",
   "blu-link": "var(--color-blu-link)",
   cresnet: "var(--color-cresnet)",
+  dmnet: "var(--color-dmnet)",
   sensor: "var(--color-sensor)",
+  can: "var(--color-can)",
+  vch: "var(--color-custom)",
+  expansion: "var(--color-custom)",
   custom: "var(--color-custom)",
 };
 
@@ -965,6 +1021,7 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "xlr-5": "XLR-5",
   "trs-quarter": '1/4" TRS',
   "trs-eighth": '3.5mm TRS',
+  "ts-eighth": '3.5mm TS',
   "combo-xlr-trs": "XLR/TRS Combo",
   rj45: "RJ45",
   ethercon: "EtherCon",
@@ -989,6 +1046,12 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "iec-c15": "IEC C15",
   "iec-c20": "IEC C20",
   speakon: "speakON",
+  "spring-clamp": "Spring Clamp",
+  snapconnect: "AUDAC SnapConnect",
+  fastcon: "AUDAC FastCon",
+  "cable-clamp": "Cable Clamp",
+  "butt-splice": "Butt-Splice Crimp Terminal",
+  "lever-lock-connector": "Lever-Lock Wire Connector",
   socapex: "Socapex",
   multipin: "Multi-pin",
   rca: "RCA",
@@ -999,7 +1062,13 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "binding-post-banana": "Binding Post (Banana)",
   dvi: "DVI",
   "mini-din-4": "Mini-DIN 4-pin",
+  "mini-din-6": "Mini-DIN 6-pin",
   "mini-din-7": "Mini-DIN 7-pin",
+  "mini-din-8": "Mini-DIN 8-pin",
+  "mini-din-9": "Mini-DIN 9-pin",
+  lightning: "Lightning",
+  rj50: "RJ50",
+  "sd-card-slot": "SD Card Slot",
   "mini-hdmi": "Mini HDMI",
   "mini-displayport": "Mini DisplayPort",
   "mini-xlr": "Mini XLR",
@@ -1029,12 +1098,21 @@ export const CONNECTOR_LABELS: Record<ConnectorType, string> = {
   "d-tap": "D-Tap",
   "v-mount": "V-Mount",
   "f-connector": "F-Connector",
+  "belling-lee": "Belling-Lee / IEC Coax",
+  "ci-slot": "Common Interface (CI) Slot",
+  "ops-80pin": "Intel OPS 80-pin",
+  "iiyama-slot-pc": "iiyama Slot PC",
+  "iiyama-wifi-module": "iiyama Wi-Fi Module Slot",
+  "micro-sd-slot": "microSD Card Slot",
   wireless: "Wireless",
   "solder-cup": "Solder Cup",
   "punch-down-110": "Punch-down (110)",
   "punch-down-66": "Punch-down (66)",
   "krone-idc": "Krone IDC",
   "d-hole-insert": "D-Hole Insert",
+  "ground-lug": "Chassis Ground Lug",
+  "locking-dc": "Locking DC Power",
+  proprietary: "Proprietary",
   none: "None",
   other: "Other",
 };
@@ -1064,6 +1142,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   fiber: "Fiber",
   displayport: "DisplayPort",
   hdbaset: "HDBaseT",
+  "dm-lite": "DM Lite",
   srt: "SRT",
   genlock: "Genlock",
   gpio: "GPIO",
@@ -1096,6 +1175,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   artnet: "Art-Net",
   sacn: "sACN",
   ir: "IR",
+  "ir-serial": "IR / 1-Way Serial",
   timecode: "Timecode",
   gigaace: "GigaACE",
   dx5: "DX5",
@@ -1117,33 +1197,37 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   pots: "POTS",
   "blu-link": "BLU link",
   cresnet: "Cresnet",
+  dmnet: "DMNet",
   sensor: "Sensor",
+  can: "CAN Bus",
+  vch: "Yealink VCH",
+  expansion: "Expansion",
   custom: "Custom",
 };
 
 /** Signal types organized by functional group (for searchable dropdowns) */
 export const SIGNAL_GROUPS: Record<string, SignalType[]> = {
   "Video": ["sdi", "hdmi", "displayport", "dvi", "composite", "component-video", "s-video", "vga"],
-  "Video over IP": ["ndi", "srt", "hdbaset", "st2110"],
+  "Video over IP": ["ndi", "srt", "hdbaset", "dm-lite", "st2110"],
   "Audio": ["analog-audio", "speaker-level", "bluetooth", "aes", "dante", "avb", "aes67", "madi", "spdif", "adat", "ultranet", "aes50", "stageconnect", "ydif", "soundgrid", "gigaace", "dx5", "dsnake", "slink", "fibreace", "digilink", "extron-exp", "pots", "blu-link"],
   "Network": ["ethernet", "fiber"],
-  "Control / Data": ["dmx", "artnet", "sacn", "rs422", "serial", "gpio", "contact-closure", "ir", "midi", "tally", "usb", "thunderbolt", "dxlink", "ebus", "control-voltage", "cresnet", "sensor"],
+  "Control / Data": ["dmx", "artnet", "sacn", "rs422", "serial", "can", "gpio", "contact-closure", "ir", "ir-serial", "midi", "tally", "usb", "thunderbolt", "dxlink", "ebus", "control-voltage", "cresnet", "dmnet", "sensor"],
   "Sync / Clock": ["genlock", "wordclock", "timecode", "dars", "gps"],
   "Power": ["power", "power-l1", "power-l2", "power-l3", "power-neutral", "power-ground"],
   "Streaming": ["rtmp", "rtsp", "mpeg-ts", "rf"],
-  "Other": ["custom"],
+  "Other": ["vch", "expansion", "custom"],
 };
 
 /** Connector types organized by functional group (for searchable dropdowns) */
 export const CONNECTOR_GROUPS: Record<string, ConnectorType[]> = {
   "Video": ["bnc", "hdmi", "mini-hdmi", "displayport", "mini-displayport", "dvi", "vga"],
-  "Audio": ["xlr-3", "xlr-4", "xlr-5", "mini-xlr", "combo-xlr-trs", "trs-quarter", "trs-eighth", "trs-2.5mm", "rca", "din-5", "mini-din-4", "mini-din-7", "toslink"],
-  "Network / Data": ["rj45", "ethercon", "sfp", "lc", "sc", "opticalcon", "qsfp", "qsfp28", "mpo", "rj11", "rj12"],
-  "USB": ["usb-a", "usb-b", "usb-c", "usb-mini", "usb-micro"],
+  "Audio": ["xlr-3", "xlr-4", "xlr-5", "mini-xlr", "combo-xlr-trs", "trs-quarter", "trs-eighth", "ts-eighth", "trs-2.5mm", "rca", "din-5", "mini-din-4", "mini-din-6", "mini-din-7", "mini-din-8", "mini-din-9", "toslink"],
+  "Network / Data": ["rj45", "rj50", "ethercon", "sfp", "lc", "sc", "opticalcon", "qsfp", "qsfp28", "mpo", "rj11", "rj12"],
+  "USB": ["usb-a", "usb-b", "usb-c", "usb-mini", "usb-micro", "lightning"],
   "D-Sub / Serial": ["db9", "db15", "db25", "db37", "db7w2", "lemo-5pin"],
   "Power": ["iec", "iec-c5", "iec-c7", "iec-c15", "iec-c20", "powercon", "powercon-true1", "edison", "barrel", "l5-20", "l6-20", "l6-30", "l21-30", "cam-lok", "socapex", "pcie-6pin", "lemo-2pin", "lemo-4pin", "d-tap", "v-mount"],
-  "Speaker": ["speakon", "banana", "binding-post", "binding-post-banana"],
+  "Speaker": ["speakon", "spring-clamp", "snapconnect", "fastcon", "cable-clamp", "butt-splice", "lever-lock-connector", "banana", "binding-post", "binding-post-banana"],
   "Terminal": ["phoenix", "terminal-block", "multipin", "solder-cup", "punch-down-110", "punch-down-66", "krone-idc"],
-  "RF": ["reverse-tnc", "sma", "f-connector"],
-  "Other": ["wireless", "digilink", "d-hole-insert", "none", "other"],
+  "RF": ["reverse-tnc", "sma", "f-connector", "belling-lee"],
+  "Other": ["ci-slot", "ops-80pin", "iiyama-slot-pc", "iiyama-wifi-module", "micro-sd-slot", "sd-card-slot", "wireless", "digilink", "d-hole-insert", "ground-lug", "proprietary", "none", "other"],
 };

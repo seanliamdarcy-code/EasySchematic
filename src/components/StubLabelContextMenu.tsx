@@ -102,6 +102,11 @@ export default function StubLabelContextMenu() {
       <MenuItem label={showPortLabel} onClick={() => cycleBool("showPort")} />
       <MenuItem label={showRoomLabel} onClick={() => cycleBool("showRoom")} />
       <MenuItem label={pageModeLabel} onClick={cyclePageMode} />
+      <MenuItem label="Edit reference label..." onClick={() => {
+        const label = window.prompt("Reference label (leave blank for automatic counterpart text)", data?.label ?? "");
+        if (label !== null) store.patchStubLabelData(menu.nodeId, { label: label.trim() || undefined });
+        useSchematicStore.setState({ stubLabelContextMenu: null });
+      }} />
       <div className="border-t border-gray-200 my-1" />
       <MenuItem label="Show Full Connection" onClick={collapseStubs} />
     </div>

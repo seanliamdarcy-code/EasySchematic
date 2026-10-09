@@ -27,9 +27,13 @@ function validConnectorTypes(): Set<string> {
 }
 
 /** Client-side mirror of api/src/validate.ts plus enum membership checks the API doesn't have. */
-export function validateTemplate(t: Partial<DeviceTemplate>): TemplateValidationResult {
+export function validateTemplate(
+  t: Partial<DeviceTemplate>,
+  allowedDeviceTypes: Iterable<string> = VALID_DEVICE_TYPES,
+): TemplateValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const validDeviceTypes = allowedDeviceTypes instanceof Set ? allowedDeviceTypes : new Set(allowedDeviceTypes);
 
   // Required fields
   if (!isStr(t.label)) errors.push("label is required");
@@ -37,7 +41,7 @@ export function validateTemplate(t: Partial<DeviceTemplate>): TemplateValidation
 
   if (!isStr(t.deviceType)) {
     errors.push("deviceType is required");
-  } else if (!VALID_DEVICE_TYPES.has(t.deviceType)) {
+  } else if (!validDeviceTypes.has(t.deviceType)) {
     errors.push(`Unknown deviceType "${t.deviceType}"`);
   }
 

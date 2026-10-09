@@ -1,0 +1,22 @@
+[Unit]
+Description=EasySchematic shared office MCP connector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=debian
+WorkingDirectory=/home/debian/EasySchematic-staging/mcp-server
+EnvironmentFile=/etc/easyschematic-office.env
+ExecStart=/usr/bin/node dist/office-main.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

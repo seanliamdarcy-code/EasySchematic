@@ -1,0 +1,14 @@
+services:
+  easyschematic-staging:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_BUILD_HASH: ${EASYSCHEMATIC_BUILD_HASH:?Set EASYSCHEMATIC_BUILD_HASH to the checked-out commit}
+    ports:
+      - "127.0.0.1:8081:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - TATESIDE_API_PORT=8789
+    restart: unless-stopped
