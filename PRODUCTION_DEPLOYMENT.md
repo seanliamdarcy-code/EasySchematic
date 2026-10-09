@@ -4,6 +4,14 @@ The production editor is `https://schematic.tateside.online`. It runs on the VPS
 not the inherited Cloudflare Workers/D1 deployment workflows. Git pushes run CI;
 they do not activate TateSide production. Read `STAGING_DEPLOYMENT.md` for test.
 
+Production was promoted on 9 October 2026 to application commit
+`5b2572d102db61f7e3113c12eb66c76c4b623eb5`. Its container is
+`easyschematic-production`, managed by
+`docker compose -p easyschematic-production -f /etc/easyschematic-production/compose.yml`.
+The previous `easyschematic-easyschematic-1` container is stopped and retained for
+recovery. Do not start both: they use the same loopback port. Operational scripts
+and documentation added later do not change the running application SHA.
+
 ## Release preparation
 
 Use a clean committed Node 24 checkout and `npm ci`. Run lint, application tests,
@@ -97,3 +105,46 @@ scheduled consistent backups with a verified off-VPS destination, failure
 notification and restore drill. Record retention and recovery targets. Watch API
 errors/save failures, restart counts and disk growth through the next working day.
 Do not prune Docker volumes or unrelated images to make room.
+
+## Verified backups
+
+`easyschematic-backup.timer` runs daily at 03:15 UTC with up to five minutes of
+jitter. `easyschematic-backup.service` runs the tracked `deploy/backup.py`, installed
+as `/usr/local/sbin/easyschematic-backup.py`. It uses SQLite's backup API while the
+application remains online, copies immutable content objects after checking their
+hashes, and reconstructs version/current pointers from the same database snapshot.
+Copying live pointer files separately can race with autosaves and is not equivalent.
+
+Restic encrypts the archive before uploading it to private R2 bucket
+`tateside-easyschematic-production-backups`. The bucket-scoped S3 credentials are
+in `/etc/easyschematic-backup/restic.env`; the independent encryption password is
+in `/etc/easyschematic-backup/password`. Both are root-only. Never print either.
+The recovery bundle is also preserved off the VPS in the protected migration
+workspace. Keep that separate from the encrypted repository: losing the password
+would make the backups unrecoverable.
+
+Read `/var/lib/easyschematic-backup/status.json` and the systemd unit result to
+check success; a timer being active alone does not prove a successful backup.
+The first R2 restore on 9 October verified 3,186 file checksums and SQLite integrity.
+A separate encrypted release snapshot contains the pinned new runtime and the
+original rollback image/runtime. All snapshots are retained initially; no
+automatic prune/deletion policy is enabled. Review retention and storage growth
+before introducing deletion. Daily backups give a worst-case recovery point of
+about one day; use a shorter interval if the business requires it.
+
+To restore for a drill, load the protected environment without echoing values,
+select the snapshot tagged `production,daily`, and use
+`restic dump <snapshot-id> easyschematic-production.tar` to a new isolated file.
+Validate archive entries as regular files/directories with relative paths and no
+`..` components before extraction. Verify the included `SHA256SUMS`, database
+integrity/foreign keys and manifest counts. Never extract directly onto live data.
+The installed Python tarfile version lacks the newer `filter=` argument; explicit
+entry validation is required when using it. The retained old runtime also booted
+successfully against its original snapshot during the migration rehearsal.
+
+Use `gh ... --repo seanliamdarcy-code/EasySchematic` explicitly: the CLI may
+otherwise choose the upstream repository. A temporary API on 8794 is blocked from
+Docker by the existing firewall, which allows only production 8788 and test 8789.
+For rehearsal, use an isolated loopback/host-network canary, then separately verify
+the real production Docker network against the live read routes. Do not broaden
+the firewall just to make a temporary test pass.

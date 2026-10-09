@@ -1,0 +1,18 @@
+[Unit]
+Description=Encrypted EasySchematic production backup to Cloudflare R2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/easyschematic-backup.py
+User=root
+UMask=0077
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/easyschematic-backup /var/cache/easyschematic-restic

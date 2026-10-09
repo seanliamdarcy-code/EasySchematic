@@ -34,6 +34,13 @@ Local stdio connections run on the laptop with token pairing. The shared office 
 
 ## Shared office connector
 
+Production uses **https://schematic-mcp-production.tateside.online/mcp**, paired
+only with `https://schematic.tateside.online`. It runs independently on loopback
+8793 as `easyschematic-office-production.service` from the pinned production
+release. The hostname below remains the **test** connector. Use the URL displayed
+by the editor's AI preferences, and register production separately in your assistant.
+See `../PRODUCTION_DEPLOYMENT.md` for the protected configuration and rollback.
+
 Use `https://schematic-mcp.tateside.online/mcp` in Grok or a remote MCP client. Sign in through Cloudflare Access with your TateSide account. In the test editor, open **Preferences → AI (Beta) → Connect my office account**, sign in with the same account, and connect the schematic. No laptop server or pairing token is needed. Keep the editor tab open. A second paired tab replaces only that account's connection. Library publication still requires human review.
 
 The VPS runs `dist/office-main.js` on loopback port 8792 under `easyschematic-office.service`. Install `deploy/office.service` as the systemd unit and build with `npm ci --prefix mcp-server && npm test --prefix mcp-server`. Its protected `/etc/easyschematic-office.env` contains `EASYSCHEMATIC_ACCESS_ISSUER`, `EASYSCHEMATIC_ACCESS_AUDIENCE`, `EASYSCHEMATIC_OFFICE_EDITOR_ORIGINS`, and `EASYSCHEMATIC_BUILD_HASH`. Cloudflare Tunnel routes the exact hostname to that loopback service; Cloudflare Access supplies managed OAuth and restricts access to verified `tateside.com` email accounts. The origin also verifies the JWT signature, issuer, audience, expiry and staff identity. Connections close when their Access session expires; reconnect in Preferences.
@@ -93,7 +100,7 @@ Configuration has been added to the existing user Codex config and Claude Code c
 | Claude Code | 8766 | `~/.claude.json`, user MCP server `easyschematic` |
 | Claude Desktop | 8766 | `%APPDATA%/Claude/claude_desktop_config.json` |
 
-Restart/reload the assistant so it starts the server. Claude Code and Claude Desktop share port 8766 through the authenticated relay when both run the updated build. Codex and Claude use different ports; choose which controls the editor with the port setting. The configured hosted Origin is **https://testschematic.tateside.online**.
+Restart/reload the assistant so it starts the server. Claude Code and Claude Desktop share port 8766 through the authenticated relay when both run the updated build. Codex and Claude use different ports; choose which controls the editor with the port setting. Sean's configured hosted Origins are **https://testschematic.tateside.online** and **https://schematic.tateside.online**. Restart the assistant to pick up origin changes; existing processes retain their original configuration.
 
 1. Copy the token without printing it by running `mcp-server/copy-pairing-token.ps1` in PowerShell.
 2. Open testschematic and the schematic you want to work on; choose **File → Preferences → AI (Beta)**.
