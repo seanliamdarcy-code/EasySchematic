@@ -109,6 +109,8 @@ export interface HelloAck {
   ok: boolean;
   /** When ok=false, why pairing was refused (bad token, version mismatch, etc.). */
   reason?: string;
+  /** Verified office account used to route remote assistant calls. */
+  officeEmail?: string;
 }
 
 /** Server -> app: a tool invocation to run against the store. */

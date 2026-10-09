@@ -8,6 +8,7 @@ export default function McpConnectionSettings() {
   const port = useSchematicStore((s) => s.mcpBridgePort);
   const status = useSchematicStore((s) => s.mcpBridgeStatus);
   const detail = useSchematicStore((s) => s.mcpBridgeStatusDetail);
+  const lastCommand = useSchematicStore((s) => s.mcpBridgeLastCommand);
   const office = useSchematicStore((s) => s.mcpBridgeOffice);
   const popup = useRef<Window | null>(null);
   const [notice, setNotice] = useState("");
@@ -24,11 +25,12 @@ export default function McpConnectionSettings() {
   }, []);
   return <div className="space-y-3 text-xs">
     <p>Connect your AI assistant to this editor. Give it a Jetbuilt P number to preview rooms and kit, choose a room, then build and wire its schematic.</p>
-    <button type="button" className="border rounded p-2" disabled={enabled} onClick={() => {
+    <button type="button" className="border rounded p-2" disabled={enabled && !office} onClick={() => {
+      if (office) useSchematicStore.setState({ mcpBridgeEnabled: false });
       popup.current = window.open(`${OFFICE_ORIGIN}/pair?origin=${encodeURIComponent(window.location.origin)}`, "easyschematic-office-pair", "popup,width=600,height=600");
       setNotice(popup.current ? "Complete office sign-in in the new window, then connect this schematic." : "Allow popups, then try again.");
     }}>Connect my office account</button>
-    <p>Office connector URL: <code className="select-all">{OFFICE_ORIGIN}/mcp</code>. Add it to Grok or another assistant that supports remote MCP, and sign in with the same office account.</p>
+    <p>Office connector URL: <code className="select-all">{OFFICE_ORIGIN}/mcp</code>. Use this exact URL in Claude, Grok, or another remote MCP assistant, with the same office account. Production and test have separate connectors; the URL does not depend on your assistant.</p>
     {notice && <p role="status">{notice}</p>}
     <label className="flex items-center gap-2"><input type="checkbox" checked={office} disabled={enabled} onChange={(event) => useSchematicStore.setState({ mcpBridgeOffice: event.target.checked })} />Use the shared office connection</label>
     {!office && <>
@@ -49,6 +51,7 @@ export default function McpConnectionSettings() {
       Let my AI assistant read and edit this schematic
     </label>
     <p role="status">Connection: {status}{detail ? ` — ${detail}` : ""}</p>
+    {office && <p role="status">{status === "connected" ? "Office relay connected to this open schematic." : enabled ? "Office relay is not connected." : "No office account linked to this tab."} {lastCommand ? `Assistant reached this tab: ${lastCommand}.` : "Waiting for an assistant tool call to this tab."}</p>}
     {!office && <p className="text-[var(--color-text-muted)]">Allow local-network access if your browser asks. Use port 8765 for Codex or 8766 for Claude on this laptop.</p>}
     <p className="text-[var(--color-text-muted)]">Pairing is session-only and turns off when this tab reloads. Missing devices can be researched and created locally immediately. Review a Device in Properties and choose Add to TateSide Library when you want to share it.</p>
   </div>;

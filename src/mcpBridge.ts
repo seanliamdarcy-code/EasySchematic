@@ -1142,6 +1142,7 @@ class BridgeController {
       this.ws = null;
     }
     setStatus("off");
+    useSchematicStore.setState({ mcpBridgeLastCommand: undefined });
   }
 
   private scheduleReconnect() {
@@ -1178,17 +1179,19 @@ class BridgeController {
     ws.onmessage = (ev) => this.onMessage(ev, ws);
 
     ws.onerror = () => {
-      setStatus("error", "Connection error — is the MCP server running?");
+      setStatus("error", this.office
+        ? "Office relay failed. Check office sign-in and the connector URL in Preferences."
+        : "Connection error — is the MCP server running?");
     };
 
     ws.onclose = (event) => {
       if (this.ws === ws) this.ws = null;
       if (this.office && event.code === 1008) {
         this.halted = true;
-        setStatus("error", "Office sign-in expired. Reconnect your office account in Preferences.");
+        setStatus("error", event.reason || "Office sign-in expired or pairing was rejected. Reconnect your office account in Preferences.");
       }
       if (this.enabled && !this.halted) {
-        setStatus("connecting", "Reconnecting…");
+        setStatus("connecting", this.office ? "Office relay disconnected; retrying. Reconnect your office account if this continues." : "Reconnecting…");
         this.scheduleReconnect();
       }
     };
@@ -1205,7 +1208,7 @@ class BridgeController {
     if (msg.type === "hello_ack") {
       if (msg.ok) {
         this.backoffMs = 1000;
-        setStatus("connected");
+        setStatus("connected", msg.officeEmail ? `Office account: ${msg.officeEmail}` : undefined);
       } else {
         this.halted = true;
         setStatus("error", msg.reason ?? "Pairing refused.");
@@ -1219,6 +1222,7 @@ class BridgeController {
     }
     if (msg.type === "command") {
       const { requestId, command, params } = msg;
+      useSchematicStore.setState({ mcpBridgeLastCommand: `${command} at ${new Date().toLocaleTimeString()}` });
       const reply = (ok: boolean, payload: { result?: unknown; error?: string }) => {
         if (this.ws === socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "response", requestId, ok, ...payload }));
       };

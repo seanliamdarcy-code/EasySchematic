@@ -30,9 +30,12 @@ test('office sign-in pairs the opening editor without a laptop token and turns o
     const popup = await popupPromise;
     await popup.getByRole('button', { name: 'Connect my office account', exact: true }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Connection:' })).toContainText('Connection: connected');
+    await expect(page.getByRole('status').filter({ hasText: 'Connection:' })).toContainText('office-fixture@example.test');
+    await expect(page.getByRole('status').filter({ hasText: 'Office relay' })).toContainText('Office relay connected');
     await expect(page.getByLabel('MCP pairing token')).toHaveCount(0);
     const schematic = await service.call('office-fixture@example.test', 'get_schematic', {}) as { deviceCount: number };
     expect(schematic.deviceCount).toBeGreaterThanOrEqual(0);
+    await expect(page.getByRole('status').filter({ hasText: 'Office relay' })).toContainText('Assistant reached this tab: get_schematic');
     await page.reload();
     await expect.poll(async () => service.call('office-fixture@example.test', 'get_schematic', {}).then(() => 'connected', () => 'disconnected')).toBe('disconnected');
   } finally { service.close(); }

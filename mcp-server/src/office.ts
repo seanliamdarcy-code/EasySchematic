@@ -7,7 +7,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createMcpServer } from "./server.js";
 import { PROTOCOL_VERSION } from "./protocol.generated.js";
 
-export interface OfficeIdentity { email: string; expires: number }
+export interface OfficeIdentity { email: string; expires: number; subject?: string }
 export type VerifyOfficeIdentity = (request: IncomingMessage) => Promise<OfficeIdentity>;
 
 export function accessVerifier(issuer: URL, audience: string): VerifyOfficeIdentity {
@@ -18,7 +18,7 @@ export function accessVerifier(issuer: URL, audience: string): VerifyOfficeIdent
     if (typeof assertion !== "string") throw new Error("Staff sign-in required.");
     const { payload } = await jwtVerify(assertion, keys, { algorithms: ["RS256"], issuer: issuer.origin, audience });
     if (typeof payload.email !== "string" || !payload.email.includes("@") || !payload.exp || !payload.sub) throw new Error("A staff identity is required.");
-    return { email: payload.email.toLowerCase(), expires: payload.exp * 1000 };
+    return { email: payload.email.trim().toLowerCase(), expires: payload.exp * 1000, subject: payload.sub };
   };
 }
 
@@ -30,8 +30,21 @@ interface Pending {
 interface Editor { socket: WebSocket; pending: Map<string, Pending> }
 
 /** Cloudflare performs OAuth; signed Access assertions bind each call to its own editor. */
-export function createOfficeService(verify: VerifyOfficeIdentity, editorOrigins: string[]) {
+export function createOfficeService(verify: VerifyOfficeIdentity, editorOrigins: string[], log = console.info) {
   const editors = new Map<string, Editor>();
+  const links = new Map<string, { expires: number; reason: string }>();
+  const record = (event: string, identity: OfficeIdentity, detail: Record<string, unknown> = {}) =>
+    log(JSON.stringify({ event, email: identity.email, subject: identity.subject, editorOrigins, ...detail }));
+  const status = (email: string) => {
+    const link = links.get(email);
+    if (link && link.expires <= Date.now()) return { condition: "sign_in_expired", detail: "The linked editor's office sign-in expired. Reconnect in Preferences." };
+    const editor = editors.get(email);
+    if (editor?.socket.readyState === WebSocket.OPEN) return { condition: "connected", detail: "Office editor relay connected." };
+    const current = links.get(email);
+    return current
+      ? { condition: "relay_not_connected", detail: current.reason }
+      : { condition: "account_not_linked", detail: "No editor has linked this authenticated office account in this connector session." };
+  };
   const app = express();
   app.disable("x-powered-by");
   app.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
@@ -43,11 +56,14 @@ export function createOfficeService(verify: VerifyOfficeIdentity, editorOrigins:
   };
   const call = (email: string, command: string, params: Record<string, unknown>) => {
     const editor = editors.get(email);
-    if (!editor || editor.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Open EasySchematic Preferences and connect your office account to this schematic."));
+    const state = status(email);
+    if (!editor || state.condition !== "connected") {
+      return Promise.reject(new Error(`[${state.condition}] ${state.detail} MCP account: ${email}. This connector serves ${editorOrigins.join(", ")}. Match the assistant's connector URL and account to Preferences → AI (Beta), then connect the open schematic. Reloading the editor turns pairing off. An unsaved or empty schematic is supported.`));
+    }
     if (editor.pending.size >= 100) return Promise.reject(new Error("Too many outstanding editor commands."));
     const requestId = randomUUID();
     return new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => { editor.pending.delete(requestId); reject(new Error("Editor command timed out.")); }, 30000);
+      const timer = setTimeout(() => { editor.pending.delete(requestId); reject(new Error("[editor_unresponsive] The linked editor did not answer within 30 seconds. Keep its tab open and reconnect in Preferences.")); }, 30000);
       editor.pending.set(requestId, { resolve, reject, timer });
       editor.socket.send(JSON.stringify({ type: "command", requestId, command, params }), error => {
         if (error) { clearTimeout(timer); editor.pending.delete(requestId); reject(new Error("Editor disconnected.")); }
@@ -55,11 +71,20 @@ export function createOfficeService(verify: VerifyOfficeIdentity, editorOrigins:
     });
   };
   app.get("/health", (_req, res) => res.json({ status: "ok", buildHash: process.env.EASYSCHEMATIC_BUILD_HASH ?? "development" }));
+  app.get("/status", async (req, res) => {
+    try {
+      const identity = await verify(req);
+      res.json({ ...status(identity.email), email: identity.email, editorOrigins, expires: identity.expires });
+    } catch { res.status(401).json({ condition: "sign_in_required" }); }
+  });
   app.get("/pair", async (req, res) => {
     try {
-      await verify(req);
+      const identity = await verify(req);
       const origin = typeof req.query.origin === "string" ? req.query.origin : "";
       if (!editorOrigins.includes(origin)) { res.status(403).end(); return; }
+      for (const [email, link] of links) if (link.expires <= Date.now()) links.delete(email);
+      if (!links.has(identity.email)) links.set(identity.email, { expires: identity.expires, reason: "Office sign-in completed, but the editor relay has not connected." });
+      record("office_pair_sign_in", identity, { origin });
       const nonce = randomUUID();
       res.set("Content-Security-Policy", `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
       res.set("Referrer-Policy", "no-referrer");
@@ -68,9 +93,12 @@ export function createOfficeService(verify: VerifyOfficeIdentity, editorOrigins:
   });
   app.all("/mcp", express.json({ limit: "1mb" }), async (req, res) => {
     let identity: OfficeIdentity;
-    try { identity = await verify(req); } catch { res.status(401).end(); return; }
+    try { identity = await verify(req); } catch { log(JSON.stringify({ event: "office_mcp_auth_rejected", editorOrigins })); res.status(401).end(); return; }
     if (req.headers.origin && !editorOrigins.includes(req.headers.origin) && !["https://grok.com", "https://x.ai"].includes(req.headers.origin)) { res.status(403).end(); return; }
-    const mcp = createMcpServer((name, args) => call(identity.email, name, args));
+    const mcp = createMcpServer((name, args) => {
+      record("office_mcp_call", identity, { command: name, condition: status(identity.email).condition });
+      return call(identity.email, name, args);
+    });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => { void transport.close(); void mcp.close(); });
     try { await mcp.connect(transport); await transport.handleRequest(req, res, req.body); }
@@ -101,7 +129,9 @@ export function createOfficeService(verify: VerifyOfficeIdentity, editorOrigins:
               previous.socket.close();
             }
             editors.set(identity.email, editor);
-            ws.send(JSON.stringify({ type: "hello_ack", ok: true })); return;
+            links.set(identity.email, { expires: identity.expires, reason: "The editor relay disconnected. Reconnect the open schematic in Preferences; reloading turns pairing off." });
+            record("office_editor_connected", identity, { origin: request.headers.origin });
+            ws.send(JSON.stringify({ type: "hello_ack", ok: true, officeEmail: identity.email })); return;
           }
           if (editors.get(identity.email) !== editor || message.type !== "response" || typeof message.requestId !== "string") return;
           const pending = editor.pending.get(message.requestId);
@@ -111,13 +141,20 @@ export function createOfficeService(verify: VerifyOfficeIdentity, editorOrigins:
           else pending.reject(new Error(String(message.error ?? "Editor command failed.")));
         });
         ws.on("error", () => {});
-        ws.on("close", () => {
+        ws.on("close", (code, reason) => {
           clearTimeout(helloTimer); clearTimeout(expiryTimer);
           rejectPending(editor, "Editor disconnected.");
-          if (editors.get(identity.email) === editor) editors.delete(identity.email);
+          if (editors.get(identity.email) === editor) {
+            editors.delete(identity.email);
+            if (code === 1008) links.set(identity.email, { expires: identity.expires, reason: "Office sign-in expired or the editor handshake was rejected. Reconnect in Preferences." });
+            record("office_editor_disconnected", identity, { code, reason: reason.toString() });
+          }
         });
       });
-    })().catch(() => { if (!socket.destroyed) socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); });
+    })().catch(() => {
+      log(JSON.stringify({ event: "office_editor_upgrade_rejected", editorOrigins, origin: request.headers.origin }));
+      if (!socket.destroyed) socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    });
   });
   return { server, call, close: () => { for (const socket of sockets.clients) socket.terminate(); sockets.close(); server.close(); } };
 }

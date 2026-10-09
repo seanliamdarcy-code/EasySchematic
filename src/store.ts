@@ -299,6 +299,7 @@ interface SchematicState {
   mcpBridgeOffice: boolean;
   mcpBridgeStatus: "off" | "connecting" | "connected" | "error";
   mcpBridgeStatusDetail?: string;
+  mcpBridgeLastCommand?: string;
   moveDevice: (nodeId: string, position: { x: number; y: number }) => void;
   placeDeviceInRoom: (nodeId: string, roomId: string, position: { x: number; y: number }) => boolean;
   deleteConnection: (connectionId: string) => { removedStubLinks: number };

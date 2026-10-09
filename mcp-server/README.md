@@ -49,6 +49,33 @@ OAuth access tokens last 15 minutes and refresh grants last up to 30 days, with 
 
 ## Build and test
 
+### Checking an office connection
+
+In Preferences → AI (Beta), compare the exact connector URL with the URL configured
+in Claude/Grok. Production is `https://schematic-mcp-production.tateside.online/mcp`;
+test is `https://schematic-mcp.tateside.online/mcp`. These select environments, not
+assistant platforms. They deliberately cannot reach each other's editor tabs.
+
+After the relay handshake, Preferences shows the verified office email and the
+last assistant tool call received by this tab. Use the same email in the assistant.
+An empty/unsaved schematic is supported: routing uses the active tab's WebSocket,
+not a saved schematic ID. Pairing is held only in browser/process memory, and a
+reload disables it. Another tab takes over only that account in that environment.
+
+The connector's authenticated `/status` route reports only the caller's email,
+editor origin and connection condition. Tool errors distinguish an account never
+linked in this process, a relay that has disconnected/not completed its handshake,
+expired editor sign-in, and an unresponsive editor. They identify the MCP account
+and served editor environment. A different account is not inferred from other
+staff members' connections; compare the MCP error's email with Preferences.
+
+On the VPS, `journalctl -u easyschematic-office-production` records
+`office_pair_sign_in`, `office_editor_connected`, `office_mcp_call`, disconnections
+and rejected authentication/upgrades. Compare the signed Access email/subject on
+the editor and MCP events. Routing uses normalized email; subject is verified but
+is not the routing key. JWT issuer, audience and expiry remain validated on both
+paths. Logs exclude JWTs, cookies, command arguments and schematic contents.
+
 Use Node 24 from the repository root:
 
 ```sh
