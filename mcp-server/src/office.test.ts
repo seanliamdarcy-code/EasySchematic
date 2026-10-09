@@ -54,6 +54,29 @@ test("office bridge isolates staff accounts, rejects spoofed origins and keeps M
   } finally { for (const client of clients) await client.close(); for (const socket of opened) socket.terminate(); office.close(); }
 });
 
+test("production and test office processes keep the same staff member's editors independent", async () => {
+  const origins = ["https://schematic.tateside.online", "https://testschematic.tateside.online"];
+  const offices = origins.map(origin => createOfficeService(async () => ({ email: "alice@fixture.test", expires: Date.now() + 60000 }), [origin]));
+  const sockets: WebSocket[] = [];
+  try {
+    for (const [index, office] of offices.entries()) {
+      office.server.listen(0, "127.0.0.1"); await once(office.server, "listening");
+      const address = office.server.address(); assert(address && typeof address !== "string");
+      const base = `http://127.0.0.1:${address.port}`;
+      assert.equal((await fetch(base + "/pair?origin=" + encodeURIComponent(origins[1 - index]))).status, 403);
+      const socket = new WebSocket(base.replace("http:", "ws:") + "/editor", { origin: origins[index] });
+      sockets.push(socket); await once(socket, "open");
+      const hello = once(socket, "message"); socket.send(JSON.stringify({ type: "hello", protocolVersion: 1 })); await hello;
+      socket.on("message", data => {
+        const message = JSON.parse(String(data));
+        if (message.type === "command") socket.send(JSON.stringify({ type: "response", requestId: message.requestId, ok: true, result: { environment: index } }));
+      });
+    }
+    assert.deepEqual(await offices[0].call("alice@fixture.test", "get_schematic", {}), { environment: 0 });
+    assert.deepEqual(await offices[1].call("alice@fixture.test", "get_schematic", {}), { environment: 1 });
+  } finally { for (const socket of sockets) socket.terminate(); for (const office of offices) office.close(); }
+});
+
 test("office verifier requires a signed, unexpired staff JWT for the configured issuer and audience", async t => {
   const { publicKey, privateKey } = await generateKeyPair('RS256');
   const jwk = await exportJWK(publicKey); jwk.kid = 'fixture-key';

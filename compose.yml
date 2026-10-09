@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_BUILD_HASH: ${EASYSCHEMATIC_BUILD_HASH:?Set EASYSCHEMATIC_BUILD_HASH to the checked-out commit}
+        VITE_EASYSCHEMATIC_OFFICE_ORIGIN: https://schematic-mcp-production.tateside.online
     ports:
       - "127.0.0.1:8080:80"
     extra_hosts:

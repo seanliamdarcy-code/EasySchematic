@@ -8,7 +8,7 @@ test('office sign-in pairs the opening editor without a laptop token and turns o
   service.server.listen(0, '127.0.0.1'); await once(service.server, 'listening');
   const address = service.server.address(); if (!address || typeof address === 'string') throw new Error('Fixture server failed.');
   const base = `http://127.0.0.1:${address.port}`;
-  await context.route('https://schematic-mcp.tateside.online/pair?*', async route => {
+  await context.route('https://office-fixture.example.test/pair?*', async route => {
     const response = await route.fetch({ url: base + new URL(route.request().url()).pathname + new URL(route.request().url()).search });
     await route.fulfill({ response });
   });
@@ -16,7 +16,7 @@ test('office sign-in pairs the opening editor without a laptop token and turns o
     const NativeWebSocket = window.WebSocket;
     window.WebSocket = class extends NativeWebSocket {
       constructor(url: string | URL, protocols?: string | string[]) {
-        super(String(url) === 'wss://schematic-mcp.tateside.online/editor' ? fixtureUrl : url, protocols);
+        super(String(url) === 'wss://office-fixture.example.test/editor' ? fixtureUrl : url, protocols);
       }
     };
   }, base.replace('http:', 'ws:') + '/editor');

@@ -1,6 +1,7 @@
 # EasySchematic TateSide
 
 Read `STAGING_DEPLOYMENT.md` before VPS, deployment, or data-promotion work.
+Read `PRODUCTION_DEPLOYMENT.md` before production promotion. Production office pairing must use its own connector process, hostname, Access audience and editor origin.
 
 - The staging integration candidate is `codex/staging-reconciliation`; older `staging` and feature branches are preserved experiments/checkpoints.
 - Frontend and TateSide API deploy separately. Confirm both build hashes against the committed release.

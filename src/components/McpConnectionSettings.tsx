@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSchematicStore } from "../store";
+import { OFFICE_ORIGIN } from "../mcp/officeConfig";
 
 export default function McpConnectionSettings() {
   const enabled = useSchematicStore((s) => s.mcpBridgeEnabled);
@@ -12,7 +13,7 @@ export default function McpConnectionSettings() {
   const [notice, setNotice] = useState("");
   useEffect(() => {
     const receive = (event: MessageEvent) => {
-      if (event.origin !== "https://schematic-mcp.tateside.online" || !popup.current || event.source !== popup.current
+      if (event.origin !== OFFICE_ORIGIN || !popup.current || event.source !== popup.current
         || event.data?.type !== "easyschematic-office-paired") return;
       popup.current = null;
       useSchematicStore.setState({ mcpBridgeOffice: true, mcpBridgeEnabled: true });
@@ -24,10 +25,10 @@ export default function McpConnectionSettings() {
   return <div className="space-y-3 text-xs">
     <p>Connect your AI assistant to this editor. Give it a Jetbuilt P number to preview rooms and kit, choose a room, then build and wire its schematic.</p>
     <button type="button" className="border rounded p-2" disabled={enabled} onClick={() => {
-      popup.current = window.open(`https://schematic-mcp.tateside.online/pair?origin=${encodeURIComponent(window.location.origin)}`, "easyschematic-office-pair", "popup,width=600,height=600");
+      popup.current = window.open(`${OFFICE_ORIGIN}/pair?origin=${encodeURIComponent(window.location.origin)}`, "easyschematic-office-pair", "popup,width=600,height=600");
       setNotice(popup.current ? "Complete office sign-in in the new window, then connect this schematic." : "Allow popups, then try again.");
     }}>Connect my office account</button>
-    <p>Office connector URL: <code className="select-all">https://schematic-mcp.tateside.online/mcp</code>. Add it to Grok or another assistant that supports remote MCP, and sign in with the same office account.</p>
+    <p>Office connector URL: <code className="select-all">{OFFICE_ORIGIN}/mcp</code>. Add it to Grok or another assistant that supports remote MCP, and sign in with the same office account.</p>
     {notice && <p role="status">{notice}</p>}
     <label className="flex items-center gap-2"><input type="checkbox" checked={office} disabled={enabled} onChange={(event) => useSchematicStore.setState({ mcpBridgeOffice: event.target.checked })} />Use the shared office connection</label>
     {!office && <>

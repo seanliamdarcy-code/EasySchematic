@@ -1,0 +1,8 @@
+# Build only from a verified artifact directory containing dist/ and docker/nginx.conf.
+# The frontend must have the release SHA and production office origin embedded at build time.
+FROM nginx:bookworm
+ENV TATESIDE_API_PORT=8788
+COPY docker/nginx.conf /etc/nginx/templates/default.conf.template
+COPY dist/ /usr/share/nginx/html/
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

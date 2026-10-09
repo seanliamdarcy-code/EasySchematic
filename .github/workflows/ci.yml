@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, staging, 'codex/staging-*']
+    branches: [master, staging, 'codex/staging-*', 'codex/production-*']
   pull_request:
     branches: [master, staging]
 

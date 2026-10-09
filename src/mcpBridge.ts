@@ -13,6 +13,7 @@
  * any command runs.
  */
 import { useEffect } from "react";
+import { OFFICE_EDITOR_URL } from "./mcp/officeConfig";
 import type { Connection } from "@xyflow/react";
 import { resolveDeviceHeader } from "./displayName";
 import { transformLabelNow } from "./labelCaseUtils";
@@ -1154,7 +1155,7 @@ class BridgeController {
     setStatus("connecting");
     let ws: WebSocket;
     try {
-      ws = new WebSocket(this.office ? "wss://schematic-mcp.tateside.online/editor" : `ws://127.0.0.1:${this.port}`);
+      ws = new WebSocket(this.office ? OFFICE_EDITOR_URL : `ws://127.0.0.1:${this.port}`);
     } catch {
       setStatus("error", "Could not open a connection.");
       this.scheduleReconnect();
